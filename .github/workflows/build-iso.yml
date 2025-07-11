@@ -1,0 +1,26 @@
+name: build-iso
+on: 
+  schedule:
+    - cron: '0 9 * * *'
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux
+      options: --privileged
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: build iso 
+        run: |
+          pacman -Syu --noconfirm archiso grub git
+          bash ./build.sh
+      - name: upload isos 
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-isos 
+          path: |
+            build

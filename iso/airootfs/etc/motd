@@ -1,5 +1,5 @@
-To install [38;2;23;147;209mArch Linux[0m follow the installation guide:
-https://wiki.archlinux.org/title/Installation_guide
+[38;2;23;147;209mOmarchy Linux[0m please refer to the manual:
+https://manuals.omamix.org/2/the-omarchy-manual
 
 For Wi-Fi, authenticate to the wireless network using the [35miwctl[0m utility.
 For mobile broadband (WWAN) modems, connect with the [35mmmcli[0m utility.

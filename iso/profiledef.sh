@@ -7,7 +7,7 @@ iso_publisher="Omarchy <https://omarchy.org>"
 iso_application="Omarchy Live"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
-buildmodes=('iso')
+buildmodes=('iso' 'netboot')
 bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito'
   'uefi-ia32.systemd-boot.esp' 'uefi-x64.systemd-boot.esp'
   'uefi-ia32.systemd-boot.eltorito' 'uefi-x64.systemd-boot.eltorito')
