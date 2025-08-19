@@ -9,7 +9,11 @@ BUILD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$BUILD_ROOT/out"
 
 # Determine which build script to use
-BUILD_SCRIPT="build_online_iso.sh"
+if [[ $1 == "--offline" ]]; then
+  BUILD_SCRIPT="build_iso.sh"
+else
+  BUILD_SCRIPT="build_online_iso.sh"
+fi
 
 # Run the builder
 docker run --rm \
