@@ -25,12 +25,11 @@ python_packages=(
 	terminaltexteffects
 )
 arch_packages=(
-	git
-	impala
-	gum
-	openssl
-	wget
-	tzupdate # This is technically an AUR package
+  git
+  gum
+  openssl
+  wget
+  tzupdate # This is technically an AUR package
 )
 
 prepare_offline_mirror() {
