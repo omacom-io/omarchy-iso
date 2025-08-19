@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+
+set -e
 
 # Ensure we have the submodule checked out
 git submodule update --init --recursive --jobs=8
@@ -8,12 +9,18 @@ git submodule update --init --recursive --jobs=8
 BUILD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$BUILD_ROOT/out"
 
+# Determine which build script to use
+if [[ $1 == "--offline" ]]; then
+  BUILD_SCRIPT="build_iso.sh"
+else
+  BUILD_SCRIPT="build_online_iso.sh"
+fi
+
 # Run the builder
 docker run --rm \
   --privileged \
-  --privileged \
   -v "$BUILD_ROOT/out/:/out/" \
-  -v "$BUILD_ROOT/build_iso.sh:/build_iso.sh:ro" \
+  -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro" \
   -v "$BUILD_ROOT/archiso:/archiso:ro" \
   -v "$BUILD_ROOT/grub-autoboot.patch:/grub-autoboot.patch:ro" \
   -v "$BUILD_ROOT/efi-autoboot.patch:/efi-autoboot.patch:ro" \
@@ -23,7 +30,7 @@ docker run --rm \
   -v "$BUILD_ROOT/check_connectivity.sh:/check_connectivity.sh:ro" \
   -v "$BUILD_ROOT/omarchy.packages:/omarchy.packages:ro" \
   -v "$BUILD_ROOT/archinstall.packages:/archinstall.packages:ro" \
-  archlinux/archlinux:latest /build_iso.sh
+  archlinux/archlinux:latest /$BUILD_SCRIPT
 
 # Make iso accessible to all
 sudo chmod 777 -R "$BUILD_ROOT/out"
