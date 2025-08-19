@@ -161,9 +161,14 @@ build_qemu_command() {
     
     # UEFI firmware (unless BIOS mode requested)
     if [ -n "$OVMF_CODE" ] && [ "$BOOT_MODE" != "bios" ]; then
-        # Create writable VARS file
+        # Create writable VARS file from the correct template
         OVMF_VARS_COPY="/tmp/OVMF_VARS_$$.fd"
-        cp "$OVMF_CODE" "$OVMF_VARS_COPY"
+        if [ -f "$OVMF_VARS" ]; then
+            cp "$OVMF_VARS" "$OVMF_VARS_COPY"
+        else
+            # Fallback: create empty VARS file if template not found
+            dd if=/dev/zero of="$OVMF_VARS_COPY" bs=1M count=4 2>/dev/null
+        fi
         
         qemu_args+=("-drive" "if=pflash,format=raw,readonly=on,file=$OVMF_CODE")
         qemu_args+=("-drive" "if=pflash,format=raw,file=$OVMF_VARS_COPY")
@@ -176,9 +181,9 @@ build_qemu_command() {
     qemu_args+=("-drive" "file=$DISK2,format=qcow2,if=none,id=drive1")
     qemu_args+=("-device" "virtio-blk-pci,drive=drive1,bootindex=3")
     
-    # CD-ROM with ISO
-    qemu_args+=("-cdrom" "$iso_file")
-    qemu_args+=("-boot" "d")
+    # CD-ROM with ISO - set as first boot device for UEFI
+    qemu_args+=("-drive" "file=$iso_file,media=cdrom,if=none,format=raw,id=cdrom0")
+    qemu_args+=("-device" "ide-cd,drive=cdrom0,bootindex=1")
     
     # Display configuration
     if [ "$HEADLESS" = true ]; then
@@ -186,13 +191,8 @@ build_qemu_command() {
         qemu_args+=("-vnc" ":1")
         print_info "Headless mode. VNC server on :1 (port 5901)"
     else
-        # For UEFI, use VGA device like original script
-        if [ "$BOOT_MODE" != "bios" ]; then
-            qemu_args+=("-device" "VGA,edid=on,xres=1280,yres=720")
-        else
-            # BIOS mode - use virtio-vga without virgl for better performance
-            qemu_args+=("-device" "virtio-vga")
-        fi
+        # Use virtio-vga for both UEFI and BIOS modes
+        qemu_args+=("-device" "virtio-vga")
         # Enable OpenGL acceleration in GTK display
         qemu_args+=("-display" "gtk,gl=on")
     fi
