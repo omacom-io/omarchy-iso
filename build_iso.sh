@@ -172,6 +172,11 @@ cat <<- _EOF_ | tee $cache_dir/airootfs/root/.automated_script.sh
 		chmod +x /mnt/home/\$OMARCHY_USER/.local/share/omarchy/install/preflight/tte.sh && \
 		echo '' > /mnt/home/\$OMARCHY_USER/.local/share/omarchy/install/preflight/tte.sh && \
 		echo '' > /mnt/home/\$OMARCHY_USER/.local/share/omarchy/install/preflight/gum.sh && \
+	    
+	    # Copy sudoers config to target system for passwordless sudo in chroot
+	    mkdir -p /mnt/etc/sudoers.d && \
+	    cp /etc/sudoers.d/99-omarchy-installer /mnt/etc/sudoers.d/ && \
+	    
 	    HOME=/home/\$OMARCHY_USER arch-chroot -u \$OMARCHY_USER /mnt/ /bin/bash -c "source /home/\$OMARCHY_USER/.local/share/omarchy/install.sh"
 	fi
 _EOF_
