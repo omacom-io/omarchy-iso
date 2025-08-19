@@ -167,8 +167,6 @@ build_qemu_command() {
         
         qemu_args+=("-drive" "if=pflash,format=raw,readonly=on,file=$OVMF_CODE")
         qemu_args+=("-drive" "if=pflash,format=raw,file=$OVMF_VARS_COPY")
-    else
-        print_info "Using legacy BIOS boot mode"
     fi
     
     # Storage devices - simplified for testing
@@ -182,14 +180,21 @@ build_qemu_command() {
     qemu_args+=("-cdrom" "$iso_file")
     qemu_args+=("-boot" "d")
     
-    # Display
-    if [ -n "$DISPLAY" ]; then
-        qemu_args+=("-display" "gtk,zoom-to-fit=on")
-        qemu_args+=("-device" "virtio-vga,xres=1280,yres=720")
-    else
+    # Display configuration
+    if [ "$HEADLESS" = true ]; then
         qemu_args+=("-nographic")
-        print_info "No display detected. Use serial console or VNC"
         qemu_args+=("-vnc" ":1")
+        print_info "Headless mode. VNC server on :1 (port 5901)"
+    else
+        # For UEFI, use VGA device like original script
+        if [ "$BOOT_MODE" != "bios" ]; then
+            qemu_args+=("-device" "VGA,edid=on,xres=1280,yres=720")
+        else
+            # BIOS mode - use virtio-vga without virgl for better performance
+            qemu_args+=("-device" "virtio-vga")
+        fi
+        # Enable OpenGL acceleration in GTK display
+        qemu_args+=("-display" "gtk,gl=on")
     fi
     
     # Input devices
@@ -213,6 +218,7 @@ show_usage() {
     echo "  --storage DIR     Directory for VM storage (default: /tmp)"
     echo "  --memory MB       Memory allocation in MB (default: 8192)"
     echo "  --no-kvm          Disable KVM acceleration"
+    echo "  --headless        Run without display (VNC on :1)"
     echo "  --help            Show this help message"
     echo ""
     echo "Examples:"
@@ -262,6 +268,10 @@ main() {
             --no-kvm)
                 KVM_AVAILABLE=false
                 print_info "KVM acceleration disabled by user"
+                ;;
+            --headless)
+                HEADLESS=true
+                print_info "Headless mode enabled"
                 ;;
             *)
                 print_warning "Unknown option: $1"
