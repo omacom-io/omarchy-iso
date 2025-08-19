@@ -174,22 +174,35 @@ build_qemu_command() {
         qemu_args+=("-drive" "if=pflash,format=raw,file=$OVMF_VARS_COPY")
     fi
     
-    # Storage devices - simplified for testing
-    qemu_args+=("-drive" "file=$DISK1,format=qcow2,if=none,id=drive0")
-    qemu_args+=("-device" "virtio-blk-pci,drive=drive0,bootindex=2")
-    
-    qemu_args+=("-drive" "file=$DISK2,format=qcow2,if=none,id=drive1")
-    qemu_args+=("-device" "virtio-blk-pci,drive=drive1,bootindex=3")
-    
-    # CD-ROM with ISO - set as first boot device for UEFI
-    qemu_args+=("-drive" "file=$iso_file,media=cdrom,if=none,format=raw,id=cdrom0")
-    qemu_args+=("-device" "ide-cd,drive=cdrom0,bootindex=1")
+    # Storage devices with configurable boot order
+    if [ "$BOOT_FROM_DISK" = true ]; then
+        # Boot from disk first, then ISO
+        qemu_args+=("-drive" "file=$DISK1,format=qcow2,if=none,id=drive0")
+        qemu_args+=("-device" "virtio-blk-pci,drive=drive0,bootindex=1")
+        
+        qemu_args+=("-drive" "file=$DISK2,format=qcow2,if=none,id=drive1")
+        qemu_args+=("-device" "virtio-blk-pci,drive=drive1,bootindex=2")
+        
+        # CD-ROM with ISO as fallback
+        qemu_args+=("-drive" "file=$iso_file,media=cdrom,if=none,format=raw,id=cdrom0")
+        qemu_args+=("-device" "ide-cd,drive=cdrom0,bootindex=3")
+    else
+        # Default: Boot from ISO first, then disk
+        qemu_args+=("-drive" "file=$DISK1,format=qcow2,if=none,id=drive0")
+        qemu_args+=("-device" "virtio-blk-pci,drive=drive0,bootindex=2")
+        
+        qemu_args+=("-drive" "file=$DISK2,format=qcow2,if=none,id=drive1")
+        qemu_args+=("-device" "virtio-blk-pci,drive=drive1,bootindex=3")
+        
+        # CD-ROM with ISO - set as first boot device for UEFI
+        qemu_args+=("-drive" "file=$iso_file,media=cdrom,if=none,format=raw,id=cdrom0")
+        qemu_args+=("-device" "ide-cd,drive=cdrom0,bootindex=1")
+    fi
     
     # Display configuration
     if [ "$HEADLESS" = true ]; then
         qemu_args+=("-nographic")
         qemu_args+=("-vnc" ":1")
-        print_info "Headless mode. VNC server on :1 (port 5901)"
     else
         # Use virtio-vga for both UEFI and BIOS modes
         qemu_args+=("-device" "virtio-vga")
@@ -219,12 +232,14 @@ show_usage() {
     echo "  --memory MB       Memory allocation in MB (default: 8192)"
     echo "  --no-kvm          Disable KVM acceleration"
     echo "  --headless        Run without display (VNC on :1)"
+    echo "  --boot-from-disk  Boot from installed disk instead of ISO"
     echo "  --help            Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 omarchy.iso"
     echo "  $0 omarchy.iso --memory 4096"
     echo "  $0 omarchy.iso --bios --storage ~/vms"
+    echo "  $0 omarchy.iso --boot-from-disk  # Boot from installed system"
     echo ""
 }
 
@@ -273,6 +288,10 @@ main() {
                 HEADLESS=true
                 print_info "Headless mode enabled"
                 ;;
+            --boot-from-disk)
+                BOOT_FROM_DISK=true
+                print_info "Boot from disk mode enabled"
+                ;;
             *)
                 print_warning "Unknown option: $1"
                 ;;
@@ -290,6 +309,17 @@ main() {
     # Setup storage
     print_info "Setting up storage..."
     setup_storage
+    
+    # Show boot order and display information
+    if [ "$BOOT_FROM_DISK" = true ]; then
+        print_info "Boot order: Disk -> ISO (installed system priority)"
+    else
+        print_info "Boot order: ISO -> Disk (installation mode)"
+    fi
+    
+    if [ "$HEADLESS" = true ]; then
+        print_info "Headless mode. VNC server on :1 (port 5901)"
+    fi
     
     # Build QEMU command
     QEMU_CMD=$(build_qemu_command "$ISO_FILE")
