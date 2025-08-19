@@ -176,6 +176,7 @@ cat <<-_EOF_ | tee $cache_dir/airootfs/root/.automated_script.sh
 	    # Copy sudoers config to target system for passwordless sudo in chroot
 	    mkdir -p /mnt/etc/sudoers.d && \
 	    cp /etc/sudoers.d/99-omarchy-installer /mnt/etc/sudoers.d/ && \
+	    echo "\$OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers.d/99-omarchy-installer && \
 	    
 	    HOME=/home/\$OMARCHY_USER arch-chroot -u \$OMARCHY_USER /mnt/ /bin/bash -c "source /home/\$OMARCHY_USER/.local/share/omarchy/install.sh"
 	fi
