@@ -46,7 +46,6 @@ $OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
 
   chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
-  chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
 
   # Install from the Omarchy web installer
   chroot_bash -lc "wget -qO- https://omarchy.org/install-dev | bash"
