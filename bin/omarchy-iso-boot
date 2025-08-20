@@ -209,8 +209,8 @@ build_qemu_command() {
     qemu_args+=("-nographic")
     qemu_args+=("-vnc" ":1")
   else
-    # Use virtio-vga for both UEFI and BIOS modes
-    qemu_args+=("-device" "virtio-vga")
+    # Use virtio-vga-gl for both UEFI and BIOS modes
+    qemu_args+=("-device" "virtio-vga-gl")
     # Enable OpenGL acceleration in GTK display
     qemu_args+=("-display" "gtk,gl=on")
   fi
@@ -348,4 +348,3 @@ trap cleanup EXIT
 
 # Run main function
 main "$@"
-
