@@ -204,16 +204,8 @@ build_qemu_command() {
   qemu_args+=("-drive" "file=$iso_file,media=cdrom,if=none,format=raw,id=cdrom0")
   qemu_args+=("-device" "ide-cd,drive=cdrom0,bootindex=2")
 
-  # Display configuration
-  if [ "$HEADLESS" = true ]; then
-    qemu_args+=("-nographic")
-    qemu_args+=("-vnc" ":1")
-  else
-    # Use virtio-vga-gl for both UEFI and BIOS modes
-    qemu_args+=("-device" "virtio-vga-gl")
-    # Enable OpenGL acceleration in GTK display
-    qemu_args+=("-display" "gtk,gl=on")
-  fi
+  qemu_args+=("-device" "virtio-vga-gl")
+  qemu_args+=("-display" "gtk,gl=on")
 
   # Input devices
   qemu_args+=("-usb" "-device" "usb-tablet")
@@ -236,7 +228,6 @@ show_usage() {
   echo "  --storage DIR     Directory for VM storage (default: /tmp)"
   echo "  --memory MB       Memory allocation in MB (default: 8192)"
   echo "  --no-kvm          Disable KVM acceleration"
-  echo "  --headless        Run without display (VNC on :1)"
   echo "  --help            Show this help message"
   echo ""
   echo "Examples:"
@@ -287,10 +278,6 @@ main() {
       KVM_AVAILABLE=false
       print_info "KVM acceleration disabled by user"
       ;;
-    --headless)
-      HEADLESS=true
-      print_info "Headless mode enabled"
-      ;;
     *)
       print_warning "Unknown option: $1"
       ;;
@@ -308,11 +295,6 @@ main() {
   # Setup storage
   print_info "Setting up storage..."
   setup_storage
-
-  # Show display information
-  if [ "$HEADLESS" = true ]; then
-    print_info "Headless mode. VNC server on :1 (port 5901)"
-  fi
 
   print_info "Boot order: Disk (if bootable) -> ISO (fallback)"
   print_info "After installation, system will automatically boot from disk"
