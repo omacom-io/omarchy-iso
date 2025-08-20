@@ -21,12 +21,13 @@ trap catch_errors ERR
 if [[ $(tty) == "/dev/tty1" ]]; then
   NETWORK_NEEDED=1 ./installer
 
+  # Get username from installer config for reliable error recovery
+  OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+
   archinstall \
     --config user_configuration.json \
     --creds user_credentials.json \
     --silent
-
-  OMARCHY_USER="$(ls -1 /mnt/home | head -n1)"
 
   # No need to ask for sudo during the installation (omarchy itself responsible for removing after install)
   mkdir -p /mnt/etc/sudoers.d
