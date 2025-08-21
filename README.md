@@ -4,16 +4,20 @@ The Omarchy ISO is intended to provide a completely offline-capable installation
 
 ## Creating the ISO
 
-Run `./bin/omarchy-iso-make` and the output goes into `./out`.
+Run `./bin/omarchy-iso-make` and the output goes into `./release`.
 
 ## Testing the ISO
 
-Run `./bin/omarchy-iso-boot [out/name.iso]`.
+Run `./bin/omarchy-iso-boot [release/omarchy.iso]`.
 
 ## Signing the ISO
 
-```
-$ gpg --local-user [GPG Key ID] \
-  --output ./out/*.iso.sig \
-  --detach-sig ./out/*.iso
-```
+Run `./bin/omarchy-iso-sign [gpg-user] [release/omarchy.iso]`.
+
+## Uploading the ISO
+
+Run `./bin/omarchy-iso-upload [release/omarchy.iso]`. This requires you've configured rclone (use `rclone config`).
+
+## Full release of the ISO
+
+Run `./bin/omarchy-iso-make` to create, test, sign, and upload the ISO in one flow.

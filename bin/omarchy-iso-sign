@@ -1,0 +1,14 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+  echo "Usage: omarchy-iso-sign [gnupg-user] [release/omarchy.iso]"
+  exit 1
+fi
+
+if ! pacman -Q gnupg >/dev/null; then
+  sudo pacman -S --noconfirm --needed --quiet gnupg
+  echo "You'll need to generate a new key with: gpg --full-generate-key"
+  echo "Then get your keyid from: gpg --list-secret-keys --keyid-format=long"
+fi
+
+gpg --local-user $1 --output $2.sig --detach-sig $2

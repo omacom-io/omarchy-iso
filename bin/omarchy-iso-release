@@ -1,0 +1,12 @@
+#!/bin/bash
+
+BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+BUILD_RELEASE_PATH="$BUILD_ROOT/release"
+
+# Make and potentially test the ISO
+omarchy-iso-make
+
+# Sign and upload the latest ISO
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
+omarchy-iso-sign $latest_iso
+omarchy-iso-upload $latest_iso
