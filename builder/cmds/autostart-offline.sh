@@ -46,14 +46,13 @@ $OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
   chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
 
-  # Set up offline git repositories if available
-  if [ -d "/var/cache/omarchy/repos" ]; then
-    echo "Setting up offline git repositories..."
-    mkdir -p /mnt/var/cache/omarchy
-    cp -r /var/cache/omarchy/repos /mnt/var/cache/omarchy/
-    
-    # Create git wrapper to use offline repos
-    cat > /mnt/usr/local/bin/git-wrapper << 'WRAPPER_EOF'
+  # Set up offline git repositories
+  echo "Setting up offline git repositories..."
+  mkdir -p /mnt/var/cache/omarchy
+  cp -r /var/cache/omarchy/repos /mnt/var/cache/omarchy/
+  
+  # Create git wrapper to use offline repos
+  cat > /mnt/usr/local/bin/git-wrapper << 'WRAPPER_EOF'
 #!/bin/bash
 # Git wrapper that uses local repositories when available
 
@@ -97,12 +96,11 @@ fi
 # Fall back to real git
 /usr/bin/git.real "$@"
 WRAPPER_EOF
-    chmod 755 /mnt/usr/local/bin/git-wrapper
-    
-    # Temporarily replace git with wrapper
-    mv /mnt/usr/bin/git /mnt/usr/bin/git.real
-    cp /mnt/usr/local/bin/git-wrapper /mnt/usr/bin/git
-  fi
+  chmod 755 /mnt/usr/local/bin/git-wrapper
+  
+  # Temporarily replace git with wrapper
+  mv /mnt/usr/bin/git /mnt/usr/bin/git.real
+  cp /mnt/usr/local/bin/git-wrapper /mnt/usr/bin/git
 
   # Run Omarchy web installer
   chroot_bash -lc "wget -qO- https://omarchy.org/install-dev | bash"

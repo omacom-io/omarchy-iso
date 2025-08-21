@@ -128,8 +128,8 @@ git clone --depth=1 https://github.com/nikosdion/asdcontrol.git \
 git clone --depth=1 https://github.com/LazyVim/starter.git \
   "$cache_dir/airootfs/var/cache/omarchy/repos/lazyvim-starter"
 
-# Use the autostart.sh script which includes git wrapper logic
-cp /builder/cmds/autostart.sh $cache_dir/airootfs/root/.automated_script.sh
+# Use the autostart-offline.sh script which includes git wrapper logic
+cp /builder/cmds/autostart-offline.sh $cache_dir/airootfs/root/.automated_script.sh
 
 # We patch permissions, grub and efi loaders to our liking:
 (cd $cache_dir/ && git apply /builder/patches/offline/permissions.patch)

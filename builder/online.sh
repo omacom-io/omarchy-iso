@@ -29,7 +29,7 @@ rm -rf "airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "airootfs/etc/xdg/reflector"
 
 # Ensure the Omarchy installer launches automatically on boot
-cp /builder/cmds/autostart.sh airootfs/root/.automated_script.sh
+cp /builder/cmds/autostart-online.sh airootfs/root/.automated_script.sh
 
 # Patch the default archiso install files
 for patch in /builder/patches/*.patch; do
