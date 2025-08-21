@@ -46,6 +46,70 @@ $OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
   chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
 
+  # Set up offline git repositories if available
+  if [ -d "/var/cache/omarchy/repos" ]; then
+    echo "Setting up offline git repositories..."
+    mkdir -p /mnt/var/cache/omarchy
+    cp -r /var/cache/omarchy/repos /mnt/var/cache/omarchy/
+    
+    # Create git wrapper to use offline repos
+    cat > /mnt/usr/local/bin/git-wrapper << 'WRAPPER_EOF'
+#!/bin/bash
+# Git wrapper that uses local repositories when available
+
+if [ "$1" = "clone" ]; then
+    # Check for asdcontrol repository
+    if echo "$@" | grep -q "https://github.com/nikosdion/asdcontrol.git"; then
+        if [ -d "/var/cache/omarchy/repos/asdcontrol" ]; then
+            echo "Using offline asdcontrol repository..."
+            TARGET="/tmp/asdcontrol"
+            for arg in "$@"; do
+                if [[ "$arg" != "clone" && "$arg" != "-"* && "$arg" != "https://"* ]]; then
+                    TARGET="$arg"
+                fi
+            done
+            cp -r /var/cache/omarchy/repos/asdcontrol "$TARGET"
+            exit 0
+        fi
+    fi
+    
+    # Check for LazyVim starter repository
+    if echo "$@" | grep -q "https://github.com/LazyVim/starter"; then
+        if [ -d "/var/cache/omarchy/repos/lazyvim-starter" ]; then
+            echo "Using offline LazyVim repository..."
+            TARGET=""
+            for arg in "$@"; do
+                if [[ "$arg" != "clone" && "$arg" != "-"* && "$arg" != "https://"* ]]; then
+                    TARGET="$arg"
+                fi
+            done
+            if [ -z "$TARGET" ]; then
+                TARGET="$HOME/.config/nvim"
+            fi
+            TARGET="${TARGET/#\~/$HOME}"
+            mkdir -p "$(dirname "$TARGET")"
+            cp -r /var/cache/omarchy/repos/lazyvim-starter "$TARGET"
+            exit 0
+        fi
+    fi
+fi
+
+# Fall back to real git
+/usr/bin/git.real "$@"
+WRAPPER_EOF
+    chmod 755 /mnt/usr/local/bin/git-wrapper
+    
+    # Temporarily replace git with wrapper
+    mv /mnt/usr/bin/git /mnt/usr/bin/git.real
+    cp /mnt/usr/local/bin/git-wrapper /mnt/usr/bin/git
+  fi
+
   # Run Omarchy web installer
   chroot_bash -lc "wget -qO- https://omarchy.org/install-dev | bash"
+  
+  # Restore original git binary
+  if [ -f /mnt/usr/bin/git.real ]; then
+    rm /mnt/usr/bin/git
+    mv /mnt/usr/bin/git.real /mnt/usr/bin/git
+  fi
 fi
