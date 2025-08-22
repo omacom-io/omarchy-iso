@@ -10,6 +10,7 @@ chroot_bash() {
     HOME="/home/$OMARCHY_USER" \
     OMARCHY_REPO="$(<omarchy_installer_repo.txt)" \
     OMARCHY_REF="$(<omarchy_installer_ref.txt)" \
+    OMARCHY_BARE="$(<omarchy_bare.txt)" \
     /bin/bash "$@"
 }
 

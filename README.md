@@ -14,6 +14,7 @@ You can customize the repositories used during the build process by passing in v
 - `OMARCHY_CONFIGURATOR_REF` - Git ref (branch/tag) for the configurator (default: `master`)
 - `OMARCHY_INSTALLER_REPO` - GitHub repository for the installer (default: `basecamp/omarchy`)
 - `OMARCHY_INSTALLER_REF` - Git ref (branch/tag) for the installer (default: `master`)
+- `OMARCHY_BARE` - Set to `true` for bare/minimal installation (default: empty/false)
 
 Example usage:
 ```bash

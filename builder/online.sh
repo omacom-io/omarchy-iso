@@ -25,6 +25,7 @@ wget -qO "airootfs/root/configurator" \
 
 echo "$OMARCHY_INSTALLER_REPO" >airootfs/root/omarchy_installer_repo.txt
 echo "$OMARCHY_INSTALLER_REF" >airootfs/root/omarchy_installer_ref.txt
+echo "$OMARCHY_BARE" >airootfs/root/omarchy_bare.txt
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
 rm "airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
