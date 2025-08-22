@@ -46,10 +46,18 @@ $OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
   chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
 
-  # Set up offline git repositories
-  echo "Setting up offline git repositories..."
+  # Set up offline git repositories and yay binary
+  echo "Setting up offline git repositories and yay binary..."
   mkdir -p /mnt/var/cache/omarchy
   cp -r /var/cache/omarchy/repos /mnt/var/cache/omarchy/
+  
+  # Copy offline yay binary if available
+  if [ -f "/var/cache/omarchy/packages/yay" ]; then
+    echo "Setting up offline yay binary..."
+    mkdir -p /mnt/usr/local/bin
+    cp /var/cache/omarchy/packages/yay /mnt/usr/local/bin/yay-offline
+    chmod +x /mnt/usr/local/bin/yay-offline
+  fi
   
   # Create git wrapper to use offline repos
   cat > /mnt/usr/local/bin/git-wrapper << 'WRAPPER_EOF'

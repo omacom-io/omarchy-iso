@@ -116,6 +116,10 @@ chmod +x "$cache_dir/airootfs/root/installer"
 # Clone Omarchy itself
 git clone -b dev --single-branch https://github.com/basecamp/omarchy.git "$cache_dir/airootfs/root/omarchy"
 
+# Apply offline yay patch to Omarchy installation
+echo "Applying offline yay patch to Omarchy..."
+(cd "$cache_dir/airootfs/root/omarchy" && git apply /builder/patches/offline/aur-offline.patch)
+
 # Clone repositories for offline availability
 echo "Cloning repositories for offline installation..."
 mkdir -p "$cache_dir/airootfs/var/cache/omarchy/repos"
@@ -127,6 +131,13 @@ git clone --depth=1 https://github.com/nikosdion/asdcontrol.git \
 # Clone LazyVim starter for Neovim configuration
 git clone --depth=1 https://github.com/LazyVim/starter.git \
   "$cache_dir/airootfs/var/cache/omarchy/repos/lazyvim-starter"
+
+# Add offline yay binary for installation without network
+echo "Adding offline yay binary for network-free installation..."
+mkdir -p "$cache_dir/airootfs/var/cache/omarchy/packages"
+cp /builder/offline-assets/yay_12.4.2_x86_64/yay \
+  "$cache_dir/airootfs/var/cache/omarchy/packages/yay"
+chmod +x "$cache_dir/airootfs/var/cache/omarchy/packages/yay"
 
 # Use the autostart-offline.sh script which includes git wrapper logic
 cp /builder/cmds/autostart-offline.sh $cache_dir/airootfs/root/.automated_script.sh

@@ -1,0 +1,599 @@
+.TH "YAY" "8" "2019\-10\-21" "Yay v12.0+" "Yay Manual"
+.nh
+.ad l
+.SH NAME
+yay \- AUR Helper written in go
+
+.SH SYNOPSIS
+\fIyay\fR <operation> [options] [targets]
+.sp
+\fIyay\fR <search terms>
+.sp
+\fIyay\fR
+
+.SH DESCRIPTION
+Yay is a Pacman wrapper with AUR support. It passes options to Makepkg and
+Pacman after resolving packages to install/upgrade.
+
+This manpage only covers options unique to Yay. For other options see
+\fBpacman(8)\fR.
+
+.SH YAY OPERATIONS
+
+.TP
+.B \-Y, \-\-yay
+Perform yay specific operations. This is the default if no other operation is
+selected and targets are defined.
+
+.TP
+.B \-B, \-\-build
+Build a PKGBUILD in a given directory.
+
+.TP
+.B \-P, \-\-show
+Perform yay specific print operations.
+
+.TP
+.B \-G, \-\-getpkgbuild
+Downloads PKGBUILD from ABS or AUR. The ABS can only be used for Arch Linux repositories.
+
+.TP
+.B \-W, \-\-web
+Web related operations such as voting for AUR packages.
+
+.RE
+If no operation is specified 'yay \-Syu' will be performed
+
+If no operation is specified and targets are provided \-Y will be assumed
+
+.SH EXTENDED PACMAN OPERATIONS
+.TP
+.B \-S, \-Si, \-Sl, \-Ss, \-Su, \-Sc, \-Qu
+These operations are extended to support both AUR and repo packages.
+
+.TP
+.B \-Sc
+Yay will also clean cached AUR package and any untracked Files in the
+cache. Cleaning untracked files will wipe any downloaded sources or
+built packages but will keep already downloaded vcs sources.
+
+.TP
+.B \-R
+Yay will also remove cached data about devel packages.
+
+.SH NEW OPTIONS
+.TP
+.B \-N, \-\-repo
+Assume all targets are from the repositories. Additionally Actions such as
+sysupgrade will only act on repository packages.
+
+.TP
+.B \-a, \-\-aur
+Assume all targets are from the AUR. Additionally Actions such as
+sysupgrade will only act on AUR packages.
+
+Note that dependency resolving will still act normally and include repository
+packages.
+
+.SH YAY OPTIONS (APPLY TO \-Y AND \-\-YAY)
+
+.TP
+.B <NO OPTION>
+Displays a list of packages matching the search terms and prompts the user on
+which packages to install (yogurt mode).
+
+The first search term is used to query the different sources and
+the following search terms are used to narrow the search results
+through exact matching.
+
+.TP
+.B \-\-gendb
+Generate development package database. Tracks the latest commit for each
+development package, when there is a new commit Yay will know to update. This
+is done per package whenever a package is synced. This option should only be
+used when migrating to Yay from another AUR helper.
+
+.TP
+.B \-c, \-\-clean
+Remove unneeded dependencies.
+
+.TP
+.B \-cc
+Remove unneeded dependencies, including packages optionally required by any other package.
+
+.SH SHOW OPTIONS (APPLY TO \-P AND \-\-show)
+.TP
+.B \-c, \-\-complete
+Print a list of all AUR and repo packages. This allows shell completion
+and is not intended to be used directly by the user.
+
+.TP
+.B \-d, \-\-defaultconfig
+Print default yay configuration.
+
+.TP
+.B \-g, \-\-currentconfig
+Print current yay configuration.
+
+.TP
+.B \-s, \-\-stats
+Displays information about installed packages and system health. If there are
+orphaned, or out\-of\-date packages, or packages that no longer exist on the
+AUR; warnings will be displayed.
+
+.TP
+.B \-w, \-\-news
+Print new news from the Archlinux homepage. News is considered new if it is
+newer than the build date of all native packages. Pass this twice to show all
+available news.
+
+.TP
+.B \-q, \-\-quiet
+Only show titles when printing news.
+
+.SH BUILD OPTIONS (APPLY TO \-B AND \-\-build)
+.TP
+.B \-i, \-\-install
+Build and install a PKGBUILD in a given directory
+
+.SH GETPKGBUILD OPTIONS (APPLY TO \-G AND \-\-getpkgbuild)
+.TP
+.B \-f, \-\-force
+Force download for ABS packages that already exist in the current directory. This
+ensures directories are not accidentally overwritten.
+
+.TP
+.B \-p, \-\-print
+Prints the PKGBUILD of the given packages to stdout.
+
+.SH WEB OPTIONS (APPLY TO \-W AND \-\-web)
+
+.TP
+Web related operations such as voting for AUR packages.
+Requires setting AUR_USERNAME and AUR_PASSWORD environment variables.
+
+.TP
+.B \-u, \-\-unvote
+Remove vote from AUR package(s)
+
+.TP
+.B \-v, \-\-vote
+Vote for AUR package(s)
+
+.SH PERMANENT CONFIGURATION SETTINGS
+.TP
+.B \-\-save
+Causes the following options to be saved back to the config file. This
+provides an easy way to change config options without directly editing the
+file.
+
+.TP
+.B \-\-aururl
+Set an alternative AUR URL.
+
+.TP
+.B \-\-aurrpcurl
+Set an alternative URL for the AUR /rpc endpoint.
+
+.TP
+.B \-\-builddir <dir>
+Directory to use for Building AUR Packages. This directory is also used as
+the AUR cache when deciding if Yay should skip builds.
+
+.TP
+.B \-\-editor <command>
+Editor to use when editing PKGBUILDs. If this is not set the \fBVISUAL\fR
+environment variable will be checked, followed by \fBEDITOR\fR. If none of
+these are set Yay will prompt the user for an editor.
+
+.TP
+.B \-\-editorflags <flags>
+Passes arguments to the editor. These flags get passed to every instance where
+the editor is called by Yay. Arguments are split on whitespace before being
+passed to the editor. Multiple arguments may be passed by supplying a space
+separated list that is quoted by the shell.
+
+.TP
+.B \-\-makepkg <command>
+The command to use for \fBmakepkg\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+
+.TP
+.B \-\-pacman <command>
+The command to use for \fBpacman\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+
+.TP
+.B \-\-tar <command>
+The command to use for \fBbsdtar\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+
+.TP
+.B \-\-git <command>
+The command to use for \fBgit\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+
+.TP
+.B \-\-gpg <command>
+The command to use for \fBgpg\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+
+.TP
+.B \-\-config <file>
+The pacman config file to use.
+
+.TP
+.B \-\-makepkgconf <file>
+The config file for makepkg to use\%. If this is not set then the default
+config file will be used.
+
+.TP
+.B \-\-nomakepkgconf
+Reset the makepkg config file back to its default.
+
+.TP
+.B \-\-requestsplitn <number>
+The maximum amount of packages to request per AUR query. The higher the
+number the faster AUR requests will be. Requesting too many packages in one
+AUR query will cause an error. This should only make a noticeable difference
+with very large requests (>500) packages.
+
+.TP
+.B \-\-completioninterval <days>
+Time in days to refresh the completion cache. Setting this to 0 will cause
+the cache to be refreshed every time, while setting this to -1 will cause the
+cache to never be refreshed.
+
+.TP
+.B \-\-sortby <votes|popularity|id|baseid|name|base|submitted|modified>
+Sort AUR results by a specific field during search.
+
+.TP
+.B \-\-searchby <name|name-desc|maintainer|depends|checkdepends|makedepends|optdepends|provides|conflicts|replaces|groups|keywords|comaintainers>
+Search for AUR packages by querying the specified field.
+
+.TP
+.B \-\-answerclean <All|None|Installed|NotInstalled|...>
+Set a predetermined answer for the clean build menu question. This answer
+will be used instead of reading from standard input but will be parsed exactly
+the same.
+
+.TP
+.B \-\-answerdiff <All|None|Installed|NotInstalled|...>
+Set a predetermined answer for the edit diff menu question. This answer
+will be used instead of reading from standard input but will be parsed exactly
+the same.
+
+.TP
+.B \-\-answeredit <All|None|Installed|NotInstalled|...>
+Set a predetermined answer for the edit pkgbuild menu question. This answer
+will be used instead of reading from standard input but will be parsed exactly
+the same.
+
+.TP
+.B \-\-answerupgrade <Repo|^Repo|None|...>
+Set a predetermined answer for the upgrade menu question. Selects which package
+ranges or repos to omit for updates. This answer will be used instead of
+reading from standard input but will be treated exactly the same.
+
+.TP
+.B \-\-noanswerclean
+Unset the answer for the clean build menu.
+
+.TP
+.B \-\-noanswerdiff
+Unset the answer for the diff menu.
+
+.TP
+.B \-\-noansweredit
+Unset the answer for the edit pkgbuild menu.
+
+.TP
+.B \-\-noanswerupgrade
+Unset the answer for the upgrade menu.
+
+.TP
+.B \-\-cleanmenu
+Show the clean menu. This menu gives you the chance to fully delete the
+downloaded build files from Yay's cache before redownloading a fresh copy.
+
+If 'cleanmenu' is enabled in the configuration file, you can temporarily disable it by
+using '--cleanmenu=false' on the command line
+
+.TP
+.B \-\-diffmenu
+Show the diff menu. This menu gives you the option to view diffs from
+build files before building.
+
+Diffs are shown via \fBgit diff\fR which uses
+less by default. This behaviour can be changed via git's config, the
+\fB$GIT_PAGER\fR or \fB$PAGER\fR environment variables.
+
+.TP
+.B \-\-editmenu
+Show the edit menu. This menu gives you the option to edit or view PKGBUILDs
+before building.
+
+\fBWarning\fR: Yay resolves dependencies ahead of time via the RPC. It is not
+recommended to edit pkgbuild variables unless you know what you are doing.
+
+.TP
+.B \-\-askremovemake
+Ask to remove makedepends after installing packages.
+
+.TP
+.B \-\-askyesremovemake
+Ask to remove makedepends after installing packages(with "Y" as default).
+
+.TP
+.B \-\-removemake
+Remove makedepends after installing packages.
+
+.TP
+.B \-\-noremovemake
+Do not remove makedepends after installing packages.
+
+.TP
+.B \-\-topdown
+Display repository packages first and then AUR packages.
+
+.TP
+.B \-\-bottomup
+Show AUR packages first and then repository packages.
+
+.TP
+.B \-\-singlelineresults
+Override pacman's usual double-line search result format and list each result
+on its own line.
+
+.TP
+.B \-\-doublelineresults
+Follow pacman's double-line search result format and list each result using
+two lines.
+
+.TP
+.B \-\-devel
+During sysupgrade also check AUR development packages for updates. Currently
+only Git packages are supported.
+
+Devel checking is done using \fBgit ls-remote\fR. The newest commit hash is
+compared against the hash at install time. This allows devel updates to be
+checked almost instantly and not require the original pkgbuild to be downloaded.
+
+The slower pacaur-like devel checks can be implemented manually by piping
+a list of packages into yay (see \fBexamples\fR).
+
+If 'devel' is enabled in the configuration file, you can temporarily disable it by
+using '--devel=false' on the command line
+
+.TP
+.B \-\-cleanafter
+Remove untracked files after installation.
+
+Untracked files are removed with the exception of directories.
+This allows VCS packages to easily pull an update
+instead of having to reclone the entire repo.
+
+.TP
+.B \-\-keepsrc
+Keep pkg/ and src/ after building packages
+
+.TP
+.B \-\-timeupdate
+During sysupgrade also compare the build time of installed packages against
+the last modification time of each package's AUR page.
+
+.TP
+.B \-\-separatesources
+Separate query results by source, AUR and sync
+
+.TP
+.B \-\-redownload
+Always download pkgbuilds of targets even when a copy is available in cache.
+
+.TP
+.B \-\-redownloadall
+Always download pkgbuilds of all AUR packages even when a copy is available
+in cache.
+
+.TP
+.B \-\-noredownload
+When downloading pkgbuilds if the pkgbuild is found in cache and is equal or
+newer than the AUR's version use that instead of downloading a new one.
+
+.TP
+.B \-\-provides
+Look for matching providers when searching for AUR packages. When multiple
+providers are found a menu will appear prompting you to pick one. This
+increases dependency resolve time although this should not be noticeable.
+
+.TP
+.B \-\-pgpfetch
+Prompt to import unknown PGP keys from the \fBvalidpgpkeys\fR field of each
+PKGBUILD.
+
+.TP
+.B \-\-useask
+Use pacman's --ask flag to automatically confirm package conflicts. Yay lists
+conflicts ahead of time. It is possible that Yay does not detect
+a conflict, causing a package to be removed without the user's confirmation.
+However, this is very unlikely.
+
+.TP
+.B \-\-combinedupgrade
+During sysupgrade, Yay will first perform a refresh, then show
+its combined menu of repo and AUR packages that will be upgraded. Then after
+reviewing the pkgbuilds, the repo and AUR upgrade will start with no need
+for manual intervention.
+
+If Yay exits for any reason After the refresh without upgrading. It is then
+the user's responsibility to either resolve the reason Yay exited or run
+a sysupgrade through pacman directly.
+
+.TP
+.B \-\-batchinstall
+When building and installing AUR packages instead of installing each package
+after building, queue each package for install. Then once either all packages
+are built or a package in the build queue is needed as a dependency to build
+another package, install all the packages in the install queue.
+
+.TP
+.B \-\-rebuild
+Always build target packages even when a copy is available in cache.
+
+.TP
+.B \-\-rebuildall
+Always build all AUR packages even when a copy is available
+in cache.
+
+.TP
+.B \-\-rebuildtree
+When installing an AUR package rebuild and reinstall all of its AUR
+dependencies recursively, even the ones already installed. This flag allows
+you to easily rebuild packages against your current system's libraries if they
+have become incompatible.
+
+.TP
+.B \-\-norebuild
+When building packages if the package is found in cache and is an equal version
+to the one wanted skip the package build and use the existing package.
+
+.TP
+.B \-\-mflags <flags>
+Passes arguments to makepkg. These flags get passed to every instance where
+makepkg is called by Yay. Arguments are split on whitespace before being
+passed to makepkg. Multiple arguments may be passed by supplying a space
+separated list that is quoted by the shell.
+
+.TP
+.B \-\-gpgflags <flags>
+Passes arguments to gpg. These flags get passed to every instance where
+gpg is called by Yay. Arguments are split on whitespace before being
+passed to gpg. Multiple arguments may be passed by supplying a space
+separated list that is quoted by the shell.
+
+.TP
+.B \-\-sudo <command>
+The command to use for \fBsudo\fR calls. This can be a command in
+\fBPATH\fR or an absolute path to the file.
+The sudoloop is not guaranteed to work with a custom \fBsudo\fR command.
+
+.TP
+.B \-\-sudoflags <flags>
+Passes arguments to sudo. These flags get passed to every instance where
+sudo is called by Yay. Arguments are split on whitespace before being
+passed to sudo. Multiple arguments may be passed by supplying a space
+separated list that is quoted by the shell.
+
+.TP
+.B \-\-sudoloop
+Loop sudo calls in the background to prevent sudo from timing out during long
+builds.
+
+.SH EXAMPLES
+.TP
+yay \fIfoo\fR
+Search and install from the repos and the \fBAUR\fR\ using yogurt mode.
+
+.TP
+yay \-Syu
+Update package list and upgrade all currently installed repo and \fBAUR\fR.
+
+.TP
+yay \-Sua
+Update all currently installed \fBAUR\fR packages.
+
+.TP
+yay \-S \fIfoo\fR
+Installs package \fIfoo\fR from the repos or the \fBAUR\fR.
+
+.TP
+yay \-Ss \fIfoo\fR
+Searches for package \fIfoo\fR on the repos or the \fBAUR\fR.
+
+.TP
+yay \-Si \fIfoo\fR
+Gets information about package \fIfoo\fR from the repos or the \fBAUR\fR.
+
+.TP
+yay \-S \fIfoo\fR \-\-mflags "\-\-skipchecksums \-\-skippgpcheck"
+Installs \fIfoo\fR while skipping checksums and pgp checks.
+
+.TP
+yay \-\-devel \-\-save
+Sets devel to true in the config.
+
+.TP
+yay \-P \-\-stats
+Shows statistics for installed packages and system health.
+
+.TP
+pacman -Qmq | grep -Ee '-(cvs|svn|git|hg|bzr|darcs)$' | yay -S --needed -
+pacaur-like devel check.
+
+.SH ENVIRONMENT VARIABLES
+.TP
+.B AURDEST
+Can be set to configure the build directory.
+
+Overridden by \-\-builddir.
+
+.TP
+.B VISUAL, EDITOR
+When editor is not configured, use these variables to pick what editor
+to use when editing PKGBUILDS.
+
+.SH FILES
+.TP
+.B CONFIG DIRECTORY
+The config directory is \fI$XDG_CONFIG_HOME/yay/\fR. If
+\fB$XDG_CONFIG_HOME\fR is unset, the config directory will fall back to
+\fI$HOME/.config/yay\fR.
+
+\fIconfig.json\fR Is used to store all of Yay's config options. Editing
+this file should be done through Yay, using the options
+mentioned in \fBPERMANENT CONFIGURATION SETTINGS\fR.
+
+.TP
+.B CACHE DIRECTORY
+The cache directory is \fI$XDG_CACHE_HOME/yay/\fR. If
+\fB$XDG_CACHE_HOME\fR is unset, the cache directory will fall back to
+\fI$HOME/.cache/yay\fR.
+
+\fIcompletion.cache\fR holds a list of of all packages, including the AUR,
+for shell completion. By default the completion files are refreshed every
+7 days.
+
+\fIvcs.json\fR tracks VCS packages and the latest commit of each source. If
+any of these commits change the package will be upgraded during a devel update.
+
+.TP
+.B BUILD DIRECTORY
+Unless otherwise set this should be the same as \fBCACHE DIRECTORY\fR. This
+directory is used to store downloaded AUR Packages as well as any source files
+and built packages from those packages.
+
+.TP
+.B PACMAN.CONF
+Yay uses Pacman's config file to set certain pacman options either through
+go\-alpm or Yay itself. Options inherited include most libalpm options and
+pacman options.
+
+Notably: \fBDatabases\fR, \fBColor\fR and \fB*Path/*Dir\fR options are used.
+
+.SH SEE ALSO
+.BR makepkg (8),
+.BR makepkg.conf (5),
+.BR PKGBUILD (5),
+.BR pacman (8),
+.BR pacman.conf (5)
+
+See the arch wiki at https://wiki.archlinux.org/index.php/Arch_User_Repository for more info on the \fBAUR\fR.
+
+.SH BUGS
+Please report bugs to our GitHub page https://github.com/Jguer/yay
+
+.SH AUTHORS
+Jguer <joguer@proton.me>
+.br
+Morgan <morganamilo@archlinux.org>
