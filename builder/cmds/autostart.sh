@@ -8,6 +8,8 @@ chroot_bash() {
     OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
     USER="$OMARCHY_USER" \
     HOME="/home/$OMARCHY_USER" \
+    OMARCHY_REPO="$(<omarchy_installer_repo.txt)" \
+    OMARCHY_REF="$(<omarchy_installer_ref.txt)" \
     /bin/bash "$@"
 }
 
@@ -49,5 +51,5 @@ EOF
   chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
 
   # Run Omarchy web installer
-  chroot_bash -lc "wget -qO- https://omarchy.org/install-dev | bash"
+  chroot_bash -lc "wget -qO- https://omarchy.org/install | bash"
 fi

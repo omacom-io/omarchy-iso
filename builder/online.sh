@@ -21,7 +21,10 @@ printf '%s\n' "${arch_packages[@]}" >>"packages.x86_64"
 
 # Retrieve the latest configurator for setting up user and selecting install disk.
 wget -qO "airootfs/root/configurator" \
-  https://raw.githubusercontent.com/omacom-io/omarchy-configurator/HEAD/configurator
+  https://raw.githubusercontent.com/$OMARCHY_CONFIGURATOR_REPO/$OMARCHY_CONFIGURATOR_REF/configurator
+
+echo "$OMARCHY_INSTALLER_REPO" >airootfs/root/omarchy_installer_repo.txt
+echo "$OMARCHY_INSTALLER_REF" >airootfs/root/omarchy_installer_ref.txt
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
 rm "airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
