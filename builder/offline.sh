@@ -63,7 +63,7 @@ prepare_offline_mirror() {
 
     # Download all the packages to the offline mirror inside the ISO
     pacman --config $cache_dir/pacman.conf \
-      --noconfirm -Syw "${all_packages[@]}" \
+      --noconfirm -Syu "${all_packages[@]}" \
       --cachedir $offline_mirror_dir/ \
       --dbpath /tmp/offlinedb
 
@@ -213,7 +213,7 @@ echo "Populating host offline mirror with ISO packages: ${iso_packages[@]}"
 # And we have to use the hosts pacman.conf since all other pacman.conf
 # files are prepped for offline use by this point.
 pacman --config /etc/pacman.conf \
-  --noconfirm -Syw $(echo "${iso_packages[@]}" | sed 's/tzupdate//g') \
+  --noconfirm -Syu $(echo "${iso_packages[@]}" | sed 's/tzupdate//g') \
   --cachedir "/var/cache/omarchy/mirror/offline/" \
   --dbpath /tmp/cleandb
 
