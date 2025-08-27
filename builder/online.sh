@@ -3,7 +3,7 @@ set -e
 
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
-pacman --noconfirm -Sy archlinux-keyring archiso sudo base-devel git
+pacman --noconfirm -Syu archlinux-keyring archiso sudo base-devel git
 
 # Packages needed for the Omarchy configurator (installer will fetch its own)
 arch_packages=(git gum openssl iw jq)

@@ -5,8 +5,8 @@ set -e
 # Note that these are packages installed to the Arch container
 # used to build the ISO.
 pacman-key --init
-pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git python-pip sudo base-devel jq
+pacman --noconfirm -Syu archlinux-keyring
+pacman --noconfirm -Syu archiso git python-pip sudo base-devel jq
 
 cache_dir=$(realpath --canonicalize-missing ~/.cache/omarchy/iso_$(date +%Y-%m-%d))
 offline_mirror_dir="$cache_dir/airootfs/var/cache/omarchy/mirror/offline"
