@@ -1,0 +1,5 @@
+#!/bin/bash
+
+OMARCHY_INSTALLER_REF=dev \
+  OMARCHY_INSTALL_URL=https://omarchy.org/install-dev \
+  omarchy-iso-make --no-boot-offer
