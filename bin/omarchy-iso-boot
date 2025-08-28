@@ -14,9 +14,8 @@ fi
 DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $2 != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 20G
+  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
 fi
-
-cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
 
 # Boot from ISO before we've installed, then boot from drive after
 qemu-system-x86_64 \
