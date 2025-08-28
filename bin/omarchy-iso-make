@@ -19,19 +19,27 @@ OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-basecamp/omarchy}"
 OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
 OMARCHY_INSTALLER_URL="${OMARCHY_INSTALLER_URL:-https://omarchy.org/install}"
 
-# Run the builder
-docker run --rm \
-  --privileged \
-  -e "OMARCHY_CONFIGURATOR_REPO=$OMARCHY_CONFIGURATOR_REPO" \
-  -e "OMARCHY_CONFIGURATOR_REF=$OMARCHY_CONFIGURATOR_REF" \
-  -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO" \
-  -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF" \
-  -e "OMARCHY_INSTALLER_URL=$OMARCHY_INSTALLER_URL" \
-  -v "$BUILD_RELEASE_PATH/:/out/" \
-  -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro" \
-  -v "$BUILD_ROOT/archiso:/archiso:ro" \
-  -v "$BUILD_ROOT/builder:/builder:ro" \
-  archlinux/archlinux:latest /$BUILD_SCRIPT
+DOCKER_ARGS=(
+  --rm
+  --privileged
+  -e "OMARCHY_CONFIGURATOR_REPO=$OMARCHY_CONFIGURATOR_REPO"
+  -e "OMARCHY_CONFIGURATOR_REF=$OMARCHY_CONFIGURATOR_REF"
+  -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
+  -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
+  -e "OMARCHY_INSTALLER_URL=$OMARCHY_INSTALLER_URL"
+  -v "$BUILD_RELEASE_PATH/:/out/"
+  -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro"
+  -v "$BUILD_ROOT/archiso:/archiso:ro"
+  -v "$BUILD_ROOT/builder:/builder:ro"
+)
+
+# Use local pacman cache if you already have one on host to speed up repeat runs
+if [ -d "/var/cache/pacman/pkg" ]; then
+  DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
+fi
+
+# Run the builder with assembled args
+docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
 
 # Make iso accessible to all
 sudo chmod 777 -R "$BUILD_RELEASE_PATH"
