@@ -8,7 +8,7 @@ if [[ $1 != "--no-make" ]]; then
   echo -e "\e[32mMaking master ISO\e[0m"
   OMARCHY_INSTALLER_REF=master omarchy-iso-make --no-boot-offer
   echo -e "\e[32m\nMaking dev ISO\e[0m"
-  OMARCHY_INSTALLER_REF=dev omarchy-iso-make --no-boot-offer
+  OMARCHY_INSTALLER_REF=dev OMARCHY_INSTALL_URL=https://omarchy.org/install-dev omarchy-iso-make --no-boot-offer
 else
   echo -e "\e[31mSkipping remaking ISOs\e[0m"
 fi
