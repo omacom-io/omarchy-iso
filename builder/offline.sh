@@ -52,7 +52,7 @@ prepare_offline_mirror() {
   if [ ${#all_packages[@]} -gt 0 ]; then
     # This assume we've manually built all the AUR packages
     # and made them accessible "online" during the build process:
-    (cd $cache_dir/ && git apply /aur-mirror.patch)
+    (cd $cache_dir/ && git apply /builder/patches/offline/aur-mirror.patch)
 
     mkdir -p /tmp/offlinedb
 
@@ -191,7 +191,7 @@ printf '%s\n' "${arch_packages[@]}" >>"$cache_dir/packages.x86_64"
 
 # We have to do this, because `mkarchiso` copies in the pacman.conf
 # in use during the build process - so it needs to be made offline.
-(cd "$cache_dir" && git apply /offline-mirror.patch)
+(cd "$cache_dir" && git apply /builder/patches/offline/offline-mirror.patch)
 cp $cache_dir/pacman.conf "$cache_dir/airootfs/etc/pacman.conf"
 
 # And we also need to duplicate the offline mirror.
