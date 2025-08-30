@@ -93,11 +93,6 @@ make_archiso_offline() {
   rm "$cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
   rm -rf "$cache_dir/airootfs/etc/systemd/system/reflector.service.d"
   rm -rf "$cache_dir/airootfs/etc/xdg/reflector"
-
-  # Disable the WKD sync service that would try to fetch keys from the network
-  # but ensure the keyring is already populated
-  rm -f "$cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/archlinux-keyring-wkd-sync.service"
-  rm -f "$cache_dir/airootfs/etc/systemd/system/timers.target.wants/archlinux-keyring-wkd-sync.timer"
 }
 
 mkdir -p $cache_dir/
