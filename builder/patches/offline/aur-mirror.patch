@@ -5,6 +5,6 @@
  #SigLevel = Optional TrustAll
  #Server = file:///home/custompkgs
 +
-+[aur]
++[omarchy]
 +SigLevel = Optional TrustAll
-+Server = https://omarchy.blyg.se/$repo/os/$arch/
++Server = https://pkgs.omarchy.org/$arch
