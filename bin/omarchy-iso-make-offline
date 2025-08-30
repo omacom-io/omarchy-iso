@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Abort if anything fails
+set -e
+
+# Ensure we have the submodule checked out
+git submodule update --init --recursive --jobs=8
+
+# Prepare build repo
+BUILD_SCRIPT="builder/offline.sh"
+BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+BUILD_RELEASE_PATH="$BUILD_ROOT/release"
+mkdir -p "$BUILD_RELEASE_PATH"
+
+OMARCHY_CONFIGURATOR_REPO="${OMARCHY_CONFIGURATOR_REPO:-omacom-io/omarchy-configurator}"
+OMARCHY_CONFIGURATOR_REF="${OMARCHY_CONFIGURATOR_REF:-master}"
+
+OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-basecamp/omarchy}"
+OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
+OMARCHY_INSTALLER_URL="${OMARCHY_INSTALLER_URL:-https://omarchy.org/install}"
+
+DOCKER_ARGS=(
+  --rm
+  --privileged
+  -e "OMARCHY_CONFIGURATOR_REPO=$OMARCHY_CONFIGURATOR_REPO"
+  -e "OMARCHY_CONFIGURATOR_REF=$OMARCHY_CONFIGURATOR_REF"
+  -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
+  -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
+  -e "OMARCHY_INSTALLER_URL=$OMARCHY_INSTALLER_URL"
+  -v "$BUILD_RELEASE_PATH/:/out/"
+  -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro"
+  -v "$BUILD_ROOT/archiso:/archiso:ro"
+  -v "$BUILD_ROOT/builder:/builder:ro"
+)
+
+# Use local pacman cache if you already have one on host to speed up repeat runs
+if [ -d "/var/cache/pacman/pkg" ]; then
+  DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
+fi
+
+# Mount persistent cache for offline mirror packages to avoid re-downloading
+OFFLINE_CACHE_DIR="$HOME/.cache/omarchy-offline-mirror"
+mkdir -p "$OFFLINE_CACHE_DIR"
+DOCKER_ARGS+=(-v "$OFFLINE_CACHE_DIR:/var/cache/omarchy")
+
+# Also mount the build cache directory where packages are initially downloaded
+# Use a fixed name to avoid timezone/date mismatch issues between host and container
+BUILD_DATE=$(date +%Y-%m-%d)
+BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy/mirror/offline"
+mkdir -p "$BUILD_CACHE_DIR"
+# Pass the same date to the container via environment variable
+DOCKER_ARGS+=(-e "ISO_BUILD_DATE=${BUILD_DATE}")
+DOCKER_ARGS+=(-v "$BUILD_CACHE_DIR:/root/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy/mirror/offline")
+
+# Run the builder with assembled args
+docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
+
+# Make iso accessible to all
+sudo chmod 777 -R "$BUILD_RELEASE_PATH"
+
+# Move as install ref
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
+iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
+mv "$latest_iso" "$iso_ref"
+
+# Offer to boot the new build
+if [[ $1 != "--no-boot-offer" ]]; then
+  echo
+  gum confirm "Boot $iso_ref?" && omarchy-iso-boot "$iso_ref"
+fi
