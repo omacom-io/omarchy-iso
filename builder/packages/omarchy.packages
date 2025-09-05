@@ -1,6 +1,8 @@
 1password-beta
 1password-cli
 alacritty
+apple-t2-audio-config
+apple-bcm-firmware
 base
 base-devel
 bash-completion
@@ -59,6 +61,7 @@ libpulse
 libqalculate
 libreoffice-fresh
 linux
+linux-t2
 linux-firmware
 llvm
 localsend
@@ -99,6 +102,8 @@ sushi
 swaybg
 swayosd
 system-config-printer
+t2fanrd
+tiny-dfr
 tldr
 tree-sitter-cli
 ttf-cascadia-mono-nerd
