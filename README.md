@@ -36,4 +36,4 @@ Run `./bin/omarchy-iso-upload [release/omarchy.iso]`. This requires you've confi
 
 ## Full release of the ISO
 
-Run `./bin/omarchy-iso-make` to create, test, sign, and upload the ISO in one flow.
+Run `./bin/omarchy-iso-release` to create, test, sign, and upload the ISO in one flow.
