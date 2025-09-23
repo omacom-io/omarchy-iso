@@ -22,6 +22,11 @@ Example usage:
 OMARCHY_INSTALLER_REPO="myuser/omarchy-fork" OMARCHY_INSTALLER_REF="some-feature" ./bin/omarchy-iso-make
 ```
 
+Alternatively, you can create a .iso with local code instead of pulling down a Github repository:
+```bash
+./bin/omarchy-iso-make --local-omarchy path/to/your/local/clone
+```
+
 ## Testing the ISO
 
 Run `./bin/omarchy-iso-boot [release/omarchy.iso]`.

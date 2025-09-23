@@ -25,8 +25,14 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
-# Clone Omarchy itself
-git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+# Clone or copy Omarchy itself
+if [[ "$USE_LOCAL_OMARCHY" == "1" ]]; then
+  echo "Using local omarchy from /local-omarchy"
+  cp -r /local-omarchy "$build_cache_dir/airootfs/root/omarchy"
+else
+  echo "Cloning omarchy from https://github.com/$OMARCHY_INSTALLER_REPO.git (ref: $OMARCHY_INSTALLER_REF)"
+  git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+fi
 
 # Make log uploader available in the ISO too
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
