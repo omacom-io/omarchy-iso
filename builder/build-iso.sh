@@ -5,7 +5,9 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+pacman --noconfirm -Sy git sudo base-devel jq grub
+# Install a specific older version of archiso that was known to work
+pacman --noconfirm -U https://archive.archlinux.org/packages/a/archiso/archiso-85-1-any.pkg.tar.zst
 
 # Setup build locations
 build_cache_dir="/var/cache"
