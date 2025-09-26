@@ -5,7 +5,9 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+pacman --noconfirm -Sy git sudo base-devel jq grub
+# Install a specific older version of archiso that was known to work
+pacman --noconfirm -U https://archive.archlinux.org/packages/a/archiso/archiso-85-1-any.pkg.tar.zst
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -25,8 +27,14 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
-# Clone Omarchy itself
-git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+# Clone or copy Omarchy itself
+if [[ "$USE_LOCAL_OMARCHY" == "1" ]]; then
+  echo "Using local omarchy from /local-omarchy"
+  cp -r /local-omarchy "$build_cache_dir/airootfs/root/omarchy"
+else
+  echo "Cloning omarchy from https://github.com/$OMARCHY_INSTALLER_REPO.git (ref: $OMARCHY_INSTALLER_REF)"
+  git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+fi
 
 # Make log uploader available in the ISO too
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"

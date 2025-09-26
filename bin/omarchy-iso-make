@@ -5,6 +5,7 @@ set -e
 
 # Parse command line arguments
 NO_CACHE=""
+LOCAL_OMARCHY_PATH=""
 while [[ $# -gt 0 ]]; do
   case $1 in
   --no-cache)
@@ -15,9 +16,13 @@ while [[ $# -gt 0 ]]; do
     NO_BOOT_OFFER=1
     shift
     ;;
+  --local-omarchy)
+    LOCAL_OMARCHY_PATH="$2"
+    shift 2
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-omarchy PATH]"
     exit 1
     ;;
   esac
@@ -46,6 +51,16 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
+
+# Mount local omarchy directory if provided
+if [[ -n "$LOCAL_OMARCHY_PATH" ]]; then
+  if [[ ! -d "$LOCAL_OMARCHY_PATH" ]]; then
+    echo "Error: Local omarchy path '$LOCAL_OMARCHY_PATH' does not exist"
+    exit 1
+  fi
+  DOCKER_ARGS+=(-v "$(realpath "$LOCAL_OMARCHY_PATH"):/local-omarchy:ro")
+  DOCKER_ARGS+=(-e "USE_LOCAL_OMARCHY=1")
+fi
 
 # Use local pacman cache if you already have one on host to speed up repeat runs
 if [ -d "/var/cache/pacman/pkg" ]; then
