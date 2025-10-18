@@ -1,3 +1,4 @@
 #!/bin/bash
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
-OMARCHY_INSTALLER_REF=dev omarchy-iso-make
+OMARCHY_INSTALLER_REF=dev "${SCRIPT_DIR}/omarchy-iso-make"
