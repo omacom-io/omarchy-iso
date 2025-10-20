@@ -121,7 +121,7 @@ user_form() {
   done
 
   # Hash the password using yescrypt
-  password_hash=$(openssl passwd -6 "$password")
+  password_hash=$(openssl passwd -6 pass:"$password")
 
   full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Full name> ")
   email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ")
