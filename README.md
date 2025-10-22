@@ -4,7 +4,7 @@ The Omarchy ISO streamlines [the installation of Omarchy](https://learn.omacom.i
 
 ## Downloading the latest ISO
 
-[Download Omarchy Online ISO](https://iso.omarchy.org/omarchy-online.iso) (1.4GB)
+See the ISO link on [omarchy.org](https://omarchy.org).
 
 ## Creating the ISO
 

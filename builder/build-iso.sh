@@ -36,6 +36,27 @@ cp "$build_cache_dir/airootfs/root/omarchy/bin/omarchy-upload-log" "$build_cache
 mkdir -p "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy"
 cp -r "$build_cache_dir/airootfs/root/omarchy/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy/"
 
+# Download and verify Node.js binary for offline installation
+NODE_DIST_URL="https://nodejs.org/dist/latest"
+
+# Get checksums and parse filename and SHA
+NODE_SHASUMS=$(curl -fsSL "$NODE_DIST_URL/SHASUMS256.txt")
+NODE_FILENAME=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $2}')
+NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $1}')
+
+# Download the tarball
+curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "/tmp/$NODE_FILENAME"
+
+# Verify SHA256 checksum
+echo "$NODE_SHA /tmp/$NODE_FILENAME" | sha256sum -c - || {
+    echo "ERROR: Node.js checksum verification failed!"
+    exit 1
+}
+
+# Copy to ISO
+mkdir -p "$build_cache_dir/airootfs/opt/packages/"
+cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
+
 # Add our additional packages to packages.x86_64
 arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
