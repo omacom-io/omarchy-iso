@@ -71,6 +71,7 @@ install_base_system() {
   # Initialize and populate the keyring
   pacman-key --init
   pacman-key --populate archlinux
+  pacman-key --populate omarchy
 
   # Sync the offline database so pacman can find packages
   pacman -Sy --noconfirm
