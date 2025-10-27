@@ -22,7 +22,11 @@ install_arch() {
   touch /var/log/omarchy-install.log
 
   start_log_output
-  install_base_system 2>&1 | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log
+
+  # Set CURRENT_SCRIPT for the trap to display better when nothing is returned for some reason
+  CURRENT_SCRIPT="install_base_system"
+  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
+  unset CURRENT_SCRIPT
   stop_log_output
 }
 
