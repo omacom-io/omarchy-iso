@@ -27,6 +27,8 @@ release_master_iso="$BUILD_RELEASE_PATH/omarchy-$BULD_VERSION.iso"
 cp "$latest_master_iso" "$release_master_iso"
 echo -e "\e[32mSigning master ISO\e[0m"
 omarchy-iso-sign "$release_master_iso"
+master_sha=$(sha256sum "$release_master_iso")
+echo -e "\e[32mSHA256 for master ISO: $master_sha\e[0m"
 omarchy-iso-upload "$release_master_iso"
 
 # Sign and upload dev ISO
@@ -35,4 +37,6 @@ release_dev_iso="$BUILD_RELEASE_PATH/omarchy-$BULD_VERSION-dev.iso"
 cp "$latest_dev_iso" "$release_dev_iso"
 echo -e "\e[32mSigning dev ISO\e[0m"
 omarchy-iso-sign "$release_dev_iso"
+dev_sha=$(sha256sum "$release_dev_iso")
+echo -e "\e[32mSHA256 for dev ISO: $dev_sha\e[0m"
 omarchy-iso-upload "$release_dev_iso"
