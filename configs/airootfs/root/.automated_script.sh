@@ -159,7 +159,7 @@ fix_kernel_cmdline_for_systemd() {
     cp -a "$LIMINE_CONF" "${LIMINE_CONF}.bak.$(date +%s)" 2>/dev/null || true
 
     busybox_cmd="cryptdevice=PARTUUID=${PARTUUID}:root"
-    systemd_cmd="rd.luks.name=${LUKS_UUID}=root"
+    systemd_cmd="rd.luks.name=${LUKS_UUID}=root rd.luks.options=tries=0"
 
     sed -i "s|${busybox_cmd}|${systemd_cmd}|g" "$LIMINE_CONF"
   done
