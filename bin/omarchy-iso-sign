@@ -7,7 +7,7 @@ fi
 
 if ! pacman -Q gnupg >/dev/null; then
   sudo pacman -S --noconfirm --needed --quiet gnupg
-  echo "you'll need to generate a new key with: gpg --full-generate-key"
+  echo "You'll need to import key with: gpg --import path/to/signing-key.asc"
 fi
 
 gnupg_user_key=$(gpg --list-secret-keys --keyid-format=long | awk '/^[[:space:]]/{print $1; exit}')
