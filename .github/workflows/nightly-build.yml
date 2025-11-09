@@ -22,16 +22,9 @@ jobs:
       
     - name: Build ISO in Arch Linux container
       run: |
-        docker run --rm \
-          --privileged \
-          -v "${{ github.workspace }}:/workspace" \
-          -w /workspace \
-          archlinux:latest \
-          bash -c "
-            pacman -Syu --noconfirm && \
-            chmod +x build_iso.sh && \
-            ./build_iso.sh
-          "
+        pacman -Syu --noconfirm
+        chmod +x build_iso.sh
+        ./build_iso.sh
     
     - name: Upload ISO artifact
       uses: actions/upload-artifact@v4
