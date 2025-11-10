@@ -6,7 +6,7 @@ if [ $# -eq 0 ]; then
 fi
 
 if [[ ! -f ~/.config/rclone/rclone.conf ]]; then
-  echo "You must first configure rclone with the R2 credentials: rclone config"
+  echo "You must first configure rclone with the R2 credentials: omarchy-iso-rclone-config"
   exit 1
 fi
 
