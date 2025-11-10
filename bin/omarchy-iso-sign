@@ -11,4 +11,10 @@ if ! pacman -Q gnupg >/dev/null; then
 fi
 
 gnupg_user_key=$(gpg --list-secret-keys --keyid-format=long | awk '/^[[:space:]]/{print $1; exit}')
-gpg --local-user "$gnupg_user_key" --output $1.sig --detach-sig $1
+if [ -z "$gnupg_user_key" ]; then
+  echo "No GPG secret key found. Import or generate a signing key and try again."
+  echo "To import a key: gpg --import path/to/signing-key.asc"
+  echo "To generate a new key: gpg --full-generate-key"
+  exit 1
+fi
+gpg --local-user "$gnupg_user_key" --output "$1.sig" --detach-sig "$1"
