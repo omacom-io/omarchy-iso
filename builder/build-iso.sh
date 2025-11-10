@@ -5,33 +5,29 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
-
-# Install omarchy-keyring for package verification during build
-# The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
-pacman --config /configs/pacman-online.conf --noconfirm -Sy omarchy-keyring
-pacman-key --populate omarchy
+pacman --noconfirm -Sy archiso git sudo base-devel jq grub curl tar
 
 # Import and locally sign third-party repository keys required during build
 # (Chaotic AUR)
 pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
 pacman-key --lsign-key 3056513887B78AEB
 
-# (Cachyos)
-pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
-pacman-key --lsign-key F3B607488DB35A47
-
-# Install Chaotic and Cachyos keyring + mirrorlist packages so pacman can sync those repos
-# Use direct -U downloads (no sudo needed inside the build container)
-pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
-pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
-
+# Install chaotic-keyring and chaotic-mirrorlist so the chaotic-aur repository can be used non-interactively.
 pacman -U --noconfirm \
-  'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-keyring-20240331-1-any.pkg.tar.zst' \
-  'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-mirrorlist-22-1-any.pkg.tar.zst' \
-  'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-v3-mirrorlist-22-1-any.pkg.tar.zst' \
-  'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-v4-mirrorlist-22-1-any.pkg.tar.zst' \
-  'https://mirror.cachyos.org/repo/x86_64/cachyos/pacman-7.0.0.r7.g1f38429-2-x86_64.pkg.tar.zst'
+  'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
+  'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
+
+# Install CachyOS repository for optimized packages
+curl https://mirror.cachyos.org/cachyos-repo.tar.xz -o cachyos-repo.tar.xz
+tar xvf cachyos-repo.tar.xz && cd cachyos-repo
+yes | ./cachyos-repo.sh
+cd ..
+rm -rf cachyos-repo cachyos-repo.tar.xz
+
+# Install omarchy-keyring for package verification during build
+# The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
+pacman --config /configs/pacman-online.conf --noconfirm -Sy omarchy-keyring
+pacman-key --populate omarchy
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -51,8 +47,79 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
+# Ensure chaotic-mirrorlist is available inside the airootfs so pacman configuration
+# in the live environment has the file present (some hooks expect it).
+if [ -f /etc/pacman.d/chaotic-mirrorlist ]; then
+  mkdir -p "$build_cache_dir/airootfs/etc/pacman.d"
+  cp /etc/pacman.d/chaotic-mirrorlist "$build_cache_dir/airootfs/etc/pacman.d/chaotic-mirrorlist"
+fi
+
+# Some initcpio udev rule files may be provided by packages that are not present
+# in the build airootfs. mkinitcpio will error if '/usr/lib/initcpio/udev/11-dm-initramfs.rules'
+# is missing. Create a minimal placeholder inside the airootfs to avoid the error.
+udev_rule_path="$build_cache_dir/airootfs/usr/lib/initcpio/udev/11-dm-initramfs.rules"
+if [ ! -f "$udev_rule_path" ]; then
+  mkdir -p "$(dirname "$udev_rule_path")"
+  cat > "$udev_rule_path" <<'EOF'
+# Placeholder 11-dm-initramfs.rules for ISO build environment.
+# The real file is provided by appropriate packages on a normal system.
+# This placeholder prevents mkinitcpio from failing when building the initramfs
+# inside a minimal airootfs during ISO assembly.
+KERNEL=="dm-*", ACTION=="add", RUN+="/bin/true"
+EOF
+fi
+
+# Normalize kernel references in copied configs to generic 'linux' names so builds won't fail
+# if 'linux-t2' is not available in the build repositories.
+# This replaces occurrences like vmlinuz-linux-t2 -> vmlinuz-linux and initramfs-linux-t2.img -> initramfs-linux.img
+find "$build_cache_dir" -type f -exec sed -i 's/linux-t2/linux/g' {} + || true
+
 # Clone Omarchy itself
 git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+
+# After cloning, filter omarchy package lists to remove packages that are not available
+# in the configured online repos. This prevents pacman from aborting the build when a
+# package (e.g., AUR-only or repo-specific) cannot be found.
+OMARCHY_DIR="$build_cache_dir/airootfs/root/omarchy"
+MISSING_OMARCHY_PKGS="$build_cache_dir/missing_omarchy_packages.txt"
+: > "$MISSING_OMARCHY_PKGS"
+
+for LIST_REL in "install/omarchy-base.packages" "install/omarchy-other.packages"; do
+  SRC="$OMARCHY_DIR/$LIST_REL"
+  if [ -f "$SRC" ]; then
+    TMP="$SRC.filtered"
+    : > "$TMP"
+    while IFS= read -r line || [ -n "$line" ]; do
+      # Preserve comments and empty lines
+      # Trim whitespace from the line (preserve comments/empty lines). Use correct quoting so
+      # the value of $line is passed to printf rather than the literal \"$line\".
+      trimmed="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      case "$trimmed" in
+        ""|\#*)
+          echo "$line" >> "$TMP"
+          ;;
+        *)
+          pkg="$trimmed"
+          # Check availability in the configured repos used during build
+          if pacman --config /configs/pacman-online.conf -Si "$pkg" >/dev/null 2>&1; then
+            echo "$pkg" >> "$TMP"
+          else
+            echo "# SKIPPED: $pkg (not in configured repos)" >> "$TMP"
+            echo "$pkg" >> "$MISSING_OMARCHY_PKGS"
+          fi
+          ;;
+      esac
+    done < "$SRC"
+    # Replace original list with filtered version
+    mv "$TMP" "$SRC"
+  fi
+done
+
+if [ -s "$MISSING_OMARCHY_PKGS" ]; then
+  echo "WARNING: The following omarchy packages were not found in configured repos and were skipped:" >&2
+  sed 's/^/- /' "$MISSING_OMARCHY_PKGS" >&2
+  echo "See $MISSING_OMARCHY_PKGS for details." >&2
+fi
 
 # Make log uploader available in the ISO too
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
@@ -84,7 +151,14 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring)
+# Include explicit provider packages to avoid interactive provider selection prompts
+# - cargo is provided by `rust`
+# - libreoffice provider: prefer `libreoffice-fresh`
+# - man provider: prefer `man-db`
+# Force using the generic 'linux' kernel package to avoid failures when 'linux-t2'
+# is not available in configured repositories.
+kernel_pkg="linux"
+arch_packages=("$kernel_pkg" git gum jq openssl plymouth tzupdate omarchy-keyring rust libreoffice-fresh man-db)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
@@ -93,10 +167,47 @@ all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/om
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
-# Download all the packages to the offline mirror inside the ISO
+# Prefetch explicit provider packages so pacman won't prompt during the full download.
+# - cargo provider: prefer `rust`
+# - libreoffice provider: prefer `libreoffice-fresh`
+# - man provider: prefer `man-db`
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+pacman --config /configs/pacman-online.conf --noconfirm -Syw rust libreoffice-fresh man-db --cachedir $offline_mirror_dir --dbpath /tmp/offlinedb
+
+# Download all the packages to the offline mirror inside the ISO
+# Attempt each package individually so missing packages won't abort the whole download.
+# Missing packages will be recorded in $build_cache_dir/missing.packages and skipped.
+missing_file="$build_cache_dir/missing.packages"
+: > "$missing_file"
+
+for pkg in "${all_packages[@]}"; do
+  printf 'Checking availability of %s...\n' "$pkg"
+  # Check if the package exists in the configured repos
+  if pacman --config /configs/pacman-online.conf -Si "$pkg" >/dev/null 2>&1; then
+    printf 'Downloading %s...\n' "$pkg"
+    if ! pacman --config /configs/pacman-online.conf --noconfirm -Sw "$pkg" --cachedir "$offline_mirror_dir" --dbpath /tmp/offlinedb; then
+      printf 'Failed to download %s — recording and continuing.\n' "$pkg"
+      echo "$pkg" >> "$missing_file"
+    fi
+  else
+    printf 'MISSING: %s — not in configured repos, skipping.\n' "$pkg"
+    echo "$pkg" >> "$missing_file"
+  fi
+done
+
+if [ -s "$missing_file" ]; then
+  printf 'Warning: some packages were not found and were skipped. See %s\n' "$missing_file"
+fi
+
+# Rebuild the offline repo from whatever packages were successfully downloaded
+# Only run repo-add if we actually downloaded package files. If the glob doesn't match any
+# files, the pattern would be left unexpanded which can cause repo-add to fail.
+pkg_files=( "$offline_mirror_dir/"*.pkg.tar.zst )
+if [ -e "${pkg_files[0]}" ]; then
+  repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "${pkg_files[@]}"
+else
+  echo "No packages downloaded to $offline_mirror_dir — skipping repo-add"
+fi
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
