@@ -24,7 +24,8 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           chmod +x build_iso.sh
-          ./builder/build_iso.sh
+          ls -lahR
+          find . -name build_iso.sh -exec {} \;
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
