@@ -199,6 +199,11 @@ if [ -s "$missing_file" ]; then
   printf 'Warning: some packages were not found and were skipped. See %s\n' "$missing_file"
 fi
 
+# Clean up any background processes and wait for system to settle before repo-add
+# This helps avoid resource exhaustion issues in containerized environments
+wait
+sync
+
 # Rebuild the offline repo from whatever packages were successfully downloaded
 # Only run repo-add if we actually downloaded package files. If the glob doesn't match any
 # files, the pattern would be left unexpanded which can cause repo-add to fail.
