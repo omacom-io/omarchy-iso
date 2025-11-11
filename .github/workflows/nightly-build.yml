@@ -23,7 +23,7 @@ jobs:
     - name: Build ISO in Arch Linux container
       run: |
         pacman -Syu --noconfirm && \
-        chmod +x builder/build_iso.sh && \
+        chmod +x ./builder/build_iso.sh && \
         ./builder/build_iso.sh
     
     - name: Upload ISO artifact
