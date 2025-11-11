@@ -8,7 +8,7 @@ See the ISO link on [omarchy.org](https://omarchy.org).
 
 ## Creating the ISO
 
-Run `./bin/omarchy-iso-make` and the output goes into `./release`.
+Run `./bin/omarchy-iso-make` and the output goes into `./release`. You can build from your local $OMARCHY_PATH for testing by using `--local-source` or from a checkout of the dev branch (instead of master) by using `--dev`.
 
 ### Environment Variables
 
