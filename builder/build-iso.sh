@@ -6,7 +6,7 @@ set -e
 pacman-key --init
 pacman -Syu
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy git jq grub archiso qt5-remoteobjects
+pacman --noconfirm -Sy git jq grub archiso qt6-remoteobjects
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
