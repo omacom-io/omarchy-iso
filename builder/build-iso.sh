@@ -5,8 +5,7 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy git jq grub
-pacman --noconfirm -Sy archiso
+pacman --noconfirm -Sy git jq grub archiso qt5-remoteobjects
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
@@ -78,9 +77,9 @@ mkdir -p $offline_mirror_dir/
  all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
  # Download all the packages to the offline mirror inside the ISO
- mkdir -p /tmp/offlinedb
- pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
- repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+ # mkdir -p /tmp/offlinedb
+ # pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+ # repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
  # # Create a symlink to the offline mirror instead of duplicating it.
  # # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
