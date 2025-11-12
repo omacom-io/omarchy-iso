@@ -17,10 +17,8 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Copy configs to root dir
-      run: |
-        mkdir -p /configs
-        cp -r ./configs/* /configs/
+    - name: Copy repo files to root dir in container
+      run: cp -r $GITHUB_WORKSPACE/* /
       
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
