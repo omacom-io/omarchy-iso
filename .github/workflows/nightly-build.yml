@@ -17,21 +17,16 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Copy repo files to root dir in container
-      run: cp -r $GITHUB_WORKSPACE/* /
-      
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
     - name: Build ISO in Arch Linux container
       run: |
-        pacman -Syu --noconfirm && \
-        chmod +x ./builder/build-iso.sh && \
-        ./builder/build-iso.sh
+        ./bin/omarchy-iso-make
     
     - name: Upload ISO artifact
       uses: actions/upload-artifact@v4
       with:
         name: omarchy-iso-${{ github.run_number }}
-        path: out/*.iso
+        path: ./release/*.iso
         retention-days: 30
