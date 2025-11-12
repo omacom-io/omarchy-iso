@@ -5,7 +5,7 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy git sudo base-devel jq grub qt5-remoteobjects
+pacman --noconfirm -Sy git jq grub
 pacman --noconfirm -Sy archiso
 #
 # # Install omarchy-keyring for package verification during build
