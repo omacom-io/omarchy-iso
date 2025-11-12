@@ -77,11 +77,11 @@ mkdir -p $offline_mirror_dir/
  all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
  all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
- # # Download all the packages to the offline mirror inside the ISO
- # mkdir -p /tmp/offlinedb
- # pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
- # repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
- #
+ # Download all the packages to the offline mirror inside the ISO
+ mkdir -p /tmp/offlinedb
+ pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+ repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+
  # # Create a symlink to the offline mirror instead of duplicating it.
  # # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
  # # but they're actually in $build_cache_dir/airootfs/var/cache/omarchy/mirror/offline
