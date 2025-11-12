@@ -80,13 +80,13 @@ fi
 # Run the builder with assembled args
 docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
 
-# Move as install ref
-latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
-iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
-mv -f "$latest_iso" "$iso_ref"
-
-# Offer to boot the new build
-if [[ -z "$NO_BOOT_OFFER" ]]; then
-  echo
-  gum confirm "Boot $iso_ref?" && omarchy-iso-boot "$iso_ref"
-fi
+# # Move as install ref
+# latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
+# iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
+# mv -f "$latest_iso" "$iso_ref"
+#
+# # Offer to boot the new build
+# if [[ -z "$NO_BOOT_OFFER" ]]; then
+#   echo
+#   gum confirm "Boot $iso_ref?" && omarchy-iso-boot "$iso_ref"
+# fi

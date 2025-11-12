@@ -15,9 +15,6 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Install build dependencies
-      run: sudo apt update && sudo apt install -y qtcreator qtbase5-dev qt5-qmake cmake libqt5remoteobjects5 libqt5remoteobjects5-dev
-
     - name: Build ISO
       run: ./bin/omarchy-iso-make
     
