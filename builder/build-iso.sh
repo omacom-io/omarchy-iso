@@ -4,6 +4,7 @@ set -e
 
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
+pacman -Syu
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy git jq grub archiso qt5-remoteobjects
 
