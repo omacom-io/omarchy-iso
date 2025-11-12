@@ -20,9 +20,14 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build ISO in Arch Linux container
+    - name: Install build dependencies
       run: |
-        ./bin/omarchy-iso-make
+        pacman -Sy --noconfirm git base-devel sudo \
+          curl wget tar unzip rsync python python-pip \
+          openssh qemu-full edk2-ovmf archiso gum
+
+    - name: Build ISO in Arch Linux container
+      run: ./bin/omarchy-iso-make
     
     - name: Upload ISO artifact
       uses: actions/upload-artifact@v4
