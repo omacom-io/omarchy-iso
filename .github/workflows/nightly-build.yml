@@ -19,6 +19,9 @@ jobs:
       
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
+
+    - name: List files for debug
+      run: ls -lR .
       
     - name: Build ISO in Arch Linux container
       run: |
