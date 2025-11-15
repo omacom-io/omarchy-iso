@@ -6,7 +6,8 @@ set -e
 pacman-key --init
 pacman --noconfirm -Syu
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy git jq grub archiso qt6-remoteobjects
+pacman --noconfirm -Sy git jq grub archiso yay
+yay -S --noconfirm qt5-remoteobjects
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
@@ -79,7 +80,7 @@ mkdir -p $offline_mirror_dir/
 
  # Download all the packages to the offline mirror inside the ISO
  mkdir -p /tmp/offlinedb
- pacman --config /configs/pacman-online.conf -Syyw --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb "${all_packages[@]}"
+ pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
  # repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
  # # Create a symlink to the offline mirror instead of duplicating it.
