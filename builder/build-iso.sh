@@ -8,11 +8,17 @@ pacman --noconfirm -Syu
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy --needed git base-devel jq grub archiso
 
-# Install qt5 AUR package
-git clone https://aur.archlinux.org/qt5-remoteobjects.git
-cd qt5-remoteobjects
-makepkg -si
-cd ..
+# Build yay
+mkdir -p /tmp/yay-build
+useradd -m -G wheel builder && passwd -d builder
+chown -R builder:builder /tmp/yay-build
+echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+su - builder -c "git clone https://aur.archlinux.org/yay.git /tmp/yay-build/yay"
+su - builder -c "cd /tmp/yay-build/yay && makepkg -si --noconfirm"
+rm -rf /tmp/yay-build
+su - builder
+yay -S --noconfirm qt5-remoteobjects
+su
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
