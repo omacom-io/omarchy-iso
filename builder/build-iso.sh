@@ -8,13 +8,11 @@ pacman --noconfirm -Syu
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy --needed git base-devel jq grub archiso
 
-# Install yay for qt5 AUR package
-# git clone https://aur.archlinux.org/yay.git
-# cd yay
-# makepkg -si
-yay --version
-# cd ..
-# yay -S --noconfirm qt5-remoteobjects
+# Install qt5 AUR package
+git clone https://aur.archlinux.org/qt5-remoteobjects.git
+cd qt5-remoteobjects
+makepkg -si
+cd ..
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
