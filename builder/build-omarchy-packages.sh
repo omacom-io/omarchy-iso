@@ -38,12 +38,8 @@ if [ -n "$OMARCHY_DEV_BUILD" ] && [ -d "/omarchy-installer" ]; then
   source /builder/templates/dev-pkgbuild-patch.sh
   convert_to_dev_pkgbuild "PKGBUILD"
   
-  # Ensure local source is accessible
-  mkdir -p src
-  ln -sf /omarchy-installer src/omarchy-installer
-  
   BUILD_FILE="PKGBUILD.dev"
-  BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums --noextract"
+  BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums -f"
   echo "✓ Will build from local source (no git clone)"
 else
   echo "========================================="
@@ -120,12 +116,8 @@ if [ -n "$OMARCHY_DEV_BUILD" ] && [ -d "/omarchy-installer" ]; then
   source /builder/templates/dev-pkgbuild-patch.sh
   convert_to_dev_pkgbuild "PKGBUILD"
   
-  # Symlink local source
-  mkdir -p src
-  ln -sf /omarchy-installer src/omarchy-installer
-  
   INSTALLER_BUILD_FILE="PKGBUILD.dev"
-  INSTALLER_BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums --noextract"
+  INSTALLER_BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums -f"
 else
   echo "PRODUCTION MODE: Using git source"
   INSTALLER_BUILD_FILE="PKGBUILD"
@@ -167,12 +159,8 @@ if [ -n "$OMARCHY_DEV_BUILD" ] && [ -d "/omarchy-installer" ]; then
   source /builder/templates/dev-pkgbuild-patch.sh
   convert_to_dev_pkgbuild "PKGBUILD"
   
-  # Symlink local source
-  mkdir -p src
-  ln -sf /omarchy-installer src/omarchy-installer
-  
   OMARCHY_BUILD_FILE="PKGBUILD.dev"
-  OMARCHY_BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums --noextract"
+  OMARCHY_BUILD_FLAGS="--noconfirm --skippgpcheck --skipchecksums -f"
 else
   echo "PRODUCTION MODE: Using git source"
   OMARCHY_BUILD_FILE="PKGBUILD"

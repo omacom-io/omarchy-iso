@@ -15,25 +15,9 @@ convert_to_dev_pkgbuild() {
   sed -i '/^source=/c\source=()' "$dev_pkgbuild_path"
   sed -i '/^sha256sums=/c\sha256sums=()' "$dev_pkgbuild_path"
   
-  # Add prepare() function to symlink local source
-  # Insert after the source line
-  cat >> "$dev_pkgbuild_path" << 'EOF'
-
-# Dev build: use locally mounted source
-prepare() {
-  # Symlink local omarchy-installer source
-  if [ -d "/omarchy-installer" ]; then
-    ln -sf /omarchy-installer "$srcdir/omarchy-installer"
-    echo "Using locally mounted omarchy-installer from /omarchy-installer"
-  elif [ -f "/omarchy-pkgs/pkgbuilds/omarchy-settings/src/omarchy-installer" ]; then
-    # Fallback: use source from previous build
-    echo "Using omarchy-installer from previous package build"
-  else
-    error "No local omarchy-installer source found!"
-    return 1
-  fi
-}
-EOF
+  # Replace cd "omarchy-installer" with cd "/omarchy-installer" to use mounted directory directly
+  sed -i 's|cd "omarchy-installer"|cd "/omarchy-installer"|g' "$dev_pkgbuild_path"
   
   echo "✓ Dev PKGBUILD created: $dev_pkgbuild_path"
+  echo "✓ Will use /omarchy-installer directly (no git clone, no symlinks)"
 }
