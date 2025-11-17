@@ -6,6 +6,27 @@ source "$OMARCHY_INSTALL/helpers/all.sh"
 # Ensure tzupdate is available for guessing timezone
 command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
 
+# Build the package list for archinstall from omarchy-base.packages
+build_package_json() {
+  local packages=("base-devel" "git" "omarchy-keyring" "omarchy-settings")
+  
+  # Read omarchy-base.packages and add to array
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
+    packages+=("$pkg")
+  done < "$OMARCHY_INSTALL/omarchy-base.packages"
+  
+  # Format as JSON array
+  local json="["
+  for i in "${!packages[@]}"; do
+    json+="\"${packages[$i]}\""
+    [[ $i -lt $((${#packages[@]} - 1)) ]] && json+=", "
+  done
+  json+="]"
+  
+  echo "$json"
+}
+
 abort() {
   gum style "${1:-Aborted installation}"
   echo
@@ -214,23 +235,54 @@ disk_form() {
       disk_options="$disk_options$disk_info"$'\n'
     fi
   done <<<"$available_disks"
+  
+  # Add "Advanced Disk Config" option at the bottom
+  disk_options="${disk_options}Advanced Disk Config (custom partitioning)"
 
   selected_display=$(echo "$disk_options" | gum choose --header "Select install disk") || abort
-  disk=$(echo "$selected_display" | awk '{print $1}')
+  
+  # Check if user selected advanced config
+  if echo "$selected_display" | grep -q "Advanced Disk Config"; then
+    USE_ADVANCED_DISK_CONFIG=1
+    EDIT_PARTITIONS="--edit-partitions"
+    disk=""  # Will be determined by TUI
+  else
+    USE_ADVANCED_DISK_CONFIG=0
+    disk=$(echo "$selected_display" | awk '{print $1}')
+  fi
 }
 
 disk_form
 
-while true; do
-  gum style "Everything will be overwritten. There is no recovery possible."
-
+# If user selected advanced config, skip to partition editor
+if [[ $USE_ADVANCED_DISK_CONFIG -eq 1 ]]; then
+  gum style --foreground 3 "Advanced disk configuration selected."
+  gum style "You'll configure partitions in the archinstall TUI."
   echo
-  if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
-    break
-  else
-    disk_form
-  fi
-done
+  EDIT_PARTITIONS="--edit-partitions"
+else
+  # Normal flow: confirm disk wipe and use default layout
+  while true; do
+    gum style "Everything will be overwritten. There is no recovery possible."
+
+    echo
+    if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
+      break
+    else
+      disk_form
+      # Check again if user switched to advanced config
+      if [[ $USE_ADVANCED_DISK_CONFIG -eq 1 ]]; then
+        gum style --foreground 3 "Advanced disk configuration selected."
+        gum style "You'll configure partitions in the archinstall TUI."
+        echo
+        EDIT_PARTITIONS="--edit-partitions"
+        break
+      fi
+    fi
+  done
+  # Normal flow always uses default layout (no editing)
+  EDIT_PARTITIONS=""
+fi
 
 clear
 
@@ -238,6 +290,9 @@ clear
 # set them as OMARCHY_USER_NAME and OMARCHY_USER_EMAIL
 echo "$full_name" >user_full_name.txt
 echo "$email_address" >user_email_address.txt
+
+# Save partition editing preference
+echo "$EDIT_PARTITIONS" >edit_partitions_flag.txt
 
 # Escape username and password for safe inclusion
 password_escaped=$(echo -n "$password" | jq -Rsa)
@@ -250,27 +305,36 @@ cat <<-_EOF_ >user_credentials.json
     "root_enc_password": $password_hash_escaped,
     "users": [
         {
+            "username": $username_escaped,
             "enc_password": $password_hash_escaped,
-            "groups": [],
-            "sudo": true,
-            "username": $username_escaped
+            "sudo": true
         }
     ]
 }
 _EOF_
 
-# Setup partition layout
-disk_size=$(lsblk -bdno SIZE "$disk")
-mib=$((1024 * 1024))
-gib=$((mib * 1024))
-disk_size_in_mib=$((disk_size / mib * mib)) # Rounds to nearest MiB
+# Save user info separately so we can create the user after packages are installed
+cat <<-_EOF_ >user_info.json
+{
+    "username": $username_escaped,
+    "password_hash": $password_hash_escaped
+}
+_EOF_
 
-gpt_backup_reserve=$((mib))
-boot_partition_start=$((mib))
-boot_partition_size=$((2 * gib))
+# Setup partition layout (only for non-advanced config)
+if [[ $USE_ADVANCED_DISK_CONFIG -eq 0 ]]; then
+  disk_size=$(lsblk -bdno SIZE "$disk")
+  mib=$((1024 * 1024))
+  gib=$((mib * 1024))
+  disk_size_in_mib=$((disk_size / mib * mib)) # Rounds to nearest MiB
 
-main_partition_start=$((boot_partition_size + boot_partition_start))
-main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_reserve))
+  gpt_backup_reserve=$((mib))
+  boot_partition_start=$((mib))
+  boot_partition_size=$((2 * gib))
+
+  main_partition_start=$((boot_partition_size + boot_partition_start))
+  main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_reserve))
+fi
 
 # Detect T2 Mac and set appropriate kernel
 if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
@@ -279,14 +343,67 @@ else
   kernel_choice="linux"
 fi
 
-cat <<-_EOF_ >user_configuration.json
+# Build the complete package list including all Omarchy packages
+packages_json=$(build_package_json)
+
+# Generate configuration based on mode
+if [[ $USE_ADVANCED_DISK_CONFIG -eq 1 ]]; then
+  # Minimal config for advanced mode - user will configure disk in TUI
+  cat <<-_EOF_ >user_configuration.json
 {
     "app_config": null,
     "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
     "bootloader": "Limine",
-    "custom_commands": [],
+    "custom_commands": [
+        "/usr/share/omarchy/bin/omarchy-install-final-configurations.sh"
+    ],
+    "hostname": "$hostname",
+    "kernels": [ "$kernel_choice" ],
+    "network_config": { "type": "iso" },
+    "ntp": true,
+    "parallel_downloads": 8,
+    "script": null,
+    "services": [],
+    "swap": true,
+    "timezone": "$timezone",
+    "locale_config": {
+        "kb_layout": "$keyboard",
+        "sys_enc": "UTF-8",
+        "sys_lang": "en_US.UTF-8"
+    },
+    "mirror_config": {
+        "custom_repositories": [],
+        "custom_servers": [
+            {"url": "https://mirror.omarchy.org/\$repo/os/\$arch"},
+            {"url": "https://mirror.rackspace.com/archlinux/\$repo/os/\$arch"},
+            {"url": "https://geo.mirror.pkgbuild.com/\$repo/os/\$arch"}
+        ],
+        "mirror_regions": {},
+        "optional_repositories": []
+    },
+    "packages": $packages_json,
+    "profile_config": {
+        "gfx_driver": null,
+        "greeter": null,
+        "profile": {}
+    },
+    "version": "3.0.9"
+}
+_EOF_
+else
+  # Full config with default partition layout
+  cat <<-_EOF_ >user_configuration.json
+{
+    "app_config": null,
+    "archinstall-language": "English",
+    "auth_config": {},
+    "audio_config": { "audio": "pipewire" },
+    "bootloader": "Limine",
+    "custom_commands": [
+        "/usr/share/omarchy/bin/omarchy-install-final-configurations.sh"
+    ],
     "disk_config": {
         "btrfs_options": { 
           "snapshot_config": {
@@ -353,8 +470,7 @@ cat <<-_EOF_ >user_configuration.json
             "encryption_type": "luks",
             "lvm_volumes": [],
             "iter_time": 2000,
-            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
-            "encryption_password": $password_escaped
+            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ]
         }
     },
     "hostname": "$hostname",
@@ -381,11 +497,7 @@ cat <<-_EOF_ >user_configuration.json
         "mirror_regions": {},
         "optional_repositories": []
     },
-    "packages": [
-        "base-devel",
-        "git",
-        "omarchy-keyring"
-    ],
+    "packages": $packages_json,
     "profile_config": {
         "gfx_driver": null,
         "greeter": null,
@@ -394,6 +506,7 @@ cat <<-_EOF_ >user_configuration.json
     "version": "3.0.9"
 }
 _EOF_
+fi
 
 if [[ $1 == "dry" ]]; then
   echo -e "User Configuration:"

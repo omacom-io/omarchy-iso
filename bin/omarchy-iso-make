@@ -57,9 +57,37 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
 
-# Use local source of Omarchy from $OMARCHY_PATH instead of git checkout
-if [[ -n "${LOCAL_SOURCE-}" ]]; then
-  DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
+# Mount omarchy-pkgs if it exists (for local package building)
+# Can be overridden with OMARCHY_PKGS_PATH environment variable
+if [ -z "$OMARCHY_PKGS_PATH" ]; then
+  OMARCHY_PKGS_PATH="$BUILD_ROOT/../omarchy-pkgs"
+fi
+
+if [ -d "$OMARCHY_PKGS_PATH" ]; then
+  echo "Mounting omarchy-pkgs from: $OMARCHY_PKGS_PATH"
+  OMARCHY_PKGS_PATH=$(realpath "$OMARCHY_PKGS_PATH")
+  DOCKER_ARGS+=(-v "$OMARCHY_PKGS_PATH:/omarchy-pkgs:ro")
+else
+  echo "Note: omarchy-pkgs not found at $OMARCHY_PKGS_PATH (build will fail)"
+fi
+
+# Mount omarchy-installer for dev builds (optional)
+# Can be overridden with OMARCHY_INSTALLER_PATH environment variable
+# If not set, will auto-detect ../omarchy-installer for dev builds
+if [ -n "$LOCAL_SOURCE" ]; then
+  if [ -z "$OMARCHY_INSTALLER_PATH" ]; then
+    OMARCHY_INSTALLER_PATH="$BUILD_ROOT/../omarchy-installer"
+  fi
+  
+  if [ -d "$OMARCHY_INSTALLER_PATH" ]; then
+    echo "Mounting omarchy-installer from: $OMARCHY_INSTALLER_PATH (dev mode)"
+    OMARCHY_INSTALLER_PATH=$(realpath "$OMARCHY_INSTALLER_PATH")
+    DOCKER_ARGS+=(-v "$OMARCHY_INSTALLER_PATH:/omarchy-installer:ro")
+    DOCKER_ARGS+=(-e "OMARCHY_DEV_BUILD=1")
+  else
+    echo "Note: omarchy-installer not found at $OMARCHY_INSTALLER_PATH"
+    echo "      Will use git clone from PKGBUILD"
+  fi
 fi
 
 # Use local pacman cache if you already have one on host to speed up repeat runs

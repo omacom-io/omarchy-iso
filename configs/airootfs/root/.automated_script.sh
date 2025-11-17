@@ -2,40 +2,122 @@
 set -euo pipefail
 
 use_omarchy_helpers() {
-  export OMARCHY_PATH="/root/omarchy"
-  export OMARCHY_INSTALL="/root/omarchy/install"
-  export OMARCHY_INSTALL_LOG_FILE="/var/log/omarchy-install.log"
-  source /root/omarchy/install/helpers/all.sh
+  # Use omarchy-settings package location (installed in ISO)
+  export OMARCHY_PATH="/usr/share/omarchy"
+  export OMARCHY_INSTALL="/usr/share/omarchy/install"
+  export OMARCHY_INSTALL_LOG_FILE="/var/log/archinstall/install.log"
+  
+  # Load presentation helpers (clear_logo, etc.) and logging helpers (start_log_output, etc.)
+  source /usr/share/omarchy/install/helpers/all.sh
 }
 
 run_configurator() {
   set_tokyo_night_colors
   ./configurator
-  export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+  export OMARCHY_USER="$(jq -r '.username' user_info.json)"
+  export OMARCHY_USER_PASSWORD_HASH="$(jq -r '.password_hash' user_info.json)"
+  export OMARCHY_USER_NAME="$(cat user_full_name.txt)"
+  export OMARCHY_USER_EMAIL="$(cat user_email_address.txt)"
 }
 
-install_arch() {
+install_omarchy() {
   clear_logo
   gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "Installing..."
   echo
 
+  # Copy user info to /tmp on the ISO side
+  # omarchy-install will copy these into the chroot at the right time
+  cp user_full_name.txt /tmp/omarchy-user-name.txt 2>/dev/null || true
+  cp user_email_address.txt /tmp/omarchy-user-email.txt 2>/dev/null || true
+
+  # Check if advanced disk mode (partition TUI)
+  EDIT_PARTITIONS_FLAG=""
+  if [[ -f edit_partitions_flag.txt ]]; then
+    EDIT_PARTITIONS_FLAG=$(cat edit_partitions_flag.txt | tr -d '\n' | xargs)
+  fi
+
+  # ADVANCED MODE: Run disk configuration TUI before installation
+  if [[ -n "$EDIT_PARTITIONS_FLAG" ]]; then
+    clear_logo
+    gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "Configuring disk layout..."
+    echo
+    
+    # Run omarchy-disk-config to show partition TUI and validate
+    # This updates user_configuration.json in place
+    /usr/share/omarchy/bin/omarchy-disk-config \
+      --config user_configuration.json \
+      --creds user_credentials.json
+    
+    disk_config_exit_code=$?
+    
+    if [[ $disk_config_exit_code -ne 0 ]]; then
+      echo "ERROR: Disk configuration failed or was cancelled"
+      exit $disk_config_exit_code
+    fi
+    
+    clear_logo
+    gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "Disk configuration complete!"
+    echo
+    sleep 1
+  fi
+
+  # Run installation with the configuration (possibly updated by disk-config)
+  
+  # Create backup log file for raw output (with ANSI codes stripped)
   touch /var/log/omarchy-install.log
-
-  start_log_output
-
-  # Set CURRENT_SCRIPT for the trap to display better when nothing is returned for some reason
-  CURRENT_SCRIPT="install_base_system"
-  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
-  unset CURRENT_SCRIPT
+  
+  # Ensure archinstall log directory exists
+  sudo mkdir -p /var/log/archinstall
+  
+  # Start tailing our backup log to show user what's happening
+  start_log_output "/var/log/omarchy-install.log"
+  
+  # Run omarchy-install and capture output
+  # archinstall writes to /var/log/archinstall/install.log internally
+  # We also capture stdout/stderr to our backup log (stripping ANSI codes for clean viewing)
+  /usr/share/omarchy/bin/omarchy-install \
+    --config user_configuration.json \
+    --creds user_credentials.json \
+    2>&1 | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee -a /var/log/omarchy-install.log >/dev/null
+  
+  install_exit_code=$?
+  
   stop_log_output
-}
+  
+  # Check if omarchy-install failed
+  if [[ $install_exit_code -ne 0 ]]; then
+    echo
+    echo "ERROR: Installation failed (exit code $install_exit_code)"
+    echo "Check /var/log/omarchy-install.log for details"
+    exit $install_exit_code
+  fi
 
-install_omarchy() {
-  chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
-  chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
-
-  # Reboot if requested by installer
-  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+  # Installation succeeded - copy logs to installed system for user access
+  echo "Copying installation logs to installed system..."
+  sudo mkdir -p /mnt/var/log
+  sudo cp /var/log/omarchy-install.log /mnt/var/log/omarchy-install.log 2>/dev/null || true
+  sudo cp /var/log/archinstall/install.log /mnt/var/log/archinstall-install.log 2>/dev/null || true
+  
+  # Show completion screen
+  clear
+  echo
+  tte -i /usr/share/omarchy/logo.txt --canvas-width 0 --anchor-text c --frame-rate 920 laseretch
+  echo
+  
+  # Display installation time if available
+  if [[ -f /mnt/tmp/omarchy-install-time.txt ]]; then
+    TOTAL_TIME=$(cat /mnt/tmp/omarchy-install-time.txt)
+    echo "Installed in $TOTAL_TIME" | tte --canvas-width 0 --anchor-text c --frame-rate 640 print
+  else
+    echo "Finished installing" | tte --canvas-width 0 --anchor-text c --frame-rate 640 print
+  fi
+  echo
+  
+  # Prompt for reboot (centered)
+  BUTTON_WIDTH=12  # "Reboot Now" + padding
+  BUTTON_PADDING=$(( (TERM_WIDTH - BUTTON_WIDTH) / 2 ))
+  if gum confirm --padding "0 0 0 $BUTTON_PADDING" --show-help=false --default --affirmative "Reboot Now" --negative "" ""; then
+    clear
     reboot
   fi
 }
@@ -67,74 +149,8 @@ set_tokyo_night_colors() {
   fi
 }
 
-install_base_system() {
-  # Initialize and populate the keyring
-  pacman-key --init
-  pacman-key --populate archlinux
-  pacman-key --populate omarchy
-
-  # Sync the offline database so pacman can find packages
-  pacman -Sy --noconfirm
-
-  # Ensure that no mounts exist from past install attempts
-  findmnt -R /mnt >/dev/null && umount -R /mnt
-
-  # Install using files generated by the ./configurator
-  # Skip NTP and WKD sync since we're offline (keyring is pre-populated in ISO)
-  archinstall \
-    --config user_configuration.json \
-    --creds user_credentials.json \
-    --silent \
-    --skip-ntp \
-    --skip-wkd
-
-  # After archinstall sets up the base system but before our installer runs,
-  # we need to ensure the offline pacman.conf is in place
-  cp /etc/pacman.conf /mnt/etc/pacman.conf
-
-  # Mount the offline mirror so it's accessible in the chroot
-  mkdir -p /mnt/var/cache/omarchy/mirror/offline
-  mount --bind /var/cache/omarchy/mirror/offline /mnt/var/cache/omarchy/mirror/offline
-
-  # Mount the packages dir so it's accessible in the chroot
-  mkdir -p /mnt/opt/packages
-  mount --bind /opt/packages /mnt/opt/packages
-
-  # No need to ask for sudo during the installation (omarchy itself responsible for removing after install)
-  mkdir -p /mnt/etc/sudoers.d
-  cat >/mnt/etc/sudoers.d/99-omarchy-installer <<EOF
-root ALL=(ALL:ALL) NOPASSWD: ALL
-%wheel ALL=(ALL:ALL) NOPASSWD: ALL
-$OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
-EOF
-  chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
-
-  # Copy the local omarchy repo to the user's home directory
-  mkdir -p /mnt/home/$OMARCHY_USER/.local/share/
-  cp -r /root/omarchy /mnt/home/$OMARCHY_USER/.local/share/
-
-  chown -R 1000:1000 /mnt/home/$OMARCHY_USER/.local/
-
-  # Ensure all necessary scripts are executable
-  find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
-}
-
-chroot_bash() {
-  HOME=/home/$OMARCHY_USER \
-    arch-chroot -u $OMARCHY_USER /mnt/ \
-    env OMARCHY_CHROOT_INSTALL=1 \
-    OMARCHY_USER_NAME="$(<user_full_name.txt)" \
-    OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
-    USER="$OMARCHY_USER" \
-    HOME="/home/$OMARCHY_USER" \
-    /bin/bash "$@"
-}
-
 if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
   run_configurator
-  install_arch
   install_omarchy
 fi
