@@ -69,8 +69,13 @@ install_omarchy() {
   # Ensure archinstall log directory exists
   sudo mkdir -p /var/log/archinstall
   
-  # Start tailing our backup log to show user what's happening
-  start_log_output "/var/log/omarchy-install.log"
+  # Prepare chroot log location (will be created by chroot script when it runs)
+  sudo mkdir -p /mnt/var/log
+  CHROOT_LOG="/mnt/var/log/omarchy-install-chroot.log"
+  
+  # Start tailing BOTH logs with tail -F (follows multiple files, waits for files to appear)
+  # This will automatically pick up the chroot log when it's created
+  start_log_output "/var/log/omarchy-install.log" "$CHROOT_LOG"
   
   # Run omarchy-install and capture output
   # archinstall writes to /var/log/archinstall/install.log internally
@@ -82,21 +87,41 @@ install_omarchy() {
   
   install_exit_code=$?
   
-  stop_log_output
-  
   # Check if omarchy-install failed
   if [[ $install_exit_code -ne 0 ]]; then
+    stop_log_output
     echo
     echo "ERROR: Installation failed (exit code $install_exit_code)"
-    echo "Check /var/log/omarchy-install.log for details"
+    echo "Check /var/log/omarchy-install.log and /mnt/var/log/omarchy-install-chroot.log for details"
     exit $install_exit_code
   fi
 
-  # Installation succeeded - copy logs to installed system for user access
-  echo "Copying installation logs to installed system..."
-  sudo mkdir -p /mnt/var/log
-  sudo cp /var/log/omarchy-install.log /mnt/var/log/omarchy-install.log 2>/dev/null || true
-  sudo cp /var/log/archinstall/install.log /mnt/var/log/archinstall-install.log 2>/dev/null || true
+  # Installation succeeded - stop log output BEFORE doing anything else
+  stop_log_output
+  
+  # Copy and merge logs to installed system for user access (silent)
+  {
+    sudo cp /var/log/omarchy-install.log /mnt/var/log/omarchy-install.log 2>/dev/null || true
+    sudo cp /var/log/archinstall/install.log /mnt/var/log/archinstall-install.log 2>/dev/null || true
+    
+    # Create a merged log with all phases
+    {
+      echo "========================================"
+      echo "Omarchy Installation - Complete Log"
+      echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+      echo "========================================"
+      echo
+      echo "=== Phase 1: Main Installation (ISO) ==="
+      cat /var/log/omarchy-install.log 2>/dev/null || echo "(No main install log found)"
+      echo
+      echo "=== Phase 2: Chroot Configuration ==="
+      cat "$CHROOT_LOG" 2>/dev/null || echo "(No chroot log found)"
+      echo
+      echo "========================================"
+      echo "Installation Complete"
+      echo "========================================"
+    } | sudo tee /mnt/var/log/omarchy-install-full.log >/dev/null
+  } >/dev/null 2>&1
   
   # Show completion screen
   clear
