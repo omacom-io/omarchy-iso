@@ -186,6 +186,34 @@ fi
 echo "✓ Successfully built: $(basename $OMARCHY_PKG)"
 echo "Package location: $OMARCHY_PKG"
 
+# Now build the omarchy-limine package
+echo ""
+echo "========================================="
+echo "Building omarchy-limine package"
+echo "========================================="
+
+# Copy omarchy-limine package files to writable location
+cp -r /omarchy-pkgs/pkgbuilds/omarchy-limine "$WORK_DIR/"
+cd "$WORK_DIR/omarchy-limine"
+
+# Give builder ownership
+chown -R builder:builder "$WORK_DIR/omarchy-limine"
+
+# Build the omarchy-limine package (no source needed, just config files)
+su builder -c "cd $WORK_DIR/omarchy-limine && makepkg --noconfirm --skippgpcheck -d"
+
+# Find the built package
+OMARCHY_LIMINE_PKG=$(ls -t "$BUILD_DIR"/omarchy-limine-*.pkg.tar.zst 2>/dev/null | head -n1)
+
+if [ -z "$OMARCHY_LIMINE_PKG" ]; then
+    echo "ERROR: Failed to build omarchy-limine package"
+    exit 1
+fi
+
+echo "✓ Successfully built: $(basename $OMARCHY_LIMINE_PKG)"
+echo "Package location: $OMARCHY_LIMINE_PKG"
+
 # Export for use by build-iso.sh
 export OMARCHY_PKG="$OMARCHY_PKG"
 export OMARCHY_INSTALLER_PKG="$OMARCHY_INSTALLER_PKG"
+export OMARCHY_LIMINE_PKG="$OMARCHY_LIMINE_PKG"

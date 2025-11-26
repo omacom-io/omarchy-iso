@@ -53,9 +53,11 @@ if [ -d "/omarchy-pkgs" ]; then
   cp "$OMARCHY_SETTINGS_PKG" "$offline_mirror_dir/"
   cp "$OMARCHY_INSTALLER_PKG" "$offline_mirror_dir/"
   cp "$OMARCHY_PKG" "$offline_mirror_dir/"
+  cp "$OMARCHY_LIMINE_PKG" "$offline_mirror_dir/"
   
   echo "✓ omarchy-settings will be installed in ISO (configs, binaries)"
   echo "✓ omarchy-installer will be installed in ISO (install scripts, helpers)"
+  echo "✓ omarchy-limine available in offline mirror for installation"
   echo "✓ All omarchy packages available in offline mirror for installation"
   echo "✓ No git clone needed - everything comes from packages!"
 else
@@ -92,18 +94,18 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
 # Start with packages.x86_64 but exclude locally-built packages
-all_packages=($(cat "$build_cache_dir/packages.x86_64" | grep -vE '^(omarchy|omarchy-settings|omarchy-installer)$'))
+all_packages=($(cat "$build_cache_dir/packages.x86_64" | grep -vE '^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine)$'))
 
 # Add omarchy package lists from source, excluding locally-built packages
 if [ -n "$OMARCHY_INSTALLER_SRC" ] && [ -d "$OMARCHY_INSTALLER_SRC" ]; then
   # Filter out locally-built packages and known problematic packages
-  all_packages+=($(grep -v '^#' "$OMARCHY_INSTALLER_SRC/install/omarchy-base.packages" | grep -v '^$' | grep -vE '^(omarchy|omarchy-settings|omarchy-installer)$'))
+  all_packages+=($(grep -v '^#' "$OMARCHY_INSTALLER_SRC/install/omarchy-base.packages" | grep -v '^$' | grep -vE '^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine)$'))
   all_packages+=($(grep -v '^#' "$OMARCHY_INSTALLER_SRC/install/omarchy-other.packages" | grep -v '^$' | grep -vE '^qt5-remoteobjects$'))
 else
   echo "WARNING: Could not find omarchy package lists, offline mirror may be incomplete"
 fi
 
-all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$' | grep -vE '^(omarchy|omarchy-settings|omarchy-installer)$'))
+all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$' | grep -vE '^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine)$'))
 
 # Remove duplicates
 all_packages=($(printf '%s\n' "${all_packages[@]}" | sort -u))
