@@ -21,6 +21,9 @@ jobs:
       # - name: Build ISO
       #   run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
 
+      - name: add test file
+        run: echo "This is a test file for nightly build workflow." > file.txt
+
       - name: Delete previously uploaded ISO artifact
         uses: joutvhu/delete-artifact@v2.0.1
         continue-on-error: true
@@ -29,5 +32,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: omarchy-iso-${{ github.run_number }}
-          path: ./release/*.iso
+          # path: ./release/*.iso
+          path: file.txt
           retention-days: 1
