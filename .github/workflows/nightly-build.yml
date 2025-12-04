@@ -1,8 +1,8 @@
 name: Nightly ISO Build
 
 on:
-  # schedule:
-  #   - cron: '1 0 * * *'  # Daily at 00:01 UTC
+  schedule:
+    - cron: "1 0 * * *" # Daily at 00:01 UTC
   workflow_dispatch: # Allow manual triggering
   push:
     branches:
@@ -11,7 +11,6 @@ on:
 jobs:
   build-iso:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,11 +18,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Free Disk Space (Ubuntu)
+      - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.1
 
       - name: Build ISO
         run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
+
+      - name: Delete uploaded ISO
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: omarchy-iso-*
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
