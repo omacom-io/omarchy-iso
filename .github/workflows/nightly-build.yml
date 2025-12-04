@@ -22,9 +22,7 @@ jobs:
         run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
 
       - name: Delete previously uploaded ISO
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: omarchy-iso-*
+        uses: joutvhu/delete-artifact@v2.0.1
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
