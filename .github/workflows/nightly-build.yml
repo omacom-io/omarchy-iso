@@ -24,7 +24,7 @@ jobs:
       - name: Build ISO
         run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
 
-      - name: Delete uploaded ISO
+      - name: Delete previously uploaded ISO
         uses: geekyeggo/delete-artifact@v5
         with:
           name: omarchy-iso-*
