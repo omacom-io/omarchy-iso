@@ -26,6 +26,8 @@ jobs:
 
       - name: Delete previously uploaded ISO artifact
         uses: joutvhu/delete-artifact@v2.0.1
+        with:
+          token: ${{ secrets.PAT }}
         continue-on-error: true
 
       - name: Upload newly built ISO artifact
