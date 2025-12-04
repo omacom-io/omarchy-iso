@@ -28,6 +28,7 @@ jobs:
         uses: philips-labs/action-delete-artifacts@v1.0.0
         with:
           workflow: nightly-build.yml
+          failOnError: false
 
       - name: Upload newly built ISO artifact
         uses: actions/upload-artifact@v4
