@@ -21,10 +21,10 @@ jobs:
       - name: Build ISO
         run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
 
-      - name: Delete previously uploaded ISO
+      - name: Delete previously uploaded ISO artifact
         uses: joutvhu/delete-artifact@v2.0.1
 
-      - name: Upload ISO artifact
+      - name: Upload newly built ISO artifact
         uses: actions/upload-artifact@v4
         with:
           name: omarchy-iso-${{ github.run_number }}
