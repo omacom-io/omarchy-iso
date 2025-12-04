@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: "1 0 * * *" # Daily at 00:01 UTC
   workflow_dispatch: # Allow manual triggering
-  push:
-    branches:
-      - "*"
 
 jobs:
   build-iso:
