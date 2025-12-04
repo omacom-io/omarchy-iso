@@ -23,7 +23,7 @@ jobs:
         uses: jlumbroso/free-disk-space@v1.3.1
 
       - name: Build ISO
-        run: ./bin/omarchy-iso-make
+        run: NO_BOOT_OFFER=1 ./bin/omarchy-iso-make
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
