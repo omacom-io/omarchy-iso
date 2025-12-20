@@ -1,0 +1,16 @@
+#!/bin/bash
+omarchy-pkg-add rclone
+mkdir -p ~/.config/rclone
+
+access_key=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/access_key_id" --account Omarchy)
+secret_access_key=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/secret_access_key" --account Omarchy)
+endpoint=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/endpoint" --account Omarchy)
+
+cat > ~/.config/rclone/rclone.conf << EOF
+[Omarchy]
+type = s3
+provider = Cloudflare
+access_key_id = $access_key
+secret_access_key = $secret_access_key
+endpoint = $endpoint
+EOF

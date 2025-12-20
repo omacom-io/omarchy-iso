@@ -2,7 +2,17 @@
 
 set -e
 
+ISO="$1"
+REUSE="$2"
+
 if [ $# -eq 0 ]; then
+  ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
+  if gum confirm --default=false "Reuse existing disk?"; then
+    REUSE="reuse"
+  fi
+fi
+
+if [ -z "$ISO" ]; then
   echo "Usage: omarchy-iso-boot [release/omarchy.iso] [reuse]"
   echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh)"
   exit 1
@@ -13,7 +23,7 @@ if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
 fi
 
 DISK="/tmp/omarchy-iso-boot.qcow2"
-if [[ ! -f $DISK || $2 != "reuse" ]]; then
+if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 20G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
 fi
@@ -27,7 +37,7 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.4m.fd \
   -drive file="$DISK",format=qcow2,if=none,id=drive0 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
-  -drive file="$1",media=cdrom,if=none,format=raw,id=cdrom0 \
+  -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
   -device virtio-vga-gl \
   -display gtk,gl=on \

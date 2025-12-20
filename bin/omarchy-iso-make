@@ -15,9 +15,17 @@ while [[ $# -gt 0 ]]; do
     NO_BOOT_OFFER=1
     shift
     ;;
+  --local-source)
+    LOCAL_SOURCE=1
+    shift
+    ;;
+  --dev)
+    OMARCHY_INSTALLER_REF=dev
+    shift
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev]"
     exit 1
     ;;
   esac
@@ -49,6 +57,11 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
+
+# Use local source of Omarchy from $OMARCHY_PATH instead of git checkout
+if [[ -n "${LOCAL_SOURCE-}" ]]; then
+  DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
+fi
 
 # Set up host caching unless disabled
 if [[ -z "$NO_CACHE" ]]; then
