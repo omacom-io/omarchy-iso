@@ -31,7 +31,55 @@ notice() {
 
 keyboard_form() {
   step "Let's setup your machine..."
-  keyboards=$'Albanian|al\nAmharic|et\nArmenian|am\nArabic|ara\nArabic (Egypt)|eg\nArabic (Iraq)|iq\nArabic (Morocco)|ma\nArabic (Syria)|sy\nAzerbaijani|az\nBambara|ml\nBangla|bd\nBelarusian|by\nBelgian|be\nBerber (Algeria, Latin)|dz\nBosnian|ba\nBraille|brai\nBulgarian|bg\nBurmese|mm\nChinese|cn\nCroatian|hr\nCzech|cz\nDanish|dk\nDari|af\nDhivehi|mv\nDutch|nl\nDzongkha|bt\nEnglish (Australia)|au\nEnglish (Cameroon)|cm\nEnglish (Ghana)|gh\nEnglish (New Zealand)|nz\nEnglish (Nigeria)|ng\nEnglish (South Africa)|za\nEnglish (UK)|uk\nEnglish (US)|us\nEnglish (US, Dvorak)|us-dvorak\nEsperanto|epo\nEstonian|ee\nFaroese|fo\nFilipino|ph\nFinnish|fi\nFrench|fr\nFrench (Canada)|ca\nFrench (Democratic Republic of the Congo)|cd\nFrench (Togo)|tg\nGeorgian|ge\nGerman|de\nGerman (Austria)|at\nGerman (Switzerland)|ch\nGreek|gr\nHebrew|il\nHungarian|hu\nIcelandic|is\nIndian|in\nIndonesian (Latin)|id\nIrish|ie\nItalian|it\nJapanese|jp106\nKazakh|kz\nKhmer (Cambodia)|kh\nKorean|kr\nKyrgyz|kg\nLao|la\nLatvian|lv\nLithuanian|lt\nMacedonian|mk\nMalay (Jawi, Arabic Keyboard)|my\nMaltese|mt\nMoldavian|md\nMongolian|mn\nMontenegrin|me\nNepali|np\nNKo (AZERTY)|gn\nNorwegian|no\nPersian|ir\nPolish|pl\nPortuguese|pt\nPortuguese (Brazil)|br\nRomanian|ro\nRussian|ru\nSerbian|rs\nSinhala (phonetic)|lk\nSlovak|sk\nSlovenian|si\nSpanish|es\nSpanish (Latin American)|latam\nSwahili (Kenya)|ke\nSwahili (Tanzania)|tz\nSwedish|se\nTaiwanese|tw\nTajik|tj\nThai|th\nTswana|bw\nTurkmen|tm\nTurkish|tr\nUkrainian|ua\nUrdu (Pakistan)|pk\nUzbek|uz\nVietnamese|vn\nWolof|sn'
+  keyboards=$'Azerbaijani|azerty
+Belarusian|by
+Belgian|be-latin1
+Bosnian|ba
+Bulgarian|bg-cp1251
+Croatian|croat
+Czech|cz
+Danish|dk-latin1
+Dutch|nl
+English (UK)|uk
+English (US)|us
+English (US, Dvorak)|dvorak
+Estonian|et
+Finnish|fi
+French|fr
+French (Canada)|cf
+French (Switzerland)|fr_CH
+Georgian|ge
+German|de
+German (Switzerland)|de_CH-latin1
+Greek|gr
+Hebrew|il
+Hungarian|hu
+Icelandic|is-latin1
+Irish|ie
+Italian|it
+Japanese|jp106
+Kazakh|kazakh
+Khmer (Cambodia)|khmer
+Kyrgyz|kyrgyz
+Lao|la-latin1
+Latvian|lv
+Lithuanian|lt
+Macedonian|mk-utf
+Norwegian|no-latin1
+Polish|pl
+Portuguese|pt-latin1
+Portuguese (Brazil)|br-abnt2
+Romanian|ro
+Russian|ru
+Serbian|sr-latin
+Slovak|sk-qwertz
+Slovenian|slovene
+Spanish|es
+Spanish (Latin American)|la-latin1
+Swedish|sv-latin1
+Tajik|tj_alt-UTF8
+Turkish|trq
+Ukrainian|ua'
   choice=$(printf '%s\n' "$keyboards" | cut -d'|' -f1 | gum choose --height 10 --selected "English (US)" --header "Select keyboard layout") || abort
   keyboard=$(printf '%s\n' "$keyboards" | awk -F'|' -v c="$choice" '$1==c{print $2; exit}')
 
@@ -73,7 +121,7 @@ user_form() {
   done
 
   # Hash the password using yescrypt
-  password_hash=$(openssl passwd -6 "$password")
+  password_hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 
   full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Full name> ")
   email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ")
@@ -335,7 +383,8 @@ cat <<-_EOF_ >user_configuration.json
     },
     "packages": [
         "base-devel",
-        "git"
+        "git",
+        "omarchy-keyring"
     ],
     "profile_config": {
         "gfx_driver": null,

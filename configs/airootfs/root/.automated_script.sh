@@ -22,13 +22,22 @@ install_arch() {
   touch /var/log/omarchy-install.log
 
   start_log_output
-  install_base_system 2>&1 | sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log
+
+  # Set CURRENT_SCRIPT for the trap to display better when nothing is returned for some reason
+  CURRENT_SCRIPT="install_base_system"
+  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
+  unset CURRENT_SCRIPT
   stop_log_output
 }
 
 install_omarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
+
+  # Reboot if requested by installer
+  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+    reboot
+  fi
 }
 
 # Set Tokyo Night color scheme for the terminal
@@ -62,6 +71,7 @@ install_base_system() {
   # Initialize and populate the keyring
   pacman-key --init
   pacman-key --populate archlinux
+  pacman-key --populate omarchy
 
   # Sync the offline database so pacman can find packages
   pacman -Sy --noconfirm
@@ -76,7 +86,8 @@ install_base_system() {
     --creds user_credentials.json \
     --silent \
     --skip-ntp \
-    --skip-wkd
+    --skip-wkd \
+    --skip-wifi-check
 
   # After archinstall sets up the base system but before our installer runs,
   # we need to ensure the offline pacman.conf is in place
@@ -85,6 +96,10 @@ install_base_system() {
   # Mount the offline mirror so it's accessible in the chroot
   mkdir -p /mnt/var/cache/omarchy/mirror/offline
   mount --bind /var/cache/omarchy/mirror/offline /mnt/var/cache/omarchy/mirror/offline
+
+  # Mount the packages dir so it's accessible in the chroot
+  mkdir -p /mnt/opt/packages
+  mount --bind /opt/packages /mnt/opt/packages
 
   # No need to ask for sudo during the installation (omarchy itself responsible for removing after install)
   mkdir -p /mnt/etc/sudoers.d

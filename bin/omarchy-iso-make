@@ -15,9 +15,17 @@ while [[ $# -gt 0 ]]; do
     NO_BOOT_OFFER=1
     shift
     ;;
+  --local-source)
+    LOCAL_SOURCE=1
+    shift
+    ;;
+  --dev)
+    OMARCHY_INSTALLER_REF=dev
+    shift
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev]"
     exit 1
     ;;
   esac
@@ -42,12 +50,19 @@ DOCKER_ARGS=(
   --ulimit nofile=8192:8192 # Prevent "Too many open files in system" errors during build
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
+  -e "HOST_UID=$(id -u)"
+  -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"
   -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro"
   -v "$BUILD_ROOT/archiso:/archiso:ro"
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
+
+# Use local source of Omarchy from $OMARCHY_PATH instead of git checkout
+if [[ -n "${LOCAL_SOURCE-}" ]]; then
+  DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
+fi
 
 # Set up host caching unless disabled
 if [[ -z "$NO_CACHE" ]]; then
