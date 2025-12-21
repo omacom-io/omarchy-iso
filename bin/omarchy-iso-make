@@ -47,6 +47,7 @@ DOCKER_ARGS=(
   --rm
   --privileged
   --platform linux/amd64 # Suppress warnings if building on Apple Silicon
+  --ulimit nofile=8192:8192 # Prevent "Too many open files in system" errors during build
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
   -e "HOST_UID=$(id -u)"
