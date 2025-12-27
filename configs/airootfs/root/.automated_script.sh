@@ -27,6 +27,10 @@ install_arch() {
   CURRENT_SCRIPT="install_base_system"
   install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
   unset CURRENT_SCRIPT
+
+  # Fix kernel cmdline for systemd-based initramfs
+  fix_kernel_cmdline_for_systemd || echo "Cmdline fix skipped/failed - non-fatal"
+
   stop_log_output
 }
 
@@ -120,6 +124,46 @@ EOF
   find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
+}
+
+fix_kernel_cmdline_for_systemd() {
+  # Convert cryptdevice=PARTUUID= to rd.luks.name=UUID= for systemd-based initramfs
+  echo "Converting kernel cmdline to systemd syntax..."
+
+  # Check all common Limine locations
+  for LIMINE_CONF in \
+      "/mnt/boot/limine.conf" \
+      "/mnt/boot/EFI/limine/limine.conf" \
+      "/mnt/boot/efi/limine.conf" \
+      "/mnt/boot/EFI/BOOT/limine.conf"
+  do
+    [[ -f "$LIMINE_CONF" ]] || continue
+    grep -q "cryptdevice=PARTUUID=" "$LIMINE_CONF" 2>/dev/null || continue
+
+    # Settle device symlinks; don't care if udevadm missing
+    command -v udevadm >/dev/null 2>&1 && udevadm settle || true
+
+    # Extract PARTUUID without -P and without tripping -e on no-match
+    PARTUUID="$(
+      grep -o 'cryptdevice=PARTUUID=[^ :"]*' "$LIMINE_CONF" 2>/dev/null | head -1 | cut -d= -f3
+    )" || PARTUUID=""
+    [[ -n "$PARTUUID" ]] || continue
+
+    LUKS_DEVICE="/dev/disk/by-partuuid/$PARTUUID"
+    [[ -b "$LUKS_DEVICE" ]] || continue
+    cryptsetup isLuks "$LUKS_DEVICE" 2>/dev/null || continue
+
+    LUKS_UUID="$(cryptsetup luksUUID "$LUKS_DEVICE" 2>/dev/null)" || LUKS_UUID=""
+    [[ -n "$LUKS_UUID" ]] || continue
+
+    echo "Updating $LIMINE_CONF..."
+    cp -a "$LIMINE_CONF" "${LIMINE_CONF}.bak.$(date +%s)" 2>/dev/null || true
+
+    busybox_cmd="cryptdevice=PARTUUID=${PARTUUID}:root"
+    systemd_cmd="rd.luks.name=${LUKS_UUID}=root rd.luks.options=tries=0"
+
+    sed -i "s|${busybox_cmd}|${systemd_cmd}|g" "$LIMINE_CONF"
+  done
 }
 
 chroot_bash() {
