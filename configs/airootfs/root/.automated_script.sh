@@ -128,6 +128,7 @@ chroot_bash() {
     env OMARCHY_CHROOT_INSTALL=1 \
     OMARCHY_USER_NAME="$(<user_full_name.txt)" \
     OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
+    OMARCHY_MIRROR="$OMARCHY_MIRROR" \
     USER="$OMARCHY_USER" \
     HOME="/home/$OMARCHY_USER" \
     /bin/bash "$@"
