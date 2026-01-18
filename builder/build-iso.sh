@@ -9,7 +9,11 @@ pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
 # Install omarchy-keyring for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
-pacman --config /configs/pacman-online.conf --noconfirm -Sy omarchy-keyring
+if [[ $OMARCHY_MIRROR == "edge" ]]; then
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy omarchy-keyring
+else
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy omarchy-keyring
+fi
 pacman-key --populate omarchy
 
 # Setup build locations
@@ -23,12 +27,15 @@ cp -r /archiso/configs/releng/* $build_cache_dir/
 rm "$build_cache_dir/airootfs/etc/motd"
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
-rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
+
+# Persist OMARCHY_MIRROR so it's available at install time
+echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
 # Setup Omarchy itself
 if [[ -d /omarchy ]]; then
@@ -78,7 +85,11 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+if [[ $OMARCHY_MIRROR == "edge" ]]; then
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+else
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+fi
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.

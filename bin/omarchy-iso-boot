@@ -18,9 +18,7 @@ if [ -z "$ISO" ]; then
   exit 1
 fi
 
-if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
-  sudo pacman -S --noconfirm --needed --quiet qemu-full edk2-ovmf
-fi
+omarchy-pkg-add qemu-full edk2-ovmf
 
 DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
