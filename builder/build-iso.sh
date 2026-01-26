@@ -37,6 +37,9 @@ cp -r /configs/* $build_cache_dir/
 # Persist OMARCHY_MIRROR so it's available at install time
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
+# Persist OMARCHY_EDITION so installer knows which packages to use
+echo "${OMARCHY_EDITION:-full}" > "$build_cache_dir/airootfs/root/omarchy_edition"
+
 # Setup Omarchy itself
 if [[ -d /omarchy ]]; then
   cp -rp /omarchy "$build_cache_dir/airootfs/root/omarchy"
@@ -79,8 +82,16 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
 all_packages=($(cat "$build_cache_dir/packages.x86_64"))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
+
+# Use lite or full package list based on edition
+if [[ "${OMARCHY_EDITION:-full}" == "lite" ]]; then
+  all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base-lite.packages" | grep -v '^$'))
+  all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other-lite.packages" | grep -v '^$'))
+else
+  all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
+  all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
+fi
+
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO

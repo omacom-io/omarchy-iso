@@ -5,6 +5,7 @@ set -e
 
 # Parse command line arguments
 NO_CACHE=""
+OMARCHY_EDITION="full"
 while [[ $# -gt 0 ]]; do
   case $1 in
   --no-cache)
@@ -27,9 +28,13 @@ while [[ $# -gt 0 ]]; do
     OMARCHY_MIRROR=edge
     shift
     ;;
+  --lite)
+    OMARCHY_EDITION="lite"
+    shift
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge] [--lite]"
     exit 1
     ;;
   esac
@@ -54,6 +59,7 @@ DOCKER_ARGS=(
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
   -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
+  -e "OMARCHY_EDITION=$OMARCHY_EDITION"
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"
@@ -65,6 +71,13 @@ DOCKER_ARGS=(
 
 # Use local source of Omarchy from $OMARCHY_PATH instead of git checkout
 if [[ -n "${LOCAL_SOURCE-}" ]]; then
+  # Default OMARCHY_PATH to sibling directory if not set
+  OMARCHY_PATH="${OMARCHY_PATH:-$(realpath "$BUILD_ROOT/../omarchy")}"
+  if [[ ! -d "$OMARCHY_PATH" ]]; then
+    echo "ERROR: OMARCHY_PATH=$OMARCHY_PATH does not exist"
+    echo "Set OMARCHY_PATH to the omarchy repo location or place it at ../omarchy"
+    exit 1
+  fi
   DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
 fi
 
@@ -88,7 +101,11 @@ docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
-iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
+if [[ "$OMARCHY_EDITION" == "lite" ]]; then
+  iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF-lite.iso"
+else
+  iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
+fi
 mv -f "$latest_iso" "$iso_ref"
 
 # Offer to boot the new build
