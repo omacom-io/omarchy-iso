@@ -6,6 +6,7 @@ use_omarchy_helpers() {
   export OMARCHY_INSTALL="/root/omarchy/install"
   export OMARCHY_INSTALL_LOG_FILE="/var/log/omarchy-install.log"
   export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
+  export OMARCHY_EDITION="$(cat /root/omarchy_edition 2>/dev/null || echo 'full')"
   source /root/omarchy/install/helpers/all.sh
 }
 
@@ -130,6 +131,7 @@ chroot_bash() {
     OMARCHY_USER_NAME="$(<user_full_name.txt)" \
     OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
     OMARCHY_MIRROR="$OMARCHY_MIRROR" \
+    OMARCHY_EDITION="$OMARCHY_EDITION" \
     USER="$OMARCHY_USER" \
     HOME="/home/$OMARCHY_USER" \
     /bin/bash "$@"
