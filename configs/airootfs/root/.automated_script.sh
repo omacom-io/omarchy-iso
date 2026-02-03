@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check if autoinstall mode is enabled via kernel parameter
+is_autoinstall() {
+  grep -q 'autoinstall' /proc/cmdline
+}
+
+# Check if we should shutdown instead of reboot (for Packer)
+should_shutdown() {
+  grep -q 'autoinstall.shutdown' /proc/cmdline
+}
+
 use_omarchy_helpers() {
   export OMARCHY_PATH="/root/omarchy"
   export OMARCHY_INSTALL="/root/omarchy/install"
@@ -12,6 +22,11 @@ use_omarchy_helpers() {
 run_configurator() {
   set_tokyo_night_colors
   ./configurator
+  export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+}
+
+run_autoinstall() {
+  ./autoinstall
   export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
 }
 
@@ -35,9 +50,13 @@ install_omarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
 
-  # Reboot if requested by installer
+  # Shutdown or reboot based on mode
   if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
-    reboot
+    if should_shutdown; then
+      poweroff
+    else
+      reboot
+    fi
   fi
 }
 
@@ -121,6 +140,28 @@ EOF
   find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
+
+  # Setup SSH keys if autoinstall mode (for Packer to connect)
+  if is_autoinstall && [[ -f /tmp/autoinstall_ssh_keys.json ]]; then
+    setup_autoinstall_ssh_keys
+  fi
+}
+
+# Setup SSH keys for autoinstall mode (called after archinstall)
+setup_autoinstall_ssh_keys() {
+  local ssh_dir="/mnt/home/$OMARCHY_USER/.ssh"
+
+  mkdir -p "$ssh_dir"
+  chmod 700 "$ssh_dir"
+
+  jq -r '.[]' /tmp/autoinstall_ssh_keys.json > "$ssh_dir/authorized_keys"
+  chmod 600 "$ssh_dir/authorized_keys"
+  chown -R 1000:1000 "$ssh_dir"
+
+  # Enable sshd
+  arch-chroot /mnt systemctl enable sshd
+
+  echo "[autoinstall] SSH keys configured and sshd enabled"
 }
 
 chroot_bash() {
@@ -137,7 +178,11 @@ chroot_bash() {
 
 if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
-  run_configurator
+  if is_autoinstall; then
+    run_autoinstall
+  else
+    run_configurator
+  fi
   install_arch
   install_omarchy
 fi

@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+# Unattended install script for Packer/Proxmox
+# Reads configuration from cloud-init drive and generates archinstall JSON files
+set -euo pipefail
+
+CIDATA_MOUNT="/tmp/cidata"
+USERDATA_FILE="$CIDATA_MOUNT/user-data"
+
+log() {
+  echo "[autoinstall] $*"
+}
+
+die() {
+  echo "[autoinstall] ERROR: $*" >&2
+  exit 1
+}
+
+# Find and mount the cloud-init drive (labeled 'cidata')
+mount_cidata() {
+  log "Looking for cloud-init drive..."
+
+  local cidata_dev=""
+
+  # Look for device with label 'cidata' or 'CIDATA'
+  for label in cidata CIDATA; do
+    if [[ -e "/dev/disk/by-label/$label" ]]; then
+      cidata_dev=$(readlink -f "/dev/disk/by-label/$label")
+      break
+    fi
+  done
+
+  if [[ -z "$cidata_dev" ]]; then
+    die "No cloud-init drive found (looking for label 'cidata')"
+  fi
+
+  log "Found cloud-init drive at $cidata_dev"
+
+  mkdir -p "$CIDATA_MOUNT"
+  mount -o ro "$cidata_dev" "$CIDATA_MOUNT" || die "Failed to mount cloud-init drive"
+
+  if [[ ! -f "$USERDATA_FILE" ]]; then
+    die "No user-data file found on cloud-init drive"
+  fi
+
+  log "Cloud-init drive mounted successfully"
+}
+
+# Parse YAML user-data file (simple parser for our specific format)
+# Usage: get_yaml_value "key" "default"
+get_yaml_value() {
+  local key="$1"
+  local default="${2:-}"
+  local value=""
+
+  # Look for key under autoinstall section
+  value=$(sed -n '/^autoinstall:/,/^[^ ]/p' "$USERDATA_FILE" | \
+          grep "^  $key:" | \
+          sed "s/^  $key: *//" | \
+          sed 's/^["'\'']\(.*\)["'\'']$/\1/' | \
+          head -1)
+
+  if [[ -z "$value" ]]; then
+    echo "$default"
+  else
+    echo "$value"
+  fi
+}
+
+# Get SSH authorized keys as a JSON array
+get_ssh_keys() {
+  local keys=()
+  local in_keys_section=false
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*ssh_authorized_keys: ]]; then
+      in_keys_section=true
+      continue
+    fi
+
+    if $in_keys_section; then
+      # Check if we've left the keys section (line doesn't start with dash or space)
+      if [[ "$line" =~ ^[[:space:]]*- ]]; then
+        # Extract the key (remove leading "- " and quotes)
+        local key=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/^["'\'']\(.*\)["'\'']$/\1/')
+        keys+=("$key")
+      elif [[ ! "$line" =~ ^[[:space:]] ]] && [[ -n "$line" ]]; then
+        break
+      fi
+    fi
+  done < "$USERDATA_FILE"
+
+  # Output as JSON array
+  if [[ ${#keys[@]} -eq 0 ]]; then
+    echo "[]"
+  else
+    printf '%s\n' "${keys[@]}" | jq -R . | jq -s .
+  fi
+}
+
+# Find the best disk for installation (skip ISO and small disks)
+find_install_disk() {
+  local disk_config
+  disk_config=$(get_yaml_value "disk" "auto")
+
+  if [[ "$disk_config" != "auto" ]]; then
+    # User specified a specific disk
+    if [[ -b "/dev/$disk_config" ]]; then
+      echo "/dev/$disk_config"
+      return
+    elif [[ -b "$disk_config" ]]; then
+      echo "$disk_config"
+      return
+    else
+      die "Specified disk '$disk_config' not found"
+    fi
+  fi
+
+  # Auto-select: find first suitable disk
+  log "Auto-selecting installation disk..."
+
+  local selected=""
+
+  for disk in /dev/sd[a-z] /dev/vd[a-z] /dev/nvme[0-9]n[0-9]; do
+    [[ -b "$disk" ]] || continue
+
+    # Skip if this is the boot ISO (check if it's a CD-ROM or has ISO filesystem)
+    local disk_name=$(basename "$disk")
+    if [[ -d "/sys/block/$disk_name" ]]; then
+      # Skip CD-ROMs
+      local removable=$(cat "/sys/block/$disk_name/removable" 2>/dev/null || echo "0")
+      if [[ "$removable" == "1" ]]; then
+        log "Skipping $disk (removable media)"
+        continue
+      fi
+
+      # Skip small disks (less than 10GB)
+      local size_bytes=$(cat "/sys/block/$disk_name/size" 2>/dev/null || echo "0")
+      local size_gb=$((size_bytes * 512 / 1024 / 1024 / 1024))
+      if [[ $size_gb -lt 10 ]]; then
+        log "Skipping $disk (too small: ${size_gb}GB)"
+        continue
+      fi
+    fi
+
+    selected="$disk"
+    break
+  done
+
+  if [[ -z "$selected" ]]; then
+    die "No suitable disk found for installation"
+  fi
+
+  log "Selected disk: $selected"
+  echo "$selected"
+}
+
+# Hash password using openssl (same format archinstall expects)
+hash_password() {
+  local password="$1"
+  openssl passwd -6 "$password"
+}
+
+# Generate user_configuration.json
+generate_user_configuration() {
+  local disk="$1"
+  local hostname="$2"
+  local timezone="$3"
+  local keyboard="$4"
+
+  log "Generating user_configuration.json..."
+
+  cat > user_configuration.json << EOF
+{
+  "config_version": "2.8.1",
+  "additional-repositories": [],
+  "archinstall-language": "English",
+  "audio_config": {
+    "audio": "pipewire"
+  },
+  "bootloader": "Systemd-boot",
+  "debug": false,
+  "disk_config": {
+    "config_type": "default_layout",
+    "device_modifications": [
+      {
+        "device": "$disk",
+        "wipe": true,
+        "partitions": [
+          {
+            "btrfs": [],
+            "flags": [
+              "Boot",
+              "ESP"
+            ],
+            "fs_type": "fat32",
+            "mount_options": [],
+            "mountpoint": "/boot",
+            "obj_id": "efi",
+            "size": {
+              "sector_size": null,
+              "unit": "MiB",
+              "value": 1024
+            },
+            "start": {
+              "sector_size": null,
+              "unit": "MiB",
+              "value": 1
+            },
+            "status": "create",
+            "type": "primary"
+          },
+          {
+            "btrfs": [],
+            "flags": [],
+            "fs_type": "ext4",
+            "mount_options": [],
+            "mountpoint": "/",
+            "obj_id": "root",
+            "size": {
+              "sector_size": null,
+              "unit": "Percent",
+              "value": 100
+            },
+            "start": {
+              "sector_size": null,
+              "unit": "MiB",
+              "value": 1025
+            },
+            "status": "create",
+            "type": "primary"
+          }
+        ]
+      }
+    ]
+  },
+  "hostname": "$hostname",
+  "kernels": [
+    "linux"
+  ],
+  "locale_config": {
+    "kb_layout": "$keyboard",
+    "sys_enc": "UTF-8",
+    "sys_lang": "en_US"
+  },
+  "mirror_config": {
+    "custom_mirrors": [],
+    "mirror_regions": {}
+  },
+  "network_config": {
+    "type": "nm"
+  },
+  "no_pkg_lookups": true,
+  "ntp": true,
+  "packages": [
+    "vim",
+    "openssh"
+  ],
+  "parallel downloads": 5,
+  "profile_config": null,
+  "script": "minimal",
+  "silent": true,
+  "skip": true,
+  "swap": false,
+  "timezone": "$timezone",
+  "uki": false,
+  "version": "2.8.1"
+}
+EOF
+
+  log "Created user_configuration.json"
+}
+
+# Generate user_credentials.json
+generate_user_credentials() {
+  local username="$1"
+  local password_hash="$2"
+
+  log "Generating user_credentials.json..."
+
+  cat > user_credentials.json << EOF
+{
+  "!users": [
+    {
+      "!password": "$password_hash",
+      "sudo": true,
+      "username": "$username"
+    }
+  ]
+}
+EOF
+
+  log "Created user_credentials.json"
+}
+
+# Generate placeholder files that the installer expects
+generate_placeholder_files() {
+  local username="$1"
+
+  # These files are read by chroot_bash in .automated_script.sh
+  echo "$username" > user_full_name.txt
+  echo "${username}@localhost" > user_email_address.txt
+
+  log "Created placeholder files"
+}
+
+# Setup SSH authorized keys for the installed system
+setup_ssh_keys() {
+  local username="$1"
+  local ssh_keys_json="$2"
+
+  if [[ "$ssh_keys_json" == "[]" ]]; then
+    log "No SSH keys to configure"
+    return
+  fi
+
+  log "SSH keys will be configured after archinstall completes"
+
+  # Save keys to a temp file that post-install can use
+  echo "$ssh_keys_json" > /tmp/autoinstall_ssh_keys.json
+}
+
+# Post-install hook to set up SSH keys (called from .automated_script.sh context)
+setup_ssh_keys_post_install() {
+  if [[ ! -f /tmp/autoinstall_ssh_keys.json ]]; then
+    return
+  fi
+
+  local username
+  username=$(jq -r '.users[0].username' user_credentials.json)
+  local ssh_dir="/mnt/home/$username/.ssh"
+
+  mkdir -p "$ssh_dir"
+  chmod 700 "$ssh_dir"
+
+  jq -r '.[]' /tmp/autoinstall_ssh_keys.json > "$ssh_dir/authorized_keys"
+  chmod 600 "$ssh_dir/authorized_keys"
+  chown -R 1000:1000 "$ssh_dir"
+
+  # Enable sshd
+  arch-chroot /mnt systemctl enable sshd
+
+  log "SSH keys configured and sshd enabled"
+}
+
+main() {
+  log "Starting unattended installation..."
+
+  # Mount cloud-init drive
+  mount_cidata
+
+  # Read configuration
+  local username hostname timezone keyboard password disk ssh_keys
+  username=$(get_yaml_value "username" "")
+  password=$(get_yaml_value "password" "")
+  hostname=$(get_yaml_value "hostname" "omarchy")
+  timezone=$(get_yaml_value "timezone" "UTC")
+  keyboard=$(get_yaml_value "keyboard" "us")
+  ssh_keys=$(get_ssh_keys)
+
+  # Validate required fields
+  if [[ -z "$username" ]]; then
+    die "username is required in cloud-init config"
+  fi
+  if [[ -z "$password" ]]; then
+    die "password is required in cloud-init config"
+  fi
+
+  log "Configuration:"
+  log "  username: $username"
+  log "  hostname: $hostname"
+  log "  timezone: $timezone"
+  log "  keyboard: $keyboard"
+  log "  ssh_keys: $(echo "$ssh_keys" | jq -r 'length') key(s)"
+
+  # Find installation disk
+  disk=$(find_install_disk)
+
+  # Hash the password
+  local password_hash
+  password_hash=$(hash_password "$password")
+
+  # Generate configuration files
+  generate_user_configuration "$disk" "$hostname" "$timezone" "$keyboard"
+  generate_user_credentials "$username" "$password_hash"
+  generate_placeholder_files "$username"
+
+  # Prepare SSH keys for post-install
+  setup_ssh_keys "$username" "$ssh_keys"
+
+  # Unmount cloud-init drive
+  umount "$CIDATA_MOUNT" || true
+
+  log "Configuration complete, ready for archinstall"
+}
+
+# Allow sourcing for post-install functions
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
