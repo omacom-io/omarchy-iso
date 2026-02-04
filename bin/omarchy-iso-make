@@ -27,9 +27,13 @@ while [[ $# -gt 0 ]]; do
     OMARCHY_MIRROR=edge
     shift
     ;;
+  --rc)
+    OMARCHY_MIRROR=rc
+    shift
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge] [--rc]"
     exit 1
     ;;
   esac
