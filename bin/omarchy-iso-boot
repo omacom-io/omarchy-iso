@@ -22,7 +22,7 @@ omarchy-pkg-add qemu-full edk2-ovmf
 
 DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
-  qemu-img create -f qcow2 "$DISK" 20G
+  qemu-img create -f qcow2 "$DISK" 40G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
 fi
 
