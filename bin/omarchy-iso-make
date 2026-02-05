@@ -55,6 +55,8 @@ OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 DOCKER_ARGS=(
   --rm
   --privileged
+  --platform linux/amd64 # Suppress warnings if building on Apple Silicon
+  --ulimit nofile=8192:8192 # Prevent "Too many open files in system" errors during build
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
   -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
@@ -72,19 +74,25 @@ if [[ -n "${LOCAL_SOURCE-}" ]]; then
   DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
 fi
 
-# Use local pacman cache if you already have one on host to speed up repeat runs
-if [ -d "/var/cache/pacman/pkg" ]; then
-  DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
-fi
-
-# Mount the build cache directory where packages are downloaded
+# Set up host caching unless disabled
 if [[ -z "$NO_CACHE" ]]; then
-  # using a dated dir on the host to refresh daily if building multiple times
-  BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy"
+  OMARCHY_CACHE_DIR="${OMARCHY_CACHE_DIR:-$HOME/.cache/omarchy}"
+
+  # Use a local pacman cache to speed up repeat runs
+  DOCKER_ARGS+=(-v "$OMARCHY_CACHE_DIR/pacman:/var/cache/pacman")
+  mkdir -p "$OMARCHY_CACHE_DIR/pacman"
+
+  # Use a dated dir on the host to refresh daily if building multiple times
+  OFFLINE_REPO_BASE="$OMARCHY_CACHE_DIR/iso"
+  TODAY=$(date +%Y-%m-%d)
+  OFFLINE_REPO_BUILD_CACHE_DIR="$OFFLINE_REPO_BASE/$TODAY/airootfs/var/cache/omarchy"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
+
   # Mount to /var/cache/airootfs/var/cache/omarchy since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/omarchy")
+
+  # Wipe stale cache folders
+  find "$OFFLINE_REPO_BASE" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" -exec rm -rf {} +
 fi
 
 # Run the builder with assembled args
