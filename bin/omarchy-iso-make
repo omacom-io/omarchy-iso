@@ -53,7 +53,6 @@ OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
 OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
 DOCKER_ARGS=(
-  --rm
   --privileged
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
@@ -79,16 +78,36 @@ fi
 
 # Mount the build cache directory where packages are downloaded
 if [[ -z "$NO_CACHE" ]]; then
-  # using a dated dir on the host to refresh daily if building multiple times
-  BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy"
+  # Using a 24-hour window cache (not daily) to handle rapid Arch package updates
+  # Cache is valid for 24 hours from first build, then refreshes
+  # Format: YYYYMMDD_HH (e.g., 20260111_14 for Jan 11, 2026 at 14:00)
+  BUILD_TIMESTAMP=$(date +%Y%m%d_%H)
+  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_TIMESTAMP}/airootfs/var/cache/omarchy"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/omarchy since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/omarchy")
 fi
 
+# Clean up any existing omarchy-iso build containers (but not other containers)
+# Use a specific container name to avoid touching other containers
+OMARCHY_BUILD_CONTAINER_NAME="omarchy-iso-build-$(id -u)"
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${OMARCHY_BUILD_CONTAINER_NAME}$"; then
+  echo "Cleaning up previous omarchy-iso build container: ${OMARCHY_BUILD_CONTAINER_NAME}"
+  docker rm -f "${OMARCHY_BUILD_CONTAINER_NAME}" 2>/dev/null || true
+fi
+
 # Run the builder with assembled args
-docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
+# Use --name to create a named container for easy cleanup
+# Note: --rm is removed from DOCKER_ARGS since we're using a named container
+DOCKER_ARGS_NO_RM=()
+for arg in "${DOCKER_ARGS[@]}"; do
+  [[ "$arg" != "--rm" ]] && DOCKER_ARGS_NO_RM+=("$arg")
+done
+
+docker run --name "${OMARCHY_BUILD_CONTAINER_NAME}" "${DOCKER_ARGS_NO_RM[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
+
+# Clean up the container after build completes
+docker rm "${OMARCHY_BUILD_CONTAINER_NAME}" 2>/dev/null || true
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
