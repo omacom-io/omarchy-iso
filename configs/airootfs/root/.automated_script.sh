@@ -173,6 +173,13 @@ load_cidata() {
   return 1
 }
 
+skip_reboot_prompt_if_unattended() {
+  is_autoinstall || return 0
+
+  local finished_sh="/mnt/home/$OMARCHY_USER/.local/share/omarchy/install/post-install/finished.sh"
+  sed -i 's/if gum confirm.*Reboot Now.*/if true; then/' "$finished_sh"
+}
+
 configure_install() {
   if load_cidata; then
     touch /root/autoinstall_detected
@@ -186,5 +193,6 @@ if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
   configure_install
   install_arch
+  skip_reboot_prompt_if_unattended
   install_omarchy
 fi
