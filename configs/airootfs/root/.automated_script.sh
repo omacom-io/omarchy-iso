@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check if autoinstall mode was detected (config files pre-placed)
+is_autoinstall() {
+  [[ -f /root/autoinstall_detected ]]
+}
+
 use_omarchy_helpers() {
   export OMARCHY_PATH="/root/omarchy"
   export OMARCHY_INSTALL="/root/omarchy/install"
@@ -34,11 +39,6 @@ install_arch() {
 install_omarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
-
-  # Reboot if requested by installer
-  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
-    reboot
-  fi
 }
 
 # Set Tokyo Night color scheme for the terminal
@@ -123,6 +123,46 @@ EOF
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
 }
 
+# Setup SSH keys for autoinstall mode (called after archinstall)
+setup_autoinstall_ssh_keys() {
+  local ssh_dir="/mnt/home/$OMARCHY_USER/.ssh"
+
+  mkdir -p "$ssh_dir"
+  chmod 700 "$ssh_dir"
+
+  jq -r '.[]' /root/ssh.json > "$ssh_dir/authorized_keys"
+  chmod 600 "$ssh_dir/authorized_keys"
+  chown -R 1000:1000 "$ssh_dir"
+
+  # Enable sshd
+  arch-chroot /mnt systemctl enable sshd
+
+  echo "[autoinstall] SSH keys configured"
+}
+
+# Setup networking and sshd for autoinstall mode
+setup_autoinstall_networking() {
+  # Enable sshd with password authentication for remote access
+  arch-chroot /mnt systemctl enable sshd
+  sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /mnt/etc/ssh/sshd_config
+  sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /mnt/etc/ssh/sshd_config
+
+  # Enable DHCP on all ethernet interfaces via systemd-networkd
+  mkdir -p /mnt/etc/systemd/network
+  cat > /mnt/etc/systemd/network/20-dhcp.network <<NETEOF
+[Match]
+Name=en*
+
+[Network]
+DHCP=yes
+NETEOF
+
+  arch-chroot /mnt systemctl enable systemd-networkd
+  arch-chroot /mnt systemctl enable systemd-resolved
+
+  echo "[autoinstall] Networking and sshd configured"
+}
+
 chroot_bash() {
   HOME=/home/$OMARCHY_USER \
     arch-chroot -u $OMARCHY_USER /mnt/ \
@@ -135,9 +175,82 @@ chroot_bash() {
     /bin/bash "$@"
 }
 
+# Mount a cidata drive and copy config files if present
+load_cidata() {
+  local cidata_dev=""
+
+  for label in cidata CIDATA; do
+    if [[ -e "/dev/disk/by-label/$label" ]]; then
+      cidata_dev=$(readlink -f "/dev/disk/by-label/$label")
+      break
+    fi
+  done
+
+  [[ -z "$cidata_dev" ]] && return 1
+
+  local mnt="/tmp/cidata"
+  mkdir -p "$mnt"
+  mount -o ro "$cidata_dev" "$mnt" || return 1
+
+  # Need at least the two required config files
+  if [[ -f "$mnt/user_configuration.json" && -f "$mnt/user_credentials.json" ]]; then
+    cp "$mnt/user_configuration.json" /root/
+    cp "$mnt/user_credentials.json" /root/
+    for f in user_full_name.txt user_email_address.txt; do
+      [[ -f "$mnt/$f" ]] && cp "$mnt/$f" /root/
+    done
+    [[ -f "$mnt/ssh.json" ]] && cp "$mnt/ssh.json" /root/
+    umount "$mnt"
+    return 0
+  fi
+
+  umount "$mnt"
+  return 1
+}
+
+setup_ssh_if_unattended() {
+  is_autoinstall || return 0
+  [[ -f /root/ssh.json ]] || return 0
+
+  setup_autoinstall_networking
+  setup_autoinstall_ssh_keys
+}
+
+allow_ssh_through_firewall_if_unattended() {
+  is_autoinstall || return 0
+
+  arch-chroot /mnt bash -c "command -v ufw &>/dev/null && ufw allow ssh" || true
+}
+
+auto_confirm_reboot_if_unattended() {
+  is_autoinstall || return 0
+
+  local finished_sh="/mnt/home/$OMARCHY_USER/.local/share/omarchy/install/post-install/finished.sh"
+  sed -i 's/if gum confirm.*Reboot Now.*/if true; then/' "$finished_sh"
+}
+
+reboot_if_completed() {
+  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+    reboot
+  fi
+}
+
+configure_install() {
+  if load_cidata; then
+    touch /root/autoinstall_detected
+    export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+  else
+    run_configurator
+  fi
+}
+
 if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
-  run_configurator
+  configure_install
   install_arch
+  auto_confirm_reboot_if_unattended
+  setup_ssh_if_unattended
   install_omarchy
+  allow_ssh_through_firewall_if_unattended
+  reboot_if_completed
 fi
