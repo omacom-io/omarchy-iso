@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check if autoinstall mode was detected (config files pre-placed)
+is_autoinstall() {
+  [[ -f /root/autoinstall_detected ]]
+}
+
 use_omarchy_helpers() {
   export OMARCHY_PATH="/root/omarchy"
   export OMARCHY_INSTALL="/root/omarchy/install"
@@ -135,9 +140,51 @@ chroot_bash() {
     /bin/bash "$@"
 }
 
+# Mount a cidata drive and copy config files if present
+load_cidata() {
+  local cidata_dev=""
+
+  for label in cidata CIDATA; do
+    if [[ -e "/dev/disk/by-label/$label" ]]; then
+      cidata_dev=$(readlink -f "/dev/disk/by-label/$label")
+      break
+    fi
+  done
+
+  [[ -z "$cidata_dev" ]] && return 1
+
+  local mnt="/tmp/cidata"
+  mkdir -p "$mnt"
+  mount -o ro "$cidata_dev" "$mnt" || return 1
+
+  # Need at least the two required config files
+  if [[ -f "$mnt/user_configuration.json" && -f "$mnt/user_credentials.json" ]]; then
+    cp "$mnt/user_configuration.json" /root/
+    cp "$mnt/user_credentials.json" /root/
+    for f in user_full_name.txt user_email_address.txt; do
+      [[ -f "$mnt/$f" ]] && cp "$mnt/$f" /root/
+    done
+    [[ -f "$mnt/ssh.json" ]] && cp "$mnt/ssh.json" /root/
+    umount "$mnt"
+    return 0
+  fi
+
+  umount "$mnt"
+  return 1
+}
+
+configure_install() {
+  if load_cidata; then
+    touch /root/autoinstall_detected
+    export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+  else
+    run_configurator
+  fi
+}
+
 if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
-  run_configurator
+  configure_install
   install_arch
   install_omarchy
 fi
