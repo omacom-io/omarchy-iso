@@ -128,6 +128,46 @@ EOF
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
 }
 
+# Setup SSH keys for autoinstall mode (called after archinstall)
+setup_autoinstall_ssh_keys() {
+  local ssh_dir="/mnt/home/$OMARCHY_USER/.ssh"
+
+  mkdir -p "$ssh_dir"
+  chmod 700 "$ssh_dir"
+
+  jq -r '.[]' /root/ssh.json > "$ssh_dir/authorized_keys"
+  chmod 600 "$ssh_dir/authorized_keys"
+  chown -R 1000:1000 "$ssh_dir"
+
+  # Enable sshd
+  arch-chroot /mnt systemctl enable sshd
+
+  echo "[autoinstall] SSH keys configured"
+}
+
+# Setup networking and sshd for autoinstall mode
+setup_autoinstall_networking() {
+  # Enable sshd with password authentication for remote access
+  arch-chroot /mnt systemctl enable sshd
+  sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /mnt/etc/ssh/sshd_config
+  sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /mnt/etc/ssh/sshd_config
+
+  # Enable DHCP on all ethernet interfaces via systemd-networkd
+  mkdir -p /mnt/etc/systemd/network
+  cat > /mnt/etc/systemd/network/20-dhcp.network <<NETEOF
+[Match]
+Name=en*
+
+[Network]
+DHCP=yes
+NETEOF
+
+  arch-chroot /mnt systemctl enable systemd-networkd
+  arch-chroot /mnt systemctl enable systemd-resolved
+
+  echo "[autoinstall] Networking and sshd configured"
+}
+
 chroot_bash() {
   HOME=/home/$OMARCHY_USER \
     arch-chroot -u $OMARCHY_USER /mnt/ \
@@ -173,6 +213,20 @@ load_cidata() {
   return 1
 }
 
+setup_ssh_if_unattended() {
+  is_autoinstall || return 0
+  [[ -f /root/ssh.json ]] || return 0
+
+  setup_autoinstall_networking
+  setup_autoinstall_ssh_keys
+}
+
+allow_ssh_through_firewall_if_unattended() {
+  is_autoinstall || return 0
+
+  arch-chroot /mnt bash -c "command -v ufw &>/dev/null && ufw allow ssh" || true
+}
+
 skip_reboot_prompt_if_unattended() {
   is_autoinstall || return 0
 
@@ -194,5 +248,7 @@ if [[ $(tty) == "/dev/tty1" ]]; then
   configure_install
   install_arch
   skip_reboot_prompt_if_unattended
+  setup_ssh_if_unattended
   install_omarchy
+  allow_ssh_through_firewall_if_unattended
 fi
