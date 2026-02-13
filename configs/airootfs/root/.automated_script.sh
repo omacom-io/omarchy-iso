@@ -222,11 +222,17 @@ allow_ssh_through_firewall_if_unattended() {
   arch-chroot /mnt bash -c "command -v ufw &>/dev/null && ufw allow ssh" || true
 }
 
-skip_reboot_prompt_if_unattended() {
+auto_confirm_reboot_if_unattended() {
   is_autoinstall || return 0
 
   local finished_sh="/mnt/home/$OMARCHY_USER/.local/share/omarchy/install/post-install/finished.sh"
   sed -i 's/if gum confirm.*Reboot Now.*/if true; then/' "$finished_sh"
+}
+
+reboot_if_completed() {
+  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+    reboot
+  fi
 }
 
 configure_install() {
@@ -242,13 +248,9 @@ if [[ $(tty) == "/dev/tty1" ]]; then
   use_omarchy_helpers
   configure_install
   install_arch
-  skip_reboot_prompt_if_unattended
+  auto_confirm_reboot_if_unattended
   setup_ssh_if_unattended
   install_omarchy
   allow_ssh_through_firewall_if_unattended
-
-  # Reboot if installer completed successfully
-  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
-    reboot
-  fi
+  reboot_if_completed
 fi
