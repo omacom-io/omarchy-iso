@@ -73,6 +73,10 @@ Create `ssh.json` with a JSON array of public keys:
 
 When `ssh.json` is present, the installer enables `sshd`, configures DHCP networking, and populates `~/.ssh/authorized_keys`.
 
+### Drive encryption
+
+The interactive installer enables LUKS disk encryption by default, but autoinstall configs should **not** include `disk_encryption` in `user_configuration.json`. Encrypted disks require a passphrase at every boot, which blocks unattended operation. If your `user_configuration.json` was generated from the interactive configurator, remove the `disk_encryption` section from `disk_config`.
+
 ### Proxmox example
 
 ```bash
