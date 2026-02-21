@@ -50,26 +50,35 @@ Create a second ISO flavor for OEM preloading that is installed to internal stor
 - Add CLI flag `--oem` to `bin/omarchy-iso-make`.
 - Pass `OMARCHY_MODE=oem` into Docker build env (default `normal`).
 - In `builder/build-iso.sh`, write mode marker `/root/omarchy_mode` containing `oem` or `normal` (same pattern as `omarchy_mirror`).
-- When `OMARCHY_MODE=oem`, inject `copytoram=y` into all bootloader entry points before `mkarchiso` runs:
+- Keep OEM on current boot stack (`uefi.grub` + `bios.syslinux`); do not add or depend on systemd-boot paths.
+- When `OMARCHY_MODE=oem`, inject `copytoram=y` into all shipped OEM boot entry points before `mkarchiso` runs:
   - `grub/grub.cfg`: append to `linux` cmdline entries.
-  - `efiboot/loader/entries/01-archiso-x86_64-linux.conf`: append to `options` line.
+  - `grub/loopback.cfg`: append to `linux` cmdline entries.
   - `syslinux/archiso_sys-linux.cfg`: append to `APPEND` lines.
+- When `OMARCHY_MODE=oem`, remove accessibility/speakup boot entries:
+  - `grub/grub.cfg`: remove `archlinux-accessibility` menuentry.
+  - `grub/loopback.cfg`: remove `archlinux-accessibility` menuentry.
+  - `syslinux/archiso_sys-linux.cfg`: remove `arch64speech` label block.
 - When `OMARCHY_MODE=oem`, override `iso_application` in `profiledef.sh` to `"Omarchy OEM Installer"`.
 - Rename output ISO with `-oem` suffix (in addition to existing `-$OMARCHY_INSTALLER_REF` suffix).
 
 ### Hardening
 - Add post-injection build assertion that fails build if any expected boot config does not contain `copytoram=y`.
+- Add post-injection build assertion that fails build if any OEM boot config still contains accessibility/speakup entries.
 - Make injection idempotent (do not duplicate `copytoram=y` if already present).
 
 ### Acceptance criteria
 - `./bin/omarchy-iso-make --oem` builds successfully.
 - OEM ISO boot entries contain `copytoram=y` in all supported boot paths.
+- OEM ISO does not expose accessibility/speakup boot entries.
 - Normal build output and behavior remain unchanged.
 
 ### Suggested verification commands
-- `bsdtar -xOf out/<iso>.iso loader/entries/01-archiso-x86_64-linux.conf | rg copytoram=y`
 - `bsdtar -xOf out/<iso>.iso boot/grub/grub.cfg | rg copytoram=y`
+- `bsdtar -xOf out/<iso>.iso boot/grub/loopback.cfg | rg copytoram=y`
 - `bsdtar -xOf out/<iso>.iso boot/syslinux/archiso_sys-linux.cfg | rg copytoram=y`
+- `bsdtar -xOf out/<iso>.iso boot/grub/grub.cfg | rg 'accessibility|speakup'` (should return no matches)
+- `bsdtar -xOf out/<iso>.iso boot/syslinux/archiso_sys-linux.cfg | rg 'speech|accessibility'` (should return no matches)
 
 ---
 
@@ -84,14 +93,18 @@ OEM image boots from internal disk and later wipes that same disk. Live environm
 ### Changes
 - Before `run_configurator`, if `/root/omarchy_mode` is `oem`:
   - Verify `/proc/cmdline` contains `copytoram=y`; abort with clear actionable error if missing.
-  - Verify memory safety using `MemAvailable` (not total memory):
-    - Minimum threshold: `max(6 GiB, 1.5 x ISO size + 1 GiB)`.
+  - Verify factory hardware minimum using `MemTotal`:
+    - Require `MemTotal >= 8 GiB`.
+    - Abort with clear error if below minimum.
+  - Verify runtime memory safety using `MemAvailable`:
+    - Minimum threshold: `1.5 x ISO size + 1 GiB`.
     - Abort with clear error if below threshold.
   - Verify runtime state indicates live root is in RAM (for example, expected archiso runtime mounts present and boot media not actively mounted as install target path).
 
 ### Acceptance criteria
 - OEM mode aborts safely if `copytoram=y` missing from cmdline.
-- OEM mode aborts safely if available memory below threshold.
+- OEM mode aborts safely if `MemTotal < 8 GiB`.
+- OEM mode aborts safely if `MemAvailable` below threshold.
 - OEM mode aborts safely if runtime state does not confirm RAM-backed live environment.
 
 ### Error message requirements
@@ -133,7 +146,7 @@ OEM mode still needs an unmistakable warning before destructive install proceeds
 - Document `--oem` build flag and resulting artifact naming.
 - Document factory workflow: writing OEM ISO to internal disk and expected first-boot UX.
 - Document failure and recovery behavior:
-  - Missing `copytoram=y` or low memory causes safe abort.
+  - Missing `copytoram=y`, `MemTotal < 8 GiB`, or low `MemAvailable` causes safe abort.
   - Interrupted/failed install requires external reinstall media.
 - Add short operator checklist for manufacturing line validation.
 
@@ -147,6 +160,7 @@ OEM mode still needs an unmistakable warning before destructive install proceeds
 3. Boot from virtual disk and verify:
    - `/proc/cmdline` contains `copytoram=y`.
    - Guardrail checks pass in healthy case.
+   - OEM boot menu does not include accessibility/speech entries.
 4. Complete setup flow on first boot.
 5. Install to same disk.
 6. Reboot into installed OS.
@@ -157,8 +171,7 @@ OEM mode still needs an unmistakable warning before destructive install proceeds
 8. Validate OEM warning + typed confirmation appears and gates destructive action.
 
 ### Boot path coverage
-- UEFI + systemd-boot path.
-- UEFI + GRUB path (if supported in current profile).
+- UEFI + GRUB path.
 - BIOS/syslinux path (if still shipped).
 
 ### Hardware test matrix
@@ -168,6 +181,7 @@ OEM mode still needs an unmistakable warning before destructive install proceeds
 
 ### Negative tests
 - OEM boot without `copytoram=y` -> safe abort with clear error.
+- `MemTotal < 8 GiB` -> safe abort with clear error.
 - Low `MemAvailable` -> safe abort with clear error.
 - Runtime state not RAM-backed -> safe abort with clear error.
 - Power interruption before installer starts -> deterministic reboot behavior.
