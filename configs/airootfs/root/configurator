@@ -217,6 +217,9 @@ get_root_disk() {
 
   [[ -n $device ]] || return 1
 
+  # /run/archiso/bootmnt usually resolves to the boot partition, but the
+  # installer picker works with whole disks. Walk back to the parent disk so
+  # the install media itself never shows up as a wipe target.
   device=$(readlink -f "$device" 2>/dev/null || printf "%s\n" "$device")
 
   while true; do
