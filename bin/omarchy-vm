@@ -26,7 +26,8 @@ save_vm() {
   local vm_path="$VM_DIR/$name"
 
   if [[ -d "$vm_path" ]]; then
-    if ! gum confirm "VM '$name' exists. Overwrite?"; then
+    read -r -p "VM '$name' exists. Overwrite? [Y/n] " _confirm
+    if [[ -n "$_confirm" && ! "$_confirm" =~ ^[Yy]$ ]]; then
       exit 0
     fi
   fi
@@ -73,7 +74,8 @@ boot_vm() {
     exit 1
   fi
 
-  if [[ -f "$TMP_DISK" ]] && ! gum confirm "Override existing /tmp VM?"; then
+  read -r -p "Override existing /tmp VM? [Y/n] " _confirm
+  if [[ -f "$TMP_DISK" ]] && [[ -n "$_confirm" && ! "$_confirm" =~ ^[Yy]$ ]]; then
     exit 0
   fi
 

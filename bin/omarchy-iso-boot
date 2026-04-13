@@ -7,7 +7,8 @@ REUSE="$2"
 
 if [ $# -eq 0 ]; then
   ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
-  if gum confirm --default=false "Reuse existing disk?"; then
+  read -r -p "Reuse existing disk? [y/N] " _confirm
+  if [[ "$_confirm" =~ ^[Yy]$ ]]; then
     REUSE="reuse"
   fi
 fi
