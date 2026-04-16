@@ -38,6 +38,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Clear out old packages
+sudo rm -rf /var/cache/pacman/pkg/*
+
 # Ensure we have the submodule checked out
 git submodule update --init --recursive --jobs=8
 
