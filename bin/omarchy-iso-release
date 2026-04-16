@@ -1,34 +1,65 @@
 #!/bin/bash
 
-if [ $# -eq 0 ]; then
-  echo "Usage: omarchy-iso-release [version]"
+MAKE_ARGS=()
+INSTALLER_REF=master
+RELEASE_SUFFIX=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  --no-make)
+    MAKE_ARGS+=("$1")
+    shift
+    ;;
+  --rc)
+    MAKE_ARGS+=("$1")
+    INSTALLER_REF=rc
+    RELEASE_SUFFIX="-rc"
+    shift
+    ;;
+  -*)
+    echo "Unknown option: $1"
+    echo "Usage: omarchy-iso-release [--no-make] [--rc] [version]"
+    exit 1
+    ;;
+  *)
+    if [[ -n "${BUILD_VERSION-}" ]]; then
+      echo "Usage: omarchy-iso-release [--no-make] [--rc] [version]"
+      exit 1
+    fi
+    BUILD_VERSION="$1"
+    shift
+    ;;
+  esac
+done
+
+if [[ -z "${BUILD_VERSION-}" ]]; then
+  echo "Usage: omarchy-iso-release [--no-make] [--rc] [version]"
   exit 1
 fi
 
 BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
-BULD_VERSION="$1"
 
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
 # Make ISOs
-if [[ $1 != "--no-make" ]]; then
-  echo -e "\e[32mMaking master ISO\e[0m"
-  OMARCHY_INSTALLER_REF=master omarchy-iso-make --no-cache --no-boot-offer
+if [[ ! " ${MAKE_ARGS[*]} " =~ " --no-make " ]]; then
+  echo -e "\e[32mMaking $INSTALLER_REF ISO\e[0m"
+  omarchy-iso-make --no-cache --no-boot-offer "${MAKE_ARGS[@]}"
 else
   echo -e "\e[31mSkipping remaking ISOs\e[0m"
 fi
 
-# Sign and upload master ISO
-latest_master_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-master.iso | head -n1)
-release_master_iso="$BUILD_RELEASE_PATH/omarchy-$BULD_VERSION.iso"
-cp "$latest_master_iso" "$release_master_iso"
+# Sign and upload ISO
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso | head -n1)
+release_iso="$BUILD_RELEASE_PATH/omarchy-$BUILD_VERSION$RELEASE_SUFFIX.iso"
+cp "$latest_iso" "$release_iso"
 
-echo -e "\e[32mSigning master ISO\e[0m"
-omarchy-iso-sign "$release_master_iso"
+echo -e "\e[32mSigning $INSTALLER_REF ISO\e[0m"
+omarchy-iso-sign "$release_iso"
 
-master_sha=$(sha256sum "$release_master_iso")
-echo -e "\e[32mSHA256 for master ISO: $master_sha\e[0m"
+iso_sha=$(sha256sum "$release_iso")
+echo -e "\e[32mSHA256 for $INSTALLER_REF ISO: $iso_sha\e[0m"
 
-omarchy-iso-upload "$release_master_iso"
+omarchy-iso-upload "$release_iso"
