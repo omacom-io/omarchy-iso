@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# Build Omarchy ISO with local source and custom environment variables
+# This script sets up the environment and calls omarchy-iso-make
+#
+# Usage:
+#   ./bin/omarchy-iso-make-local [additional omarchy-iso-make options]
+#
+# Environment variables (can be set before running):
+#   OMARCHY_REPO_PATH - Path to omarchy-repo (default: $HOME/dev/omarchy-libreboot-coreboot/omarchy-repo)
+#   OMARCHY_SKIP_DETECTION_PAUSE - Set to 1 to skip detection pauses (default: 0 - pauses enabled for screenshots)
+#
+# Examples:
+#   ./bin/omarchy-iso-make-local
+#   ./bin/omarchy-iso-make-local --no-cache
+#   OMARCHY_REPO_PATH=/path/to/repo ./bin/omarchy-iso-make-local
+
+# Abort if anything fails
+set -e
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OMARCHY_ISO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Set OMARCHY_PATH to the modified repo
+# Adjust this path if your omarchy-repo is in a different location
+OMARCHY_REPO_PATH="${OMARCHY_REPO_PATH:-$HOME/dev/omarchy-libreboot-coreboot/omarchy-repo}"
+
+# Verify OMARCHY_REPO_PATH exists
+if [[ ! -d "$OMARCHY_REPO_PATH" ]]; then
+  echo "Error: OMARCHY_REPO_PATH not found: $OMARCHY_REPO_PATH" >&2
+  echo "Set OMARCHY_REPO_PATH environment variable or ensure the path is correct." >&2
+  echo "" >&2
+  echo "Example:" >&2
+  echo "  export OMARCHY_REPO_PATH=/path/to/omarchy-repo" >&2
+  echo "  ./bin/omarchy-iso-make-local" >&2
+  exit 1
+fi
+
+# Export environment variables
+export OMARCHY_PATH="$OMARCHY_REPO_PATH"
+# Default to 0 (pauses enabled) - set to 1 to skip pauses
+export OMARCHY_SKIP_DETECTION_PAUSE="${OMARCHY_SKIP_DETECTION_PAUSE:-0}"
+
+# Optional: Set other environment variables if needed (uncomment to use)
+# export OMARCHY_INSTALLER_REPO="basecamp/omarchy"
+# export OMARCHY_INSTALLER_REF="master"
+# export OMARCHY_MIRROR="stable"
+
+# Change to omarchy-iso directory
+cd "$OMARCHY_ISO_ROOT"
+
+# Run the build
+echo "=========================================="
+echo "Building Omarchy ISO with local source"
+echo "=========================================="
+echo "OMARCHY_PATH: $OMARCHY_PATH"
+echo "OMARCHY_SKIP_DETECTION_PAUSE: $OMARCHY_SKIP_DETECTION_PAUSE (0=pauses enabled, 1=skip pauses)"
+echo ""
+echo "Note: Pauses are ENABLED by default (10 seconds) for screenshots."
+echo "      Set OMARCHY_SKIP_DETECTION_PAUSE=1 to disable pauses."
+echo ""
+echo "Passing arguments to omarchy-iso-make: $*"
+echo ""
+
+./bin/omarchy-iso-make --local-source "$@"
