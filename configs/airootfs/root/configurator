@@ -223,7 +223,7 @@ get_root_disk() {
   device=$(readlink -f "$device" 2>/dev/null || printf "%s\n" "$device")
 
   while true; do
-    parent=$(lsblk -no PKNAME "$device" 2>/dev/null | tail -n1)
+    parent=$(lsblk -dno PKNAME "$device" 2>/dev/null | tail -n1)
     [[ -n $parent ]] || break
     device="/dev/$parent"
   done
