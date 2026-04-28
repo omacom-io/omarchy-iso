@@ -211,36 +211,12 @@ get_disk_info() {
   echo "$display"
 }
 
-get_root_disk() {
-  local device="$1"
-  local parent
-
-  [[ -n $device ]] || return 1
-
-  # /run/archiso/bootmnt usually resolves to the boot partition, but the
-  # installer picker works with whole disks. Walk back to the parent disk so
-  # the install media itself never shows up as a wipe target.
-  device=$(readlink -f "$device" 2>/dev/null || printf "%s\n" "$device")
-
-  while true; do
-    parent=$(lsblk -no PKNAME "$device" 2>/dev/null | tail -n1)
-    [[ -n $parent ]] || break
-    device="/dev/$parent"
-  done
-
-  if [[ $(lsblk -dno TYPE "$device" 2>/dev/null) == "disk" ]]; then
-    printf "%s\n" "$device"
-  fi
-}
-
 disk_form() {
   step "Let's select where to install Omarchy..."
 
   # Don't offer the install media as an option (Arch ISO mounts it here)
-  local boot_source
   local exclude_disk
-  boot_source=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
-  exclude_disk=$(get_root_disk "$boot_source")
+  exclude_disk=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
 
   # List all installable disks, excluding the boot device if present
   local available_disks
