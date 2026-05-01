@@ -7,8 +7,11 @@ pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
+# Pre-import the omarchy signing key so pacman can verify packages without a keyserver lookup
+pacman-key --add /builder/omarchy.gpg
+pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
+
 # Install omarchy-keyring for package verification during build
-# The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy omarchy-keyring
 pacman-key --populate omarchy
 
