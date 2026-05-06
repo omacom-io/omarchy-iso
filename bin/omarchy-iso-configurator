@@ -24,4 +24,4 @@ EOF
   fi
 fi
 
-exec bash "$repo_root/configs/airootfs/root/configurator" "$@"
+exec bash "$repo_root/configs/airootfs/root/configurator" dry "$@"
