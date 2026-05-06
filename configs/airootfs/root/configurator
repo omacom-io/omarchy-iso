@@ -266,74 +266,39 @@ disk_form() {
 
 disk_form
 
-confirm_button() {
-  local selected="$1" name="$2" label="$3"
-  local bg="#1a1b26" fg="#a9b1d6"
-
-  if [[ $selected == "$name" ]]; then
-    bg="#845DF9"
-    fg="#c0caf5"
-  fi
-
-  gum style --width=0 --padding="0 0" --background="$bg" --foreground="$fg" "   $label   "
-}
-
-read_confirm_key() {
-  local key rest old_tty
-
-  old_tty=$(stty -g)
-  stty raw -echo
-  IFS= read -rsn1 key || {
-    stty "$old_tty"
-    return 1
-  }
-
-  if [[ $key == $'\e' ]]; then
-    rest=""
-    IFS= read -rsn2 -t 0.01 rest || true
-    key+="$rest"
-  fi
-
-  stty "$old_tty"
-  printf '%s' "$key"
-}
-
 confirm_disk_overwrite() {
   local mode="encrypted"
-  local selected="yes"
-  local key yes_label
+  local affirmative confirm_status
 
   while true; do
     clear_logo
     echo
     gum style "Everything will be overwritten. There is no recovery possible."
+
+    if [[ $mode == "encrypted" ]]; then
+      gum style --foreground 8 "Press Ctrl+C for unencrypted install."
+      affirmative="Yes, install"
+    else
+      affirmative="Yes, install without encryption"
+    fi
+
     echo
-    gum style --foreground="#845DF9" "Confirm overwriting ${disk}"
-    echo
+    gum confirm --affirmative "$affirmative" --negative "No, change it" "Confirm overwriting ${disk}"
+    confirm_status=$?
 
-    [[ $mode == "encrypted" ]] && yes_label="Yes, install" || yes_label="Yes, install without encryption"
-
-    gum join --horizontal \
-      "$(confirm_button "$selected" yes "$yes_label")" \
-      "  " \
-      "$(confirm_button "$selected" no "No, change it")"
-    echo
-    gum style --foreground 8 "←/→ toggle • enter submit • y/n select • Ctrl+U toggle encryption"
-
-    key=$(read_confirm_key) || abort
-
-    case "$key" in
-      $'\003'|$'\004') abort ;;
-      $'\025') [[ $mode == "encrypted" ]] && mode="unencrypted" || mode="encrypted" ;;
-      ' '|$'\t'|$'\e[D'|$'\e[C') [[ $selected == "yes" ]] && selected="no" || selected="yes" ;;
-      n|N) return 1 ;;
-      ''|$'\r'|$'\n'|y|Y)
-        if [[ $selected == "yes" || $key =~ ^[yY]$ ]]; then
-          [[ $mode == "encrypted" ]] && encrypt_installation=true || encrypt_installation=false
-          return 0
-        else
-          return 1
-        fi
+    case $confirm_status in
+      0)
+        [[ $mode == "encrypted" ]] && encrypt_installation=true || encrypt_installation=false
+        return 0
+        ;;
+      1)
+        return 1
+        ;;
+      130)
+        [[ $mode == "encrypted" ]] && mode="unencrypted" || mode="encrypted"
+        ;;
+      *)
+        abort
         ;;
     esac
   done
