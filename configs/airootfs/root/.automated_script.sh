@@ -148,18 +148,29 @@ configure_login_for_unencrypted_install() {
   # Unencrypted installs must stop at SDDM so the user password is entered
   # before reaching the desktop. Omarchy's normal encrypted path may autologin
   # because the disk password was already entered at boot.
+  #
+  # Keep the Omarchy SDDM theme and seed SDDM's last user/session state so
+  # first boot looks like the SDDM screen shown after logging out of Omarchy.
   mkdir -p /mnt/etc/sddm.conf.d
-  cat >/mnt/etc/sddm.conf.d/99-disable-autologin.conf <<EOF
-[Autologin]
-User=
-Session=
-Relogin=false
-
+  rm -f /mnt/etc/sddm.conf.d/autologin.conf
+  cat >/mnt/etc/sddm.conf.d/99-omarchy-login.conf <<EOF
 [Theme]
 Current=omarchy
+
+[Users]
+RememberLastUser=true
+RememberLastSession=true
+EOF
+
+  mkdir -p /mnt/var/lib/sddm
+  cat >/mnt/var/lib/sddm/state.conf <<EOF
+[Last]
+Session=omarchy.desktop
+User=$OMARCHY_USER
 EOF
 
   rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
+  arch-chroot /mnt chown sddm:sddm /var/lib/sddm /var/lib/sddm/state.conf >/dev/null 2>&1 || true
   arch-chroot /mnt systemctl enable sddm.service >/dev/null 2>&1 || true
 }
 

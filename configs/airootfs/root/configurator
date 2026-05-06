@@ -275,7 +275,7 @@ confirm_button() {
     fg="#c0caf5"
   fi
 
-  gum style --width=0 --background="$bg" --foreground="$fg" "   $label   "
+  gum style --width=0 --padding="0 0" --background="$bg" --foreground="$fg" "   $label   "
 }
 
 read_confirm_key() {
