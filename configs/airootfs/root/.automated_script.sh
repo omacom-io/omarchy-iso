@@ -35,6 +35,8 @@ install_omarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
 
+  configure_login_for_unencrypted_install
+
   # Reboot if requested by installer
   if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
     reboot
@@ -136,6 +138,29 @@ EOF
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/idle.sh 2>/dev/null || true
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/notification-silencing.sh 2>/dev/null || true
+}
+
+configure_login_for_unencrypted_install() {
+  if [[ $(<user_encrypt_installation.txt) != "false" ]]; then
+    return
+  fi
+
+  # Unencrypted installs must stop at SDDM so the user password is entered
+  # before reaching the desktop. Omarchy's normal encrypted path may autologin
+  # because the disk password was already entered at boot.
+  mkdir -p /mnt/etc/sddm.conf.d
+  cat >/mnt/etc/sddm.conf.d/99-disable-autologin.conf <<EOF
+[Autologin]
+User=
+Session=
+Relogin=false
+
+[Theme]
+Current=omarchy
+EOF
+
+  rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
+  arch-chroot /mnt systemctl enable sddm.service >/dev/null 2>&1 || true
 }
 
 chroot_bash() {

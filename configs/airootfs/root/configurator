@@ -108,7 +108,7 @@ user_form() {
   done
 
   while true; do
-    password=$(gum input --placeholder "Used for user + root + encryption" --prompt.foreground="#845DF9" --password --prompt "Password> ") || abort
+    password=$(gum input --placeholder "Used for user + root, and disk encryption when enabled" --prompt.foreground="#845DF9" --password --prompt "Password> ") || abort
     password_confirmation=$(gum input --placeholder "Must match the password you just typed" --prompt.foreground="#845DF9" --password --prompt "Confirm> ") || abort
 
     if [[ -n "$password" && "$password" == "$password_confirmation" ]]; then
@@ -266,15 +266,81 @@ disk_form() {
 
 disk_form
 
-while true; do
-  gum style "Everything will be overwritten. There is no recovery possible."
+confirm_button() {
+  local selected="$1" name="$2" label="$3"
+  local bg="#1a1b26" fg="#a9b1d6"
 
-  echo
-  if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
-    break
-  else
-    disk_form
+  if [[ $selected == "$name" ]]; then
+    bg="#845DF9"
+    fg="#c0caf5"
   fi
+
+  gum style --width=0 --background="$bg" --foreground="$fg" "   $label   "
+}
+
+read_confirm_key() {
+  local key rest old_tty
+
+  old_tty=$(stty -g)
+  stty raw -echo
+  IFS= read -rsn1 key || {
+    stty "$old_tty"
+    return 1
+  }
+
+  if [[ $key == $'\e' ]]; then
+    rest=""
+    IFS= read -rsn2 -t 0.01 rest || true
+    key+="$rest"
+  fi
+
+  stty "$old_tty"
+  printf '%s' "$key"
+}
+
+confirm_disk_overwrite() {
+  local mode="encrypted"
+  local selected="yes"
+  local key yes_label
+
+  while true; do
+    clear_logo
+    echo
+    gum style "Everything will be overwritten. There is no recovery possible."
+    echo
+    gum style --foreground="#845DF9" "Confirm overwriting ${disk}"
+    echo
+
+    [[ $mode == "encrypted" ]] && yes_label="Yes, install" || yes_label="Yes, install without encryption"
+
+    gum join --horizontal \
+      "$(confirm_button "$selected" yes "$yes_label")" \
+      "  " \
+      "$(confirm_button "$selected" no "No, change it")"
+    echo
+    gum style --foreground 8 "←/→ toggle • enter submit • y/n select • Ctrl+U toggle encryption"
+
+    key=$(read_confirm_key) || abort
+
+    case "$key" in
+      $'\003'|$'\004') abort ;;
+      $'\025') [[ $mode == "encrypted" ]] && mode="unencrypted" || mode="encrypted" ;;
+      ' '|$'\t'|$'\e[D'|$'\e[C') [[ $selected == "yes" ]] && selected="no" || selected="yes" ;;
+      n|N) return 1 ;;
+      ''|$'\r'|$'\n'|y|Y)
+        if [[ $selected == "yes" || $key =~ ^[yY]$ ]]; then
+          [[ $mode == "encrypted" ]] && encrypt_installation=true || encrypt_installation=false
+          return 0
+        else
+          return 1
+        fi
+        ;;
+    esac
+  done
+}
+
+while ! confirm_disk_overwrite; do
+  disk_form
 done
 
 clear
@@ -289,9 +355,15 @@ password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
 username_escaped=$(echo -n "$username" | jq -Rsa)
 
+if [[ $encrypt_installation == true ]]; then
+  credentials_encryption_line="    \"encryption_password\": $password_escaped,"
+else
+  credentials_encryption_line=""
+fi
+
 cat <<-_EOF_ >user_credentials.json
 {
-    "encryption_password": $password_escaped,
+$credentials_encryption_line
     "root_enc_password": $password_hash_escaped,
     "users": [
         {
@@ -303,6 +375,8 @@ cat <<-_EOF_ >user_credentials.json
     ]
 }
 _EOF_
+
+printf '%s\n' "$encrypt_installation" >user_encrypt_installation.txt
 
 # Setup partition layout
 disk_size=$(lsblk -bdno SIZE "$disk")
@@ -322,6 +396,22 @@ if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
   kernel_choice="linux-t2"
 else
   kernel_choice="linux"
+fi
+
+if [[ $encrypt_installation == true ]]; then
+  disk_encryption_config=$(cat <<-_EOF_
+,
+        "disk_encryption": {
+            "encryption_type": "luks",
+            "lvm_volumes": [],
+            "iter_time": 2000,
+            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
+            "encryption_password": $password_escaped
+        }
+_EOF_
+)
+else
+  disk_encryption_config=""
 fi
 
 cat <<-_EOF_ >user_configuration.json
@@ -393,14 +483,7 @@ cat <<-_EOF_ >user_configuration.json
                 ],
                 "wipe": true
             }
-        ],
-        "disk_encryption": {
-            "encryption_type": "luks",
-            "lvm_volumes": [],
-            "iter_time": 2000,
-            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
-            "encryption_password": $password_escaped
-        }
+        ]$disk_encryption_config
     },
     "hostname": "$hostname",
     "kernels": [ "$kernel_choice" ],
@@ -453,5 +536,8 @@ if [[ $1 == "dry" ]]; then
   echo -e "\nUser Email Address:"
   cat user_email_address.txt
 
-  rm user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt
+  echo -e "\nDisk Encryption:"
+  cat user_encrypt_installation.txt
+
+  rm user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt
 fi
