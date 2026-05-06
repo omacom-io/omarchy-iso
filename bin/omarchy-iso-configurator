@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cleanup() {
+  [[ -n "${mock_omarchy_install:-}" ]] && rm -rf "$(dirname "$mock_omarchy_install")"
+}
+trap cleanup EXIT
+
+if [[ -z "${OMARCHY_INSTALL:-}" ]]; then
+  if [[ -r /root/omarchy/install/helpers/all.sh ]]; then
+    export OMARCHY_INSTALL=/root/omarchy/install
+  else
+    mock_root="$(mktemp -d)"
+    mock_omarchy_install="$mock_root/install"
+    mkdir -p "$mock_omarchy_install/helpers"
+    cat >"$mock_omarchy_install/helpers/all.sh" <<'EOF'
+PADDING_LEFT=0
+PADDING_LEFT_SPACES=""
+clear_logo() { clear; }
+EOF
+    export OMARCHY_INSTALL="$mock_omarchy_install"
+  fi
+fi
+
+exec bash "$repo_root/configs/airootfs/root/configurator" "$@"
