@@ -135,9 +135,7 @@ EOF
   # Ensure all necessary scripts are executable
   find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
   chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/idle.sh 2>/dev/null || true
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar/indicators/notification-silencing.sh 2>/dev/null || true
+  find /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 }
 
 configure_login_for_unencrypted_install() {
