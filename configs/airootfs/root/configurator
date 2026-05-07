@@ -478,7 +478,8 @@ cat <<-_EOF_ >user_configuration.json
     "packages": [
         "base-devel",
         "git",
-        "omarchy-keyring"
+        "omarchy-keyring",
+        "snapper"
     ],
     "profile_config": {
         "gfx_driver": null,
