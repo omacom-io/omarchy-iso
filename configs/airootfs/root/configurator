@@ -128,15 +128,15 @@ user_form() {
   email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ")
 
   while true; do
-    hostname=$(gum input --placeholder "Alphanumeric without spaces (or return for 'omarchy')" --prompt.foreground="#845DF9" --prompt "Hostname> ")
+    hostname=$(gum input --placeholder "Letters, digits, and dashes (or return for 'omarchy')" --prompt.foreground="#845DF9" --prompt "Hostname> ")
 
-    if [[ "$hostname" =~ ^[A-Za-z_][A-Za-z0-9_-]*\$?$ ]]; then
+    if [[ "$hostname" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
       break
     elif [[ -z $hostname ]]; then
       hostname="omarchy"
       break
     else
-      notice "Hostname must be alphanumeric using dashes or underscores but no spaces" 1
+      notice "Hostname must be 1-63 letters, digits, or dashes, and cannot start or end with a dash" 1
     fi
   done
 
