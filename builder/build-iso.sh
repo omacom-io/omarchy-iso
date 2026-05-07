@@ -73,7 +73,7 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring)
+arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
