@@ -39,7 +39,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Clear out old packages
-sudo rm -rf /var/cache/pacman/pkg/*
+if [[ -z "${OMARCHY_ISO_SKIP_PACMAN_CACHE_CLEAR:-}" ]]; then
+  sudo rm -rf /var/cache/pacman/pkg/*
+fi
 
 # Ensure we have the submodule checked out
 git submodule update --init --recursive --jobs=8
@@ -60,6 +62,7 @@ DOCKER_ARGS=(
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
   -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
+  -e "OMARCHY_ZFS_GIT_REF=${OMARCHY_ZFS_GIT_REF:-}"
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"

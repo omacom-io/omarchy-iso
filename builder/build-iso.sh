@@ -2,6 +2,40 @@
 
 set -e
 
+build_zfs_git_packages() {
+    local output_dir="$1"
+    local build_dir="/tmp/omarchy-zfs-git"
+    local build_user="omarchy-zfs-build"
+    local zfs_ref="${OMARCHY_ZFS_GIT_REF:-0a59f7845c2863b5370bfa38e4d397ba3d73b62a}"
+    local pkg
+
+    rm -rf "$build_dir"
+    mkdir -p "$build_dir"
+
+    if ! id -u "$build_user" >/dev/null 2>&1; then
+        useradd -m -s /bin/bash "$build_user"
+    fi
+    chown -R "$build_user:$build_user" "$build_dir"
+    cat >"/etc/sudoers.d/$build_user" <<EOF
+$build_user ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+    chmod 440 "/etc/sudoers.d/$build_user"
+
+    for pkg in zfs-utils-git zfs-dkms-git; do
+        sudo -u "$build_user" git clone --depth 1 "https://aur.archlinux.org/${pkg}.git" "$build_dir/$pkg"
+        sed -i "s|git+https://github.com/openzfs/zfs.git|git+https://github.com/openzfs/zfs.git#commit=$zfs_ref|" "$build_dir/$pkg/PKGBUILD"
+        chown -R "$build_user:$build_user" "$build_dir/$pkg"
+    done
+
+    sudo -u "$build_user" bash -lc "cd '$build_dir/zfs-utils-git' && MAKEFLAGS='-j$(nproc)' makepkg --noconfirm --syncdeps --needed"
+    pacman -U --noconfirm "$build_dir"/zfs-utils-git/zfs-utils-git-[0-9]*.pkg.tar.zst
+    sudo -u "$build_user" bash -lc "cd '$build_dir/zfs-dkms-git' && MAKEFLAGS='-j$(nproc)' makepkg --noconfirm --syncdeps --needed"
+
+    rm -f "$output_dir"/zfs-*.pkg.tar*
+    cp "$build_dir"/zfs-utils-git/zfs-utils-git-[0-9]*.pkg.tar.zst "$output_dir/"
+    cp "$build_dir"/zfs-dkms-git/zfs-dkms-git-[0-9]*.pkg.tar.zst "$output_dir/"
+}
+
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
@@ -73,19 +107,27 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted)
+zfs_git_packages=(zfs-utils-git zfs-dkms-git)
+arch_packages=(linux-headers linux-t2 linux-t2-headers git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted "${zfs_git_packages[@]}")
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
-all_packages=($(cat "$build_cache_dir/packages.x86_64"))
+all_packages=($(grep -vxF -e zfs-utils-git -e zfs-dkms-git "$build_cache_dir/packages.x86_64"))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
+all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vxF -e zfs-utils-git -e zfs-dkms-git))
+
+# OpenZFS 2.4.1 from ArchZFS currently supports kernels only through 6.19,
+# while Omarchy tracks newer Arch kernels. Build pinned git packages instead
+# of changing the ISO or installed kernel.
+build_zfs_git_packages "$offline_mirror_dir"
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
+repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
