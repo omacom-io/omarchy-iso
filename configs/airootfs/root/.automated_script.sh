@@ -393,12 +393,6 @@ EOF
     chroot /mnt chown sddm:sddm /var/lib/sddm/state.conf
   fi
 
-  mkdir -p /mnt/etc/pam.d
-  cat >/mnt/etc/pam.d/hyprlock <<'EOF'
-#%PAM-1.0
-auth       required                   pam_unix.so
-account    required                   pam_unix.so
-EOF
 }
 
 ensure_zfs_target_mounts() {
@@ -633,9 +627,11 @@ chmod 0755 /usr/local/lib/omarchy/zfs-pam-unlock-home
 
 cat >/etc/pam.d/zfs-key <<'PAM'
 #%PAM-1.0
+auth       [success=ignore default=3] pam_succeed_if.so service in sddm:login:sshd:su-l quiet
 auth       [default=2 success=ignore] pam_succeed_if.so uid >= 1000 quiet
 auth       required                   pam_exec.so expose_authtok seteuid quiet /usr/local/lib/omarchy/zfs-pam-unlock-home
 auth       required                   pam_zfs_key.so homes=$pool/data/home runstatedir=/run/pam_zfs_key
+session    [success=ignore default=3] pam_succeed_if.so service in sddm:login:sshd:su-l quiet
 session    [default=2 success=ignore] pam_succeed_if.so uid >= 1000 quiet
 session    [success=1 default=ignore] pam_succeed_if.so service = systemd-user quiet
 session    optional                   pam_zfs_key.so homes=$pool/data/home runstatedir=/run/pam_zfs_key
@@ -643,19 +639,17 @@ password   [default=1 success=ignore] pam_succeed_if.so uid >= 1000 quiet
 password   required                   pam_zfs_key.so homes=$pool/data/home runstatedir=/run/pam_zfs_key
 PAM
 
-grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth || sed -i '/^auth[[:space:]]\+optional[[:space:]]\+pam_permit\.so/i auth       include      zfs-key' /etc/pam.d/system-auth
-grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth || sed -i '1isession    include      zfs-key' /etc/pam.d/system-auth
+grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-login || sed -i '/^auth[[:space:]]\+include[[:space:]]\+system-auth/a auth       include    zfs-key' /etc/pam.d/system-login
+grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-login || sed -i '/^session[[:space:]]\+include[[:space:]]\+system-auth/i session    include    zfs-key' /etc/pam.d/system-login
 grep -Eq '^password[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth || sed -i '1ipassword   include      zfs-key' /etc/pam.d/system-auth
-grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth
-grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth
+grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-login
+grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-login
 grep -Eq '^password[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/system-auth
 
 grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l || sed -i '/^auth[[:space:]]\+required[[:space:]]\+pam_unix\.so/a auth            include         zfs-key' /etc/pam.d/su-l
 grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l || sed -i '1isession    include      zfs-key' /etc/pam.d/su-l
-grep -Eq '^password[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l || sed -i '1ipassword   include      zfs-key' /etc/pam.d/su-l
 grep -Eq '^auth[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l
 grep -Eq '^session[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l
-grep -Eq '^password[[:space:]]+include[[:space:]]+zfs-key' /etc/pam.d/su-l
 
 for modules_dir in /usr/lib/modules/*; do
   [[ -d "\$modules_dir" ]] || continue
