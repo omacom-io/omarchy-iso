@@ -387,7 +387,7 @@ EOF
   cat >/mnt/var/lib/sddm/state.conf <<EOF
 [Last]
 User=$OMARCHY_USER
-Session=hyprland-uwsm
+Session=omarchy.desktop
 EOF
   if chroot /mnt getent passwd sddm >/dev/null 2>&1; then
     chroot /mnt chown sddm:sddm /var/lib/sddm/state.conf
