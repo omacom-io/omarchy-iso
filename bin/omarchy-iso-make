@@ -39,9 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Clear out old packages
-if [[ -z "${OMARCHY_ISO_SKIP_PACMAN_CACHE_CLEAR:-}" ]]; then
-  sudo rm -rf /var/cache/pacman/pkg/*
-fi
+sudo rm -rf /var/cache/pacman/pkg/*
 
 # Ensure we have the submodule checked out
 git submodule update --init --recursive --jobs=8
