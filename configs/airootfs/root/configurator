@@ -288,17 +288,17 @@ confirm_disk_overwrite() {
   local mode="encrypted"
   local affirmative confirm_status
 
-  if [[ $root_filesystem == "zfs" ]]; then
-    mode="unencrypted"
-  fi
-
   while true; do
     clear_logo
     echo
     gum style "Everything will be overwritten. There is no recovery possible."
 
     if [[ $mode == "encrypted" ]]; then
-      gum style --foreground 8 "Press Ctrl+C for unencrypted install."
+      if [[ $root_filesystem == "zfs" ]]; then
+        gum style --foreground 8 "ZFS installs always use encrypted home directories."
+      else
+        gum style --foreground 8 "Press Ctrl+C for unencrypted install."
+      fi
       affirmative="Yes, install"
     else
       affirmative="Yes, install without encryption"
