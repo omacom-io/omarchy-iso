@@ -625,6 +625,99 @@ fi
 SCRIPT
 chmod 0755 /usr/local/lib/omarchy/zfs-pam-unlock-home
 
+cat >/usr/local/lib/omarchy/zfs-home-cleanup <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+dataset_prefix='$pool/data/home'
+user="\${1:-}"
+
+[[ -n \$user ]] || exit 0
+
+passwd_entry=\$(getent passwd "\$user" || true)
+[[ -n \$passwd_entry ]] || exit 0
+
+IFS=: read -r _ _ uid _ _ home _ <<<"\$passwd_entry"
+[[ \$uid =~ ^[0-9]+$ ]] || exit 0
+((uid >= 1000)) || exit 0
+
+dataset="\$dataset_prefix/\$user"
+zfs list -H -o name "\$dataset" >/dev/null 2>&1 || exit 0
+
+user_has_sessions() {
+  local session session_class sessions
+
+  sessions=\$(loginctl show-user "\$user" -p Sessions --value 2>/dev/null || true)
+  for session in \$sessions; do
+    session_class=\$(loginctl show-session "\$session" -p Class --value 2>/dev/null || true)
+    if [[ \$session_class == user || \$session_class == user-early ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+unload_key_if_available() {
+  local keystatus
+
+  keystatus=\$(zfs get -H -o value keystatus "\$dataset" 2>/dev/null || true)
+  if [[ \$keystatus == available ]]; then
+    zfs unload-key "\$dataset" >/dev/null 2>&1 || true
+  fi
+}
+
+for _ in {1..24}; do
+  if user_has_sessions; then
+    sleep 5
+    continue
+  fi
+
+  mounted_source=\$(findmnt -n -o SOURCE --target "\$home" 2>/dev/null || true)
+  if [[ \$mounted_source == "\$dataset" ]]; then
+    if ! zfs unmount "\$dataset" >/dev/null 2>&1; then
+      sleep 5
+      continue
+    fi
+  fi
+
+  unload_key_if_available
+  exit 0
+done
+
+exit 0
+SCRIPT
+chmod 0755 /usr/local/lib/omarchy/zfs-home-cleanup
+
+cat >/usr/local/lib/omarchy/zfs-pam-cleanup-home <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+user="\${PAM_USER:-}"
+[[ \${PAM_TYPE:-} == close_session ]] || exit 0
+[[ -n \$user ]] || exit 0
+
+passwd_entry=\$(getent passwd "\$user" || true)
+[[ -n \$passwd_entry ]] || exit 0
+
+IFS=: read -r _ _ uid _ _ _ _ <<<"\$passwd_entry"
+[[ \$uid =~ ^[0-9]+$ ]] || exit 0
+((uid >= 1000)) || exit 0
+
+if command -v systemd-run >/dev/null 2>&1; then
+  unit="omarchy-zfs-home-cleanup-\$uid-\$\$"
+  if systemd-run --quiet --collect --unit="\$unit" --on-active=5s /usr/local/lib/omarchy/zfs-home-cleanup "\$user" >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
+(
+  sleep 5
+  /usr/local/lib/omarchy/zfs-home-cleanup "\$user"
+) >/dev/null 2>&1 &
+SCRIPT
+chmod 0755 /usr/local/lib/omarchy/zfs-pam-cleanup-home
+
 cat >/etc/pam.d/zfs-key <<'PAM'
 #%PAM-1.0
 auth       [success=ignore default=3] pam_succeed_if.so service in sddm:login:sshd:su-l quiet
@@ -635,6 +728,10 @@ session    [success=ignore default=3] pam_succeed_if.so service in sddm:login:ss
 session    [default=2 success=ignore] pam_succeed_if.so uid >= 1000 quiet
 session    [success=1 default=ignore] pam_succeed_if.so service = systemd-user quiet
 session    optional                   pam_zfs_key.so homes=$pool/data/home runstatedir=/run/pam_zfs_key
+session    [success=ignore default=3] pam_succeed_if.so service in sddm:login:sshd:su-l quiet
+session    [default=2 success=ignore] pam_succeed_if.so uid >= 1000 quiet
+session    [success=1 default=ignore] pam_succeed_if.so service = systemd-user quiet
+session    optional                   pam_exec.so type=close_session seteuid quiet /usr/local/lib/omarchy/zfs-pam-cleanup-home
 password   [default=1 success=ignore] pam_succeed_if.so uid >= 1000 quiet
 password   required                   pam_zfs_key.so homes=$pool/data/home runstatedir=/run/pam_zfs_key
 PAM
