@@ -5,7 +5,7 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+pacman --noconfirm -Sy archiso git jq grub
 
 # Pre-import the omarchy signing key so pacman can verify packages without a keyserver lookup
 pacman-key --add /builder/omarchy.gpg
@@ -73,11 +73,12 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted)
+zfs_packages=(zfs-utils zfs-dkms)
+arch_packages=(linux-headers linux-t2 linux-t2-headers git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted "${zfs_packages[@]}")
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
-all_packages=($(cat "$build_cache_dir/packages.x86_64"))
+all_packages=($(grep -v '^#' "$build_cache_dir/packages.x86_64" | grep -v '^$'))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
@@ -85,7 +86,8 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
+repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
