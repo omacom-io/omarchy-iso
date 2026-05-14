@@ -590,7 +590,7 @@ zgenhostid deadbeef
 zpool set cachefile=/etc/zfs/zpool.cache $pool
 
 if [[ ! -f /usr/lib/security/pam_zfs_key.so ]]; then
-  echo "Expected pam_zfs_key.so to be installed by zfs-utils-git" >&2
+  echo "Expected pam_zfs_key.so to be installed by zfs-utils" >&2
   exit 1
 fi
 

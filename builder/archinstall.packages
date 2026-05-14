@@ -16,5 +16,5 @@ openssh
 pipewire
 snapper
 sof-firmware
-zfs-dkms-git
-zfs-utils-git
+zfs-dkms
+zfs-utils

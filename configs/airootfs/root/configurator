@@ -569,8 +569,8 @@ else
         "efibootmgr",
         "amd-ucode",
         "intel-ucode",
-        "zfs-utils-git",
-        "zfs-dkms-git"
+        "zfs-utils",
+        "zfs-dkms"
     ],
     "profile_config": {
         "gfx_driver": null,
