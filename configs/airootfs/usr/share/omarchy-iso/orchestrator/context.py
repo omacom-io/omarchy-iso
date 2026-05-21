@@ -5,6 +5,7 @@ archinstall config handler and mirror list handler)."""
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,16 +33,21 @@ class InstallContext:
     state: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_args(cls, args) -> "InstallContext":
-        config_path = Path(args.config)
-        creds_path = Path(args.creds)
+    def from_env(cls) -> "InstallContext":
+        config_str = os.environ.get("OMARCHY_INSTALL_CONFIG")
+        creds_str = os.environ.get("OMARCHY_INSTALL_CREDS")
+        if not config_str or not creds_str:
+            raise RuntimeError("OMARCHY_INSTALL_CONFIG and OMARCHY_INSTALL_CREDS must be set")
+
+        config_path = Path(config_str)
+        creds_path = Path(creds_str)
         user_configuration = json.loads(config_path.read_text())
         ctx = cls(
             config_path=config_path,
             creds_path=creds_path,
-            full_name=_read_text(args.full_name_file),
-            email=_read_text(args.email_file),
-            encrypt=_read_text(args.encrypt_file).lower() in ("true", "yes", "1"),
+            full_name=_read_text(os.environ.get("OMARCHY_INSTALL_FULL_NAME_FILE")),
+            email=_read_text(os.environ.get("OMARCHY_INSTALL_EMAIL_FILE")),
+            encrypt=_read_text(os.environ.get("OMARCHY_INSTALL_ENCRYPT_FILE")).lower() in ("true", "yes", "1"),
             user_configuration=user_configuration,
             user_credentials=json.loads(creds_path.read_text()),
         )
