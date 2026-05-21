@@ -1,2 +1,6 @@
 release/**
 vm-saves/**
+
+# Python bytecode (orchestrator)
+__pycache__/
+*.pyc
