@@ -58,11 +58,14 @@ for pkg in "${packages[@]}"; do
   cp -a "/omarchy-pkgs/pkgbuilds/$pkg" "$pkg_work"
   chown -R builder:builder "$pkg_work"
 
+  # --nodeps: don't install deps into the build container. We just need to
+  # produce the .pkg.tar.zst; pacman resolves runtime deps at install time on
+  # the target system from the offline mirror.
   su builder -c "
     cd '$pkg_work' &&
     PKGDEST='$work_dir' \
     OMARCHY_SRC=/omarchy-installer \
-    makepkg --noconfirm --skippgpcheck --skipchecksums -s -f
+    makepkg --noconfirm --skippgpcheck --skipchecksums --nodeps -f
   "
 done
 
