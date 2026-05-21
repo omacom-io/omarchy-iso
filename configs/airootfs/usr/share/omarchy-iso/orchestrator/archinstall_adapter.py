@@ -35,7 +35,6 @@ correctly, on its first install.
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -54,11 +53,26 @@ from archinstall.lib.models.users import User
 
 
 def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
-    """Build an ArchConfigHandler from on-disk JSON. archinstall reads the
-    paths via env vars, so we set them before instantiating the handler."""
-    os.environ["ARCHINSTALL_CONFIG"] = str(config_path)
-    os.environ["ARCHINSTALL_CREDS"] = str(creds_path)
-    return ArchConfigHandler()
+    """Build an ArchConfigHandler from on-disk JSON.
+
+    archinstall's ArchConfigHandler reads --config / --creds from sys.argv
+    via argparse at construction time (lib/args.py:_parse_args). It does
+    NOT consult env vars for these paths. We can't pass them on our real
+    argv because the wrapper strips them before exec'ing Python (so other
+    archinstall arg-parsing code doesn't choke on our flags), so we hand
+    archinstall a synthetic argv just for this call.
+    """
+    import sys
+    saved_argv = sys.argv
+    sys.argv = [
+        saved_argv[0] if saved_argv else "omarchy-install",
+        "--config", str(config_path),
+        "--creds", str(creds_path),
+    ]
+    try:
+        return ArchConfigHandler()
+    finally:
+        sys.argv = saved_argv
 
 
 def make_mirror_handler(offline: bool = True) -> MirrorListHandler:
