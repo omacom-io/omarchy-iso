@@ -36,8 +36,14 @@ fi
 # Configurator phase: real TTY on both streams. No tee/pipe.
 mkdir -p /var/log
 touch "$OMARCHY_INSTALL_LOG_FILE"
+
+# Drain any stale terminal input (e.g., cursor-position-report responses left
+# in the kernel tty input buffer by archiso's boot init). If we don't, the
+# first gum invocation can echo them as visible "^[[13;1R" artifacts.
+while IFS= read -r -t 0 -n 1024 _drain </dev/tty 2>/dev/null; do :; done
+
 cd /root
-./configurator >/dev/tty 2>/dev/tty </dev/tty
+./configurator >/dev/tty 2>/dev/tty
 
 # Install phase: now safe to capture output to the install log. Strip CSI
 # escapes so the log file is readable. Keep stderr going to the log too so
