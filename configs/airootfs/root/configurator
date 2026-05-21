@@ -234,6 +234,370 @@ get_root_disk() {
   fi
 }
 
+# Compute partition device path, handling NVMe/mmcblk's pN naming.
+partition_path() {
+  local _disk="$1" _num="$2"
+  if [[ "$_disk" == *nvme* || "$_disk" == *mmcblk* ]]; then
+    echo "${_disk}p${_num}"
+  else
+    echo "${_disk}${_num}"
+  fi
+}
+
+# BitLocker writes the "-FVE-FS-" signature at offset 3 of the partition.
+detect_bitlocker() {
+  local p sig
+  for p in $(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{print $1}'); do
+    sig=$(dd if="$p" bs=1 skip=3 count=8 status=none 2>/dev/null)
+    if [[ "$sig" == "-FVE-FS-" ]]; then
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Look for an existing Windows ESP (FAT partition containing EFI/Microsoft) on $disk.
+detect_windows_esp() {
+  local p tmp_mp
+  for p in $(blkid -t TYPE=vfat -o device 2>/dev/null); do
+    [[ "$p" == "$disk"* ]] || continue
+    tmp_mp=$(mktemp -d)
+    if mount -o ro "$p" "$tmp_mp" 2>/dev/null; then
+      if [[ -d "$tmp_mp/EFI/Microsoft" ]]; then
+        umount "$tmp_mp"; rmdir "$tmp_mp"
+        echo "$p"
+        return 0
+      fi
+      umount "$tmp_mp"
+    fi
+    rmdir "$tmp_mp" 2>/dev/null || true
+  done
+  return 1
+}
+
+to_gb() {
+  awk -v bytes="$1" 'BEGIN {printf "%.1fGB", bytes/1024/1024/1024}'
+}
+
+run_partition_install() {
+  local dry=false
+  [[ "${1:-}" == "dry" ]] && dry=true
+
+  step "Checking for BitLocker on $disk"
+  local bl_part
+  bl_part=$(detect_bitlocker || true)
+  if [[ -n "$bl_part" ]]; then
+    gum style --foreground 1 "BitLocker signature detected on $bl_part."
+    gum style "Suspend or disable BitLocker in Windows before installing alongside it."
+    abort "Aborted: BitLocker is active on this disk."
+  fi
+
+  step "Looking for an existing Windows ESP on $disk"
+  local shared_esp
+  shared_esp=$(detect_windows_esp || true)
+
+  if [[ -n "$shared_esp" ]]; then
+    gum style "Found Windows ESP at $shared_esp — will install alongside."
+    local tmp_mp esp_free_mib
+    tmp_mp=$(mktemp -d)
+    mount -o ro "$shared_esp" "$tmp_mp"
+    esp_free_mib=$(df -BM --output=avail "$tmp_mp" | tail -1 | tr -dc '0-9')
+    umount "$tmp_mp"; rmdir "$tmp_mp"
+    if (( esp_free_mib < 100 )); then
+      abort "Windows ESP $shared_esp has only ${esp_free_mib}MiB free — need at least 100MiB for Omarchy."
+    fi
+    gum style "Windows ESP has ${esp_free_mib}MiB free."
+  else
+    gum style "No Windows ESP detected on $disk — a new EFI partition will be created in free space."
+  fi
+
+  step "Analyzing free space on $disk"
+  partprobe "$disk" 2>/dev/null || true
+  sleep 1
+  parted --script "$disk" unit B print free 2>/dev/null || lsblk -b "$disk"
+  echo
+
+  local FREE_SPACE_INFO
+  FREE_SPACE_INFO=$(parted -m "$disk" unit B print free 2>/dev/null | \
+    awk -F: '
+      $NF ~ /free/ {
+        start=$2; end=$3; size=$4;
+        gsub(/B/, "", start);
+        gsub(/B/, "", end);
+        gsub(/B/, "", size);
+        if (size+0 > max_size+0) {
+          max_size=size; max_start=start; max_end=end;
+        }
+      }
+      END {
+        if (max_size+0 > 0) printf "%s %s %s\n", max_start, max_end, max_size;
+      }')
+
+  if [[ -z "$FREE_SPACE_INFO" ]]; then
+    abort "No usable free space detected on $disk. Shrink an existing partition first."
+  fi
+
+  local FREE_START_B FREE_END_B FREE_SIZE_B
+  FREE_START_B=$(echo "$FREE_SPACE_INFO" | awk '{print $1}')
+  FREE_END_B=$(echo "$FREE_SPACE_INFO"   | awk '{print $2}')
+  FREE_SIZE_B=$(echo "$FREE_SPACE_INFO"  | awk '{print $3}')
+
+  local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
+  local ALIGN=$mib
+  local EFI_SIZE_B=$((2 * gib))
+  local MIN_TOTAL_B=$((32 * gib))    # 32 GiB minimum for the install
+
+  if (( FREE_SIZE_B < MIN_TOTAL_B )); then
+    abort "Free space ($(to_gb $FREE_SIZE_B)) is below the 32GB minimum for Omarchy."
+  fi
+
+  local EFI_START_B=0 EFI_END_B=0 ROOT_START_B ROOT_END_B
+  if [[ -z "$shared_esp" ]]; then
+    EFI_START_B=$(( (FREE_START_B + ALIGN - 1) / ALIGN * ALIGN ))
+    EFI_END_B=$((EFI_START_B + EFI_SIZE_B))
+    ROOT_START_B=$(( (EFI_END_B + 1 + ALIGN - 1) / ALIGN * ALIGN ))
+  else
+    ROOT_START_B=$(( (FREE_START_B + ALIGN - 1) / ALIGN * ALIGN ))
+  fi
+  ROOT_END_B=$((FREE_END_B / ALIGN * ALIGN))
+
+  if (( ROOT_END_B <= ROOT_START_B )); then
+    abort "Not enough aligned free space for partitions after alignment."
+  fi
+
+  step "Proposed layout on $disk"
+  gum style "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
+  if [[ -z "$shared_esp" ]]; then
+    gum style "  New EFI partition:  $(to_gb $EFI_START_B) — $(to_gb $EFI_END_B) (2GB FAT32)"
+  else
+    gum style "  Shared ESP:        $shared_esp (Windows, mounted at /efi)"
+  fi
+  gum style "  New root (Btrfs):  $(to_gb $ROOT_START_B) — $(to_gb $ROOT_END_B) ($(to_gb $((ROOT_END_B - ROOT_START_B))))"
+  echo
+
+  gum confirm --affirmative "Yes, partition" --negative "Cancel" \
+    "Create Omarchy partitions in the free space on $disk?" || abort
+
+  echo
+  if gum confirm \
+    --affirmative "Yes, encrypt" \
+    --negative "No, leave unencrypted" \
+    "Encrypt the Omarchy root partition with LUKS2?"; then
+    encrypt_installation=true
+  else
+    encrypt_installation=false
+  fi
+
+  # Detect T2 Mac and set appropriate kernel
+  if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
+    kernel_choice="linux-t2"
+  else
+    kernel_choice="linux"
+  fi
+
+  local last_part efi_part_num root_part_num
+  last_part=$(lsblk -n -o PARTN "$disk" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1)
+  if [[ -z "$shared_esp" ]]; then
+    efi_part_num=$(( ${last_part:-0} + 1 ))
+    root_part_num=$(( efi_part_num + 1 ))
+  else
+    efi_part_num=0   # not created by us
+    root_part_num=$(( ${last_part:-0} + 1 ))
+  fi
+
+  local efi_dev root_partition_device
+  if [[ -n "$shared_esp" ]]; then
+    efi_dev="$shared_esp"
+  else
+    efi_dev=$(partition_path "$disk" "$efi_part_num")
+  fi
+  root_partition_device=$(partition_path "$disk" "$root_part_num")
+
+  if $dry; then
+    gum style "[dry] would create root partition at $root_partition_device"
+    [[ -z "$shared_esp" ]] && gum style "[dry] would create EFI partition at $efi_dev"
+    gum style "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
+  else
+    step "Creating partitions on $disk"
+    if [[ -z "$shared_esp" ]]; then
+      parted --script "$disk" mkpart primary fat32 "${EFI_START_B}B" "${EFI_END_B}B"
+      parted --script "$disk" set "$efi_part_num" esp on
+      parted --script "$disk" name "$efi_part_num" "OMARCHY_EFI"
+    fi
+    parted --script "$disk" mkpart primary btrfs "${ROOT_START_B}B" "${ROOT_END_B}B"
+    parted --script "$disk" name "$root_part_num" "OMARCHY_ROOT"
+    partprobe "$disk"
+    sync
+    sleep 2
+
+    local i
+    for i in 1 2 3 4 5; do
+      if [[ -b "$root_partition_device" ]] && { [[ -n "$shared_esp" ]] || [[ -b "$efi_dev" ]]; }; then
+        break
+      fi
+      sleep 1
+    done
+
+    local root_mapper
+    if [[ "$encrypt_installation" == "true" ]]; then
+      step "Setting up LUKS2 on $root_partition_device"
+      printf "%s" "$password" | cryptsetup luksFormat --type luks2 --batch-mode "$root_partition_device" -
+      printf "%s" "$password" | cryptsetup open "$root_partition_device" omarchy_root -
+      root_mapper="/dev/mapper/omarchy_root"
+    else
+      wipefs -af "$root_partition_device"
+      root_mapper="$root_partition_device"
+    fi
+
+    step "Creating Btrfs filesystem and subvolumes"
+    mkfs.btrfs -f -L OMARCHY "$root_mapper"
+    for i in 1 2 3 4 5; do
+      [[ -b "$root_mapper" ]] && break
+      sleep 1
+    done
+
+    mkdir -p /mnt/btrfs-root
+    mount "$root_mapper" /mnt/btrfs-root
+    btrfs subvolume create /mnt/btrfs-root/@
+    btrfs subvolume create /mnt/btrfs-root/@home
+    btrfs subvolume create /mnt/btrfs-root/@log
+    btrfs subvolume create /mnt/btrfs-root/@pkg
+    umount /mnt/btrfs-root
+    rmdir /mnt/btrfs-root
+
+    mount -o noatime,compress=zstd,subvol=@ "$root_mapper" /mnt
+    mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/efi
+    mount -o noatime,compress=zstd,subvol=@home "$root_mapper" /mnt/home
+    mount -o noatime,compress=zstd,subvol=@log  "$root_mapper" /mnt/var/log
+    mount -o noatime,compress=zstd,subvol=@pkg  "$root_mapper" /mnt/var/cache/pacman/pkg
+
+    if [[ -z "$shared_esp" ]]; then
+      mkfs.fat -F32 -n OMARCHY_EFI "$efi_dev"
+    fi
+    mount "$efi_dev" /mnt/efi
+  fi
+
+  clear
+
+  echo "$full_name" >user_full_name.txt
+  echo "$email_address" >user_email_address.txt
+  printf '%s\n' "$encrypt_installation" >user_encrypt_installation.txt
+
+  local password_escaped password_hash_escaped username_escaped
+  password_escaped=$(echo -n "$password" | jq -Rsa)
+  password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
+  username_escaped=$(echo -n "$username" | jq -Rsa)
+
+  local credentials_encryption_line=""
+  if [[ "$encrypt_installation" == "true" ]]; then
+    credentials_encryption_line="    \"encryption_password\": $password_escaped,"
+  fi
+
+  cat <<-_EOF_ >user_credentials.json
+{
+$credentials_encryption_line
+    "root_enc_password": $password_hash_escaped,
+    "users": [
+        {
+            "enc_password": $password_hash_escaped,
+            "groups": [],
+            "sudo": true,
+            "username": $username_escaped
+        }
+    ]
+}
+_EOF_
+
+  cat <<-_EOF_ >user_configuration.json
+{
+    "app_config": null,
+    "archinstall-language": "English",
+    "auth_config": {},
+    "audio_config": { "audio": "pipewire" },
+    "bootloader": "No bootloader",
+    "custom_commands": [],
+    "disk_config": {
+        "config_type": "pre_mounted_config",
+        "mountpoint": "/mnt"
+    },
+    "hostname": "$hostname",
+    "kernels": [ "$kernel_choice" ],
+    "network_config": { "type": "iso" },
+    "ntp": true,
+    "parallel_downloads": 8,
+    "script": null,
+    "services": [],
+    "swap": true,
+    "timezone": "$timezone",
+    "locale_config": {
+        "kb_layout": "$keyboard",
+        "sys_enc": "UTF-8",
+        "sys_lang": "en_US.UTF-8"
+    },
+    "mirror_config": {
+        "custom_repositories": [],
+        "custom_servers": [
+            {"url": "https://mirror.omarchy.org/\$repo/os/\$arch"},
+            {"url": "https://mirror.rackspace.com/archlinux/\$repo/os/\$arch"},
+            {"url": "https://geo.mirror.pkgbuild.com/\$repo/os/\$arch"}
+        ],
+        "mirror_regions": {},
+        "optional_repositories": []
+    },
+    "packages": [
+        "base-devel",
+        "git",
+        "omarchy-keyring",
+        "omarchy",
+        "omarchy-installer"
+    ],
+    "profile_config": {
+        "gfx_driver": null,
+        "greeter": null,
+        "profile": {}
+    },
+    "version": "3.0.9"
+}
+_EOF_
+
+  local luks_uuid_json="null" luks_uuid
+  if [[ "$encrypt_installation" == "true" ]]; then
+    if $dry; then
+      luks_uuid="00000000-0000-0000-0000-000000000000"
+    else
+      luks_uuid=$(blkid -s UUID -o value "$root_partition_device")
+    fi
+    luks_uuid_json="\"$luks_uuid\""
+  fi
+
+  cat >/root/protected_install.json <<JSON
+{
+  "esp_mount": "/efi",
+  "esp_path": "/EFI/Omarchy",
+  "luks_uuid": $luks_uuid_json,
+  "root_device": "$root_partition_device",
+  "kernel": "$kernel_choice"
+}
+JSON
+
+  if $dry; then
+    echo -e "User Configuration:"
+    cat user_configuration.json
+    echo -e "\n\nUser Credentials:"
+    cat user_credentials.json
+    echo -e "\n\nUser Full Name:"
+    cat user_full_name.txt
+    echo -e "\nUser Email Address:"
+    cat user_email_address.txt
+    echo -e "\nDisk Encryption:"
+    cat user_encrypt_installation.txt
+    echo -e "\nProtected Install Intent:"
+    cat /root/protected_install.json
+    rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt /root/protected_install.json
+  fi
+}
+
 disk_form() {
   step "Let's select where to install Omarchy..."
 
@@ -266,6 +630,22 @@ disk_form() {
 }
 
 disk_form
+
+# STEP 4: INSTALL MODE
+
+install_mode_form() {
+  step "Installation mode"
+  install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" \
+    "Full Install (wipe entire disk)" \
+    "Partition Install (preserve existing data, install alongside)") || abort
+}
+
+install_mode_form
+
+if [[ "$install_mode" == "Partition Install (preserve existing data, install alongside)" ]]; then
+  run_partition_install "$@"
+  exit 0
+fi
 
 confirm_disk_overwrite() {
   local mode="encrypted"
