@@ -47,13 +47,13 @@ install_arch() {
 }
 
 install_omarchy() {
-  # Install the omarchy meta-packages from the offline mirror into the target.
-  # omarchy-installer's depends pull in omarchy + omarchy-settings + omarchy-limine.
-  arch-chroot /mnt pacman -S --noconfirm --needed omarchy-installer
+  # omarchy-installer (and its depends omarchy + omarchy-settings + omarchy-limine)
+  # are pacstrap'd by archinstall via the configurator's packages list, so they
+  # land BEFORE archinstall creates the user — meaning /etc/skel/.config is in
+  # place and the user's $HOME is seeded with the Omarchy defaults at creation.
 
   # Run the installer's offline path. omarchy-install execs /usr/share/omarchy/
-  # install.sh; OMARCHY_INSTALL_MODE=offline tells it to skip first-run-mode
-  # the right way for a chroot install.
+  # install.sh; OMARCHY_INSTALL_MODE=offline tells it the chroot install rules.
   chroot_run_as_user "OMARCHY_INSTALL_MODE=offline omarchy-install"
 
   configure_login_for_unencrypted_install
