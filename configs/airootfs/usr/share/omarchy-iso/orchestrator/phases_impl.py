@@ -359,13 +359,21 @@ def validate_boot(ctx: InstallContext) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# finish: unwind bind mounts, prompt for reboot.
+# cleanup_bind_mounts: invoked from main()'s finally so bind mounts get
+# unwound on success, failure, or interrupt. Idempotent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cleanup_bind_mounts(ctx: InstallContext) -> None:
+    for mount_point in ctx.state.get("bind_mounts", []):
+        subprocess.run(["umount", mount_point], check=False, capture_output=True)
+    ctx.state["bind_mounts"] = []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# finish: prompt for reboot. Bind mounts are unwound in main()'s finally.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def finish(ctx: InstallContext) -> None:
-    for mount_point in ctx.state.get("bind_mounts", []):
-        subprocess.run(["umount", mount_point], check=False, capture_output=True)
-
     info("Installation finished. Reboot when ready.")
     if confirm("Reboot now?", default=True):
         os.system("reboot")

@@ -66,17 +66,22 @@ def main(argv=None) -> int:
 
     info(f"Installing Omarchy for {ctx.username} → {ctx.target}")
 
-    try:
-        run(ctx, build_phases())
-    except PhaseError:
-        error("Installation halted.")
-        return 1
-    except KeyboardInterrupt:
-        error("Installation interrupted.")
-        return 130
+    from .phases_impl import cleanup_bind_mounts
 
-    info("Installation complete.")
-    return 0
+    try:
+        try:
+            run(ctx, build_phases())
+        except PhaseError:
+            error("Installation halted.")
+            return 1
+        except KeyboardInterrupt:
+            error("Installation interrupted.")
+            return 130
+
+        info("Installation complete.")
+        return 0
+    finally:
+        cleanup_bind_mounts(ctx)
 
 
 if __name__ == "__main__":
