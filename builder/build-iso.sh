@@ -60,7 +60,14 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Packages installed into the live ISO environment itself (NOT the target system).
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted)
+# omarchy-installer + omarchy-settings need to be HERE so:
+#   1. /usr/share/omarchy/{install,default,bin} is available to the configurator
+#      and .automated_script.sh natively (no .pkg.tar.zst extraction hack)
+#   2. omarchy-settings's post_install hook drops omarchy's plymouthd.conf into
+#      /etc/plymouth so mkinitcpio's plymouth hook picks up the Omarchy theme
+#      when mkarchiso builds the live initramfs (otherwise plymouth shows
+#      the default theme on boot).
+arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring omarchy-settings omarchy-installer lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target

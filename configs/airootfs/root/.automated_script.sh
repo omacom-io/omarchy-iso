@@ -2,25 +2,10 @@
 set -euo pipefail
 
 use_omarchy_helpers() {
-  # Neither omarchy-installer nor omarchy-settings is installed in the live
-  # ISO; we just have the .pkg.tar.zst files in the offline mirror. Extract
-  # the bits we need (install/ from the installer; logo.txt/icon.txt and
-  # default/ from settings) to /tmp/omarchy-iso so OMARCHY_PATH resolves to
-  # a tree that looks like a real install.
+  # omarchy-installer + omarchy-settings are installed into the live ISO (see
+  # build-iso.sh arch_packages), so /usr/share/omarchy is the real tree.
   export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
-  if [[ ! -d /tmp/omarchy-iso ]]; then
-    local installer_pkg settings_pkg
-    installer_pkg=$(ls /var/cache/omarchy/mirror/offline/omarchy-installer-*.pkg.tar.zst 2>/dev/null | head -1)
-    settings_pkg=$(ls /var/cache/omarchy/mirror/offline/omarchy-settings-*.pkg.tar.zst 2>/dev/null | head -1)
-    [[ -n $installer_pkg && -n $settings_pkg ]] || {
-      echo "ERROR: omarchy-installer or omarchy-settings missing from offline mirror" >&2
-      exit 1
-    }
-    mkdir -p /tmp/omarchy-iso
-    bsdtar -xf "$installer_pkg" -C /tmp/omarchy-iso usr/share/omarchy
-    bsdtar -xf "$settings_pkg"  -C /tmp/omarchy-iso usr/share/omarchy
-  fi
-  export OMARCHY_PATH=/tmp/omarchy-iso/usr/share/omarchy
+  export OMARCHY_PATH=/usr/share/omarchy
   export OMARCHY_INSTALL=$OMARCHY_PATH/install
   export OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log
   source "$OMARCHY_INSTALL/helpers/all.sh"
