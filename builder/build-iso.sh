@@ -110,7 +110,12 @@ mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw \
   "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
 
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+# Rebuild the offline repo db from scratch so size/checksum/depends entries
+# always reflect the current .pkg.tar.zst on disk. With the persistent cache,
+# 'repo-add --new' skipped updates for already-known package names, leaving
+# stale entries when we rebuild omarchy-* in place (new content, same filename).
+rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
+repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # mkarchiso expects the mirror at /var/cache/omarchy/mirror/offline inside the
 # container (the airootfs path); symlink rather than duplicate.
