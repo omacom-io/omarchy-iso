@@ -636,13 +636,13 @@ disk_form
 install_mode_form() {
   step "Installation mode"
   install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" \
-    "Full Install (wipe entire disk)" \
-    "Partition Install (preserve existing data, install alongside)") || abort
+    "Full disk install" \
+    "Partition install (alongside existing data)") || abort
 }
 
 install_mode_form
 
-if [[ "$install_mode" == "Partition Install (preserve existing data, install alongside)" ]]; then
+if [[ "$install_mode" == "Partition install (alongside existing data)" ]]; then
   run_partition_install "$@"
   exit 0
 fi
