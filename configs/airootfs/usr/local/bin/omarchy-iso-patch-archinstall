@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# Patch upstream archinstall in place for two Python 3.14 / archinstall 4.3
+# bugs that hit our flow:
+#
+# 1. logfile_target join: '/' on an absolute Path with another absolute Path
+#    raises. Strip leading slash so the join produces target / "var/log/..."
+#    instead of throwing.
+#
+# 2. Limine EFI copy: archinstall passes the destination directory but limine
+#    .copy() expects the destination file path. Two sites: limine_x64.efi
+#    copy and limine-bios.sys copy.
+#
+# Idempotent: re-running is a no-op (sed only matches the buggy form). Carry
+# this until upstream Arch's packaged archinstall has the fixes.
+
+set -eEo pipefail
+
+target="/usr/lib/python3.14/site-packages/archinstall/lib/installer.py"
+[[ -f $target ]] || { echo "archinstall installer.py not found at $target" >&2; exit 1; }
+
+sed -i \
+  -e 's|logfile_target = self\.target / absolute_logfile$|logfile_target = self.target / absolute_logfile.relative_to("/")|' \
+  -e 's|(limine_path / file)\.copy(efi_dir_path)|(limine_path / file).copy(efi_dir_path / file)|' \
+  -e "s|(limine_path / 'limine-bios.sys')\.copy(boot_limine_path)|(limine_path / 'limine-bios.sys').copy(boot_limine_path / 'limine-bios.sys')|" \
+  "$target"
