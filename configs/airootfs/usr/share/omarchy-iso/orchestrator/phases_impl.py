@@ -1,21 +1,37 @@
 """Concrete phase implementations.
 
-Phase ordering:
+Phase ordering (full-disk):
 
-    prepare_live          → pacman-key init, disk cleanup, load configurator
-                            handlers (archinstall patch happens in the
-                            wrapper before Python imports archinstall)
-    arch_install          → archinstall-driven install (partition, base,
-                            bootloader, write limine config, early omarchy
-                            pkgs, useradd, runtime omarchy pkgs)
-    run_chroot_finalizer  → bind mounts + sudoers shim + arch-chroot finalize.sh
-    configure_login       → sddm autologin for unencrypted installs
-    validate_boot         → assert UKI / limine.conf / kernel cmdline are sane
-    finish                → reboot prompt
+    prepare_live           → pacman-key init, disk cleanup, load configurator
+                             handlers (archinstall patch happens in the
+                             wrapper before Python imports archinstall)
+    arch_install_full      → archinstall-driven install (partition, base,
+                             bootloader, write limine config, early omarchy
+                             pkgs, useradd, runtime omarchy pkgs)
+    run_chroot_finalizer   → bind mounts + sudoers shim + arch-chroot finalize.sh
+    configure_login        → sddm autologin for unencrypted installs
+    validate_boot_full     → assert UKI / limine.conf / kernel cmdline are sane
+    finish                 → reboot prompt
+
+Phase ordering (protected / pre-mounted):
+
+    prepare_live              → same, minus disk cleanup
+    verify_protected_mounts   → confirm target + ESP are mounted; load
+                                /root/protected_install.json into ctx.state
+    arch_install_base         → archinstall used as pacstrap + users +
+                                packages driver only; no bootloader,
+                                no fstab, no mkinitcpio
+    configure_protected_boot  → Omarchy-owned fstab/crypttab/mkinitcpio/
+                                bootloader — implemented in Step 8
+    run_chroot_finalizer      → same
+    configure_login           → same
+    validate_boot_protected   → implemented in Step 8
+    finish                    → same
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -54,10 +70,13 @@ def prepare_live(ctx: InstallContext) -> None:
     subprocess.run(["pacman-key", "--populate", "omarchy"], check=True)
     subprocess.run(["pacman", "-Sy", "--noconfirm"], check=True)
 
-    disk = _install_disk(ctx)
-    if disk:
-        info(f"› cleaning up holders on install disk: {disk}")
-        subprocess.run(["omarchy-iso-cleanup-disk", disk], check=True)
+    if ctx.is_protected:
+        info("› protected mode: skipping whole-disk cleanup")
+    else:
+        disk = _install_disk(ctx)
+        if disk:
+            info(f"› cleaning up holders on install disk: {disk}")
+            subprocess.run(["omarchy-iso-cleanup-disk", disk], check=True)
 
     info("› loading configurator output")
     ctx.state["arch_config_handler"] = arch.load_arch_config(
@@ -77,13 +96,14 @@ def _install_disk(ctx: InstallContext) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# arch_install: everything inside a single Installer context manager. Reorders
-# guided.py's perform_installation() so our limine config write lands between
-# add_bootloader and the first add_additional_packages call, and user
-# creation happens AFTER early omarchy packages populate /etc/skel.
+# arch_install_full: everything inside a single Installer context manager.
+# Reorders guided.py's perform_installation() so our limine config write
+# lands between add_bootloader and the first add_additional_packages call,
+# and user creation happens AFTER early omarchy packages populate /etc/skel.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def arch_install(ctx: InstallContext) -> None:
+def arch_install_full(ctx: InstallContext) -> None:
+    """Full-disk install: archinstall owns disk layout + bootloader."""
     handler = ctx.state["arch_config_handler"]
     mirror_handler = ctx.state["mirror_handler"]
     config = handler.config
@@ -213,6 +233,123 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# verify_protected_mounts: confirm the configurator pre-mounted everything
+# we need under ctx.target and load /root/protected_install.json so
+# configure_protected_boot has the partition intent to act on.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PROTECTED_INTENT_PATH = Path("/root/protected_install.json")
+
+
+def verify_protected_mounts(ctx: InstallContext) -> None:
+    target = ctx.target
+    if not _is_mountpoint(target):
+        raise RuntimeError(f"protected mode: {target} is not a mountpoint")
+
+    boot_mp = target / "boot"
+    efi_mp = target / "efi"
+    if not (_is_mountpoint(boot_mp) or _is_mountpoint(efi_mp)):
+        raise RuntimeError(
+            f"protected mode: no ESP mounted under {target} (checked {boot_mp}, {efi_mp})"
+        )
+
+    if not PROTECTED_INTENT_PATH.exists():
+        raise RuntimeError(
+            f"protected mode: expected partition intent at {PROTECTED_INTENT_PATH} "
+            "(configurator should have written it)"
+        )
+
+    intent = json.loads(PROTECTED_INTENT_PATH.read_text())
+    for key in ("esp_mount", "esp_path", "luks_uuid", "root_device", "kernel"):
+        if key not in intent:
+            raise RuntimeError(
+                f"protected mode: {PROTECTED_INTENT_PATH} missing key '{key}'"
+            )
+    ctx.state["protected"] = intent
+    info(f"› protected intent loaded: kernel={intent['kernel']} esp={intent['esp_mount']}")
+
+
+def _is_mountpoint(path: Path) -> bool:
+    res = subprocess.run(
+        ["findmnt", "-rn", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    return res.returncode == 0 and bool(res.stdout.strip())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# arch_install_base: archinstall used as a pacstrap + base-config driver only.
+# No disk layout, no bootloader, no fstab, no mkinitcpio (step 8 owns those).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def arch_install_base(ctx: InstallContext) -> None:
+    """Protected install base: archinstall handles pacstrap + users + packages
+    only. Bootloader, fstab, mkinitcpio, crypttab are owned by
+    configure_protected_boot."""
+    handler = ctx.state["arch_config_handler"]
+    mirror_handler = ctx.state["mirror_handler"]
+    config = handler.config
+
+    info("› opening installer context (pre-mounted target)")
+    with arch.open_installer(config, ctx.target, silent=True) as installer:
+        installer.sanity_check(
+            offline=True,
+            skip_ntp=True,
+            skip_wkd=True,
+        )
+
+        if config.mirror_config:
+            installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
+
+        info("› installing base system (mkinitcpio deferred to configure_protected_boot)")
+        installer.minimal_installation(
+            optional_repositories=(
+                config.mirror_config.optional_repositories
+                if config.mirror_config else []
+            ),
+            mkinitcpio=False,
+            hostname=config.hostname,
+            locale_config=config.locale_config,
+            pacman_config=config.pacman_config,
+        )
+
+        if config.mirror_config:
+            installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
+
+        if config.swap and config.swap.enabled:
+            installer.setup_swap(algo=config.swap.algorithm)
+
+        info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
+        installer.add_additional_packages(EARLY_PACKAGES)
+
+        info("› creating user (with /etc/skel populated)")
+        if config.auth_config and config.auth_config.users:
+            installer.create_users(config.auth_config.users)
+
+        info("› installing Omarchy runtime + omarchy-base.packages")
+        installer.add_additional_packages(_runtime_package_list(ctx))
+
+        if config.timezone:
+            installer.set_timezone(config.timezone)
+        if config.ntp:
+            installer.activate_time_synchronization()
+        if root := arch.root_user(config):
+            installer.set_user_password(root)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# configure_protected_boot: Omarchy-owned fstab/crypttab/mkinitcpio/bootloader.
+# Implemented in Step 8.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def configure_protected_boot(ctx: InstallContext) -> None:
+    raise NotImplementedError(
+        "Implemented in Step 8 — see REFACTOR-PLAN-C3-EXECUTION.md"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # run_chroot_finalizer:
 #  1. point the target at the offline pacman.conf so chroot pacman uses the
 #     bundled mirror
@@ -331,11 +468,12 @@ def configure_login(ctx: InstallContext) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# validate_boot: hard checks before reboot. If the install ran but produced a
-# UKI that can't actually boot, halt here rather than surprise the user.
+# validate_boot_full: hard checks before reboot. If the install ran but
+# produced a UKI that can't actually boot, halt here rather than surprise
+# the user.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def validate_boot(ctx: InstallContext) -> None:
+def validate_boot_full(ctx: InstallContext) -> None:
     limine_conf = ctx.target / "boot" / "limine.conf"
     if not limine_conf.exists():
         raise RuntimeError(f"{limine_conf} missing")
@@ -356,6 +494,17 @@ def validate_boot(ctx: InstallContext) -> None:
         ukis = list(uki_dir.glob("*_linux*.efi"))
         if not ukis:
             raise RuntimeError(f"No UKI found in {uki_dir}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# validate_boot_protected: hard checks for the dualboot/protected path.
+# Implemented in Step 8.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_boot_protected(ctx: InstallContext) -> None:
+    raise NotImplementedError(
+        "Implemented in Step 8 — see REFACTOR-PLAN-C3-EXECUTION.md"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

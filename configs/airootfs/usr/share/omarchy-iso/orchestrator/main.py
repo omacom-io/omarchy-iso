@@ -24,28 +24,49 @@ from .phases import PhaseError, run
 from .ui import error, info
 
 
-def build_phases():
+def build_phases(ctx: InstallContext):
     """Phase order. Each entry is (display name, callable taking InstallContext).
 
     The ordering is the whole point of this orchestrator: package-install
     hooks (limine-mkinitcpio-hook, in particular) and useradd happen at
     points where their prerequisites are guaranteed to be in place.
+
+    Two modes:
+      - full_disk: archinstall owns disk layout + bootloader.
+      - protected: Omarchy owns disk layout + bootloader; archinstall is
+        used for pacstrap + users + packages only.
     """
     from .phases_impl import (
         prepare_live,
-        arch_install,
+        arch_install_full,
+        arch_install_base,
+        verify_protected_mounts,
+        configure_protected_boot,
         run_chroot_finalizer,
         configure_login,
-        validate_boot,
+        validate_boot_full,
+        validate_boot_protected,
         finish,
     )
 
+    if ctx.is_protected:
+        return [
+            ("Preparing live environment",      prepare_live),
+            ("Verifying protected mounts",      verify_protected_mounts),
+            ("Installing base system",          arch_install_base),
+            ("Configuring protected boot",      configure_protected_boot),
+            ("Finalizing in chroot",            run_chroot_finalizer),
+            ("Configuring login",               configure_login),
+            ("Validating protected boot setup", validate_boot_protected),
+            ("Finishing",                       finish),
+        ]
+
     return [
         ("Preparing live environment", prepare_live),
-        ("Installing Arch + Omarchy",  arch_install),
+        ("Installing Arch + Omarchy",  arch_install_full),
         ("Finalizing in chroot",       run_chroot_finalizer),
         ("Configuring login",          configure_login),
-        ("Validating boot setup",      validate_boot),
+        ("Validating boot setup",      validate_boot_full),
         ("Finishing",                  finish),
     ]
 
@@ -70,7 +91,7 @@ def main(argv=None) -> int:
 
     try:
         try:
-            run(ctx, build_phases())
+            run(ctx, build_phases(ctx))
         except PhaseError:
             error("Installation halted.")
             return 1

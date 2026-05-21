@@ -35,19 +35,36 @@ class InstallContext:
     def from_args(cls, args) -> "InstallContext":
         config_path = Path(args.config)
         creds_path = Path(args.creds)
-        return cls(
+        user_configuration = json.loads(config_path.read_text())
+        ctx = cls(
             config_path=config_path,
             creds_path=creds_path,
             full_name=_read_text(args.full_name_file),
             email=_read_text(args.email_file),
             encrypt=_read_text(args.encrypt_file).lower() in ("true", "yes", "1"),
-            user_configuration=json.loads(config_path.read_text()),
+            user_configuration=user_configuration,
             user_credentials=json.loads(creds_path.read_text()),
         )
+        disk_config = user_configuration.get("disk_config", {})
+        if (
+            disk_config.get("config_type") == "pre_mounted_config"
+            and disk_config.get("mountpoint")
+        ):
+            ctx.target = Path(disk_config["mountpoint"])
+        return ctx
 
     @property
     def username(self) -> str:
         return self.user_credentials["users"][0]["username"]
+
+    @property
+    def mode(self) -> str:
+        cfg_type = self.user_configuration.get("disk_config", {}).get("config_type")
+        return "protected" if cfg_type == "pre_mounted_config" else "full_disk"
+
+    @property
+    def is_protected(self) -> bool:
+        return self.mode == "protected"
 
 
 def _read_text(path: str | None) -> str:
