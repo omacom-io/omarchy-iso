@@ -9,7 +9,10 @@ The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
 
     FilesystemHandler(disk_config).perform_filesystem_operations()
     with Installer(mountpoint, disk_config, kernels=, silent=) as inst:
-        inst.mount_ordered_layout()
+        # guided.py:84-85 SKIPS this for DiskLayoutType.Pre_mount — pre-mounted
+        # configs do their own mounting before the Installer context opens.
+        if disk_config.config_type != DiskLayoutType.Pre_mount:
+            inst.mount_ordered_layout()
         inst.sanity_check(offline=, skip_ntp=, skip_wkd=)
         inst.generate_key_files()                     # encrypted only
         inst.set_mirrors(handler, mirror_config, on_target=False)

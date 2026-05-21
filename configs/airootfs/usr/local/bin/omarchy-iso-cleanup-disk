@@ -10,6 +10,13 @@
 
 set -uo pipefail
 
+if [[ ${1:-} == --protected ]]; then
+  target="${2:-}"
+  [[ -n $target ]] || { echo "Usage: $0 --protected <target>" >&2; exit 1; }
+  findmnt -R "$target" >/dev/null 2>&1 && umount -R "$target" || true
+  exit 0
+fi
+
 disk="${1:-}"
 [[ -n $disk && -b $disk ]] || { echo "Need a block device argument; got '$disk'" >&2; exit 1; }
 
