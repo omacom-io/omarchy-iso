@@ -72,19 +72,25 @@ else
   base_pkg_lists=(/tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-base.packages /tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-other.packages)
 fi
 
+# Collect every package we want available in the offline mirror.
 declare -a all_packages
 mapfile -t all_packages < <(
   {
     cat "$build_cache_dir/packages.x86_64"
     grep -hv '^#\|^$' "${base_pkg_lists[@]}"
     grep -hv '^#\|^$' /builder/archinstall.packages
-    # Always include the omarchy meta-package set so the target install can
-    # find omarchy-installer in the offline mirror.
+    # Always include the omarchy meta-packages so the target install can find
+    # omarchy-installer in the offline mirror.
     printf 'omarchy\nomarchy-settings\nomarchy-installer\nomarchy-limine\n'
-  } |
-  $([[ -n ${LOCAL_OMARCHY_BUILD:-} ]] && echo "grep -vE ^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine)$" || echo cat) |
-  sort -u
+  } | sort -u
 )
+
+# With --local-source we already built the four omarchy* packages directly
+# into the mirror; strip them from the pacman -Syw list so it doesn't try to
+# fetch the published versions on top.
+if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
+  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine)$'))
+fi
 
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw \

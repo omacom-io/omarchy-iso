@@ -49,6 +49,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Validate local-source paths up front (before any sudo / network work).
+if [[ -n $LOCAL_INSTALLER_PATH ]]; then
+  [[ -d $LOCAL_INSTALLER_PATH ]] || { echo "Error: installer checkout not found at $LOCAL_INSTALLER_PATH" >&2; exit 1; }
+  [[ -d $LOCAL_PKGS_PATH ]]      || { echo "Error: pkgs checkout not found at $LOCAL_PKGS_PATH"           >&2; exit 1; }
+  LOCAL_INSTALLER_PATH=$(realpath "$LOCAL_INSTALLER_PATH")
+  LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
+fi
+
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
@@ -80,12 +88,9 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
 
-# Mount the local checkouts when --local-source was passed.
+# Mount the local checkouts when --local-source was passed (paths already
+# validated/resolved above).
 if [[ -n $LOCAL_INSTALLER_PATH ]]; then
-  [[ -d $LOCAL_INSTALLER_PATH ]] || { echo "Error: installer checkout not found at $LOCAL_INSTALLER_PATH" >&2; exit 1; }
-  [[ -d $LOCAL_PKGS_PATH ]]      || { echo "Error: pkgs checkout not found at $LOCAL_PKGS_PATH"           >&2; exit 1; }
-  LOCAL_INSTALLER_PATH=$(realpath "$LOCAL_INSTALLER_PATH")
-  LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
   DOCKER_ARGS+=(
     -v "$LOCAL_INSTALLER_PATH:/omarchy-installer:ro"
     -v "$LOCAL_PKGS_PATH:/omarchy-pkgs:ro"
