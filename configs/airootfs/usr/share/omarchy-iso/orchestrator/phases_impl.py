@@ -2,28 +2,28 @@
 
 Phase ordering:
 
-    prepare_live          → live ISO env + load arch config
+    prepare_live          → pacman-key init, disk cleanup, load configurator
+                            handlers (archinstall patch happens in the
+                            wrapper before Python imports archinstall)
     arch_install          → archinstall-driven install (partition, base,
                             bootloader, write limine config, early omarchy
                             pkgs, useradd, runtime omarchy pkgs)
-    run_chroot_finalizer  → arch-chroot finalize.sh as the install user
+    run_chroot_finalizer  → bind mounts + sudoers shim + arch-chroot finalize.sh
+    configure_login       → sddm autologin for unencrypted installs
     validate_boot         → assert UKI / limine.conf / kernel cmdline are sane
     finish                → reboot prompt
-
-Heavy lifting in arch_install lives in archinstall_adapter (for the Installer
-context manager) and in this file (for our limine-config write + omarchy
-package selection). Other phases are kept small.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 from . import archinstall_adapter as arch
 from .context import InstallContext
-from .ui import info
+from .ui import confirm, info
 
 
 # Packages installed BEFORE useradd. omarchy-settings populates /etc/skel so
@@ -39,22 +39,48 @@ EARLY_PACKAGES = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# prepare_live: parse user_configuration.json/user_credentials.json, build the
-# archinstall handlers. Cached on ctx.state for downstream phases.
+# prepare_live: ready the live ISO for the install — pacman keyring init,
+# tear down any previous holders on the install disk (via the bash helper),
+# then parse the configurator output.
+#
+# archinstall is patched in the wrapper (omarchy-iso-install) BEFORE Python
+# imports it, so no patching happens here.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
+    info("› initializing pacman keyrings")
+    subprocess.run(["pacman-key", "--init"], check=True)
+    subprocess.run(["pacman-key", "--populate", "archlinux"], check=True)
+    subprocess.run(["pacman-key", "--populate", "omarchy"], check=True)
+    subprocess.run(["pacman", "-Sy", "--noconfirm"], check=True)
+
+    disk = _install_disk(ctx)
+    if disk:
+        info(f"› cleaning up holders on install disk: {disk}")
+        subprocess.run(["omarchy-iso-cleanup-disk", disk], check=True)
+
+    info("› loading configurator output")
     ctx.state["arch_config_handler"] = arch.load_arch_config(
         ctx.config_path, ctx.creds_path
     )
     ctx.state["mirror_handler"] = arch.make_mirror_handler(offline=True)
 
 
+def _install_disk(ctx: InstallContext) -> str | None:
+    """Return the device path of the disk being wiped, or None for
+    pre_mounted / no-wipe configs."""
+    config = ctx.user_configuration
+    for mod in config.get("disk_config", {}).get("device_modifications", []):
+        if mod.get("wipe"):
+            return mod.get("device")
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# arch_install: everything inside a single Installer context manager. Mirrors
-# guided.py's perform_installation() but reorders so our limine config write
-# lands between add_bootloader and the first add_additional_packages call, and
-# user creation happens AFTER early omarchy packages populate /etc/skel.
+# arch_install: everything inside a single Installer context manager. Reorders
+# guided.py's perform_installation() so our limine config write lands between
+# add_bootloader and the first add_additional_packages call, and user
+# creation happens AFTER early omarchy packages populate /etc/skel.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def arch_install(ctx: InstallContext) -> None:
@@ -119,8 +145,7 @@ def arch_install(ctx: InstallContext) -> None:
             installer.create_users(config.auth_config.users)
 
         info("› installing Omarchy runtime + omarchy-base.packages")
-        runtime_pkgs = _runtime_package_list(ctx)
-        installer.add_additional_packages(runtime_pkgs)
+        installer.add_additional_packages(_runtime_package_list(ctx))
 
         # Standard arch finishers.
         if config.timezone:
@@ -132,13 +157,6 @@ def arch_install(ctx: InstallContext) -> None:
 
         installer.genfstab()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Limine config write — extracted from install/login/limine-snapper.sh logic.
-# Reads cmdline from /mnt/boot/limine.conf (which add_bootloader wrote),
-# substitutes @@CMDLINE@@ into the template, writes /etc/default/limine +
-# /etc/kernel/cmdline.
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _write_limine_defaults(ctx: InstallContext) -> None:
     if not arch.is_limine(ctx.state["arch_config_handler"].config):
@@ -154,13 +172,10 @@ def _write_limine_defaults(ctx: InstallContext) -> None:
     if "root=" not in cmdline:
         raise RuntimeError(f"Extracted cmdline has no root=: {cmdline!r}")
 
-    # The template lives in omarchy-installer (this package), so it's
-    # available from /mnt/usr/share/omarchy/... as soon as the early
-    # omarchy-installer pacstrap completes — but we want it BEFORE that.
-    # Read from our own runtime tree on the live ISO instead.
+    # Template lives in omarchy-installer's install tree, present on the live
+    # ISO via the omarchy-installer package.
     template = ctx.omarchy_path / "install" / "assets" / "limine" / "default.conf"
     if not template.exists():
-        # Fallback to the legacy path while we migrate templates between packages.
         template = ctx.omarchy_path / "default" / "limine" / "default.conf"
     if not template.exists():
         raise RuntimeError(f"Limine template not found at {template}")
@@ -198,28 +213,66 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# run_chroot_finalizer: arch-chroot -u $user into /mnt and run finalize.sh.
-# Inherits stdout/stderr so the in-target output streams to our log capture.
+# run_chroot_finalizer:
+#  1. point the target at the offline pacman.conf so chroot pacman uses the
+#     bundled mirror
+#  2. bind-mount the offline mirror + /opt/packages into /mnt so chroot sees
+#     the same paths
+#  3. write a passwordless-sudo shim for the install user (finalize.sh's
+#     scripts run as the user and shell out to sudo repeatedly)
+#  4. copy the omarchy install tooling into /mnt/tmp/omarchy-install (the
+#     target never gets the omarchy-installer package installed)
+#  5. arch-chroot -u $user → /tmp/omarchy-install/finalize.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_chroot_finalizer(ctx: InstallContext) -> None:
-    # omarchy-installer (the package) is NOT on the target system. Copy its
-    # tree from the live ISO into /mnt/tmp/omarchy-install/ so finalize.sh
-    # and install/ are reachable from inside the chroot. /tmp is ephemeral,
-    # so this leaves zero install detritus on the target after reboot.
+    # 1: offline pacman.conf
+    shutil.copy("/etc/pacman.conf", str(ctx.target / "etc" / "pacman.conf"))
+
+    # 2: bind mounts. Tracked so the finish phase can tear them down cleanly.
+    bind_mounts = [
+        ("/var/cache/omarchy/mirror/offline", "/var/cache/omarchy/mirror/offline"),
+        ("/opt/packages", "/opt/packages"),
+    ]
+    for src, dst in bind_mounts:
+        target_dst = ctx.target / dst.lstrip("/")
+        target_dst.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["mount", "--bind", src, str(target_dst)], check=True)
+    ctx.state["bind_mounts"] = [str(ctx.target / d.lstrip("/")) for _, d in bind_mounts]
+
+    # 3: sudoers shim. Cleaned up by omarchy's first-run flow.
+    sudoers = ctx.target / "etc" / "sudoers.d" / "99-omarchy-installer"
+    sudoers.parent.mkdir(parents=True, exist_ok=True)
+    sudoers.write_text(
+        "root ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        "%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        f"{ctx.username} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    )
+    sudoers.chmod(0o440)
+
+    # 4: copy install tooling to /mnt/tmp (ephemeral on first reboot, leaves
+    # zero install detritus on the target).
     target_tooling = ctx.target / "tmp" / "omarchy-install"
     target_tooling.parent.mkdir(exist_ok=True)
+    if target_tooling.exists():
+        shutil.rmtree(target_tooling)
     subprocess.run(
         ["cp", "-a", f"{ctx.omarchy_path}/.", str(target_tooling)],
         check=True,
     )
-    subprocess.run(["chown", "-R", f"{ctx.username}:{ctx.username}", str(target_tooling)])
+    subprocess.run(
+        ["chown", "-R", f"{ctx.username}:{ctx.username}", str(target_tooling)],
+        check=False,
+    )
 
+    # 5: arch-chroot -u $user → finalize.sh
+    mirror_channel = _read_omarchy_mirror()
     env_extras = [
         "OMARCHY_INSTALL_MODE=offline",
         "OMARCHY_PATH=/tmp/omarchy-install",
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
+        f"OMARCHY_MIRROR={mirror_channel}",
         f"USER={ctx.username}",
         f"HOME=/home/{ctx.username}",
     ]
@@ -235,9 +288,51 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _read_omarchy_mirror() -> str:
+    p = Path("/root/omarchy_mirror")
+    return p.read_text().strip() if p.exists() else "stable"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# validate_boot: hard checks before reboot. If the install ran but produced
-# a UKI that can't actually boot, we want to halt here, not surprise the user.
+# configure_login: sddm autologin for unencrypted installs only (encrypted
+# installs already get a LUKS unlock prompt, no need for sddm autologin).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def configure_login(ctx: InstallContext) -> None:
+    if ctx.encrypt:
+        return
+
+    sddm_dir = ctx.target / "etc" / "sddm.conf.d"
+    sddm_dir.mkdir(parents=True, exist_ok=True)
+    (sddm_dir / "autologin.conf").unlink(missing_ok=True)
+    (sddm_dir / "99-omarchy-login.conf").write_text(
+        "[Theme]\nCurrent=omarchy\n\n"
+        "[Users]\nRememberLastUser=true\nRememberLastSession=true\n"
+    )
+
+    state_dir = ctx.target / "var" / "lib" / "sddm"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "state.conf").write_text(
+        f"[Last]\nSession=omarchy.desktop\nUser={ctx.username}\n"
+    )
+
+    autologin = ctx.target / "etc" / "systemd" / "system" / "getty@tty1.service.d" / "autologin.conf"
+    autologin.unlink(missing_ok=True)
+
+    subprocess.run(
+        ["arch-chroot", str(ctx.target), "chown", "sddm:sddm",
+         "/var/lib/sddm", "/var/lib/sddm/state.conf"],
+        check=False, capture_output=True,
+    )
+    subprocess.run(
+        ["arch-chroot", str(ctx.target), "systemctl", "enable", "sddm.service"],
+        check=False, capture_output=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# validate_boot: hard checks before reboot. If the install ran but produced a
+# UKI that can't actually boot, halt here rather than surprise the user.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validate_boot(ctx: InstallContext) -> None:
@@ -246,7 +341,7 @@ def validate_boot(ctx: InstallContext) -> None:
         raise RuntimeError(f"{limine_conf} missing")
 
     content = limine_conf.read_text()
-    if "^/+Omarchy" not in content and "Omarchy" not in content:
+    if "Omarchy" not in content:
         raise RuntimeError("/boot/limine.conf has no Omarchy entry")
 
     if ctx.encrypt and "cryptdevice=" not in content:
@@ -264,11 +359,13 @@ def validate_boot(ctx: InstallContext) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# finish: show completion + offer reboot. No mutation.
+# finish: unwind bind mounts, prompt for reboot.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def finish(ctx: InstallContext) -> None:
-    from .ui import confirm
+    for mount_point in ctx.state.get("bind_mounts", []):
+        subprocess.run(["umount", mount_point], check=False, capture_output=True)
+
     info("Installation finished. Reboot when ready.")
     if confirm("Reboot now?", default=True):
         os.system("reboot")

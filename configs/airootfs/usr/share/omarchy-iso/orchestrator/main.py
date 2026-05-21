@@ -35,6 +35,7 @@ def build_phases():
         prepare_live,
         arch_install,
         run_chroot_finalizer,
+        configure_login,
         validate_boot,
         finish,
     )
@@ -43,6 +44,7 @@ def build_phases():
         ("Preparing live environment", prepare_live),
         ("Installing Arch + Omarchy",  arch_install),
         ("Finalizing in chroot",       run_chroot_finalizer),
+        ("Configuring login",          configure_login),
         ("Validating boot setup",      validate_boot),
         ("Finishing",                  finish),
     ]

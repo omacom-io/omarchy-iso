@@ -1,14 +1,19 @@
 #!/bin/bash
 #
 # Live-ISO entry point for the Omarchy install orchestrator. Invoked from
-# /root/.automated_script.sh after the configurator wizard has produced
-# user_configuration.json / user_credentials.json / user_full_name.txt /
-# user_email_address.txt / user_encrypt_installation.txt.
-#
-# Just sets cwd so 'python -m orchestrator.main' can find the package,
-# then hands off all args.
+# /root/.automated_script.sh after the configurator wizard has produced its
+# user_*.json / user_*.txt files. Tees the full output to
+# /var/log/omarchy-install.log so omarchy-upload-log can pick it up.
 
 set -eEo pipefail
 
+mkdir -p /var/log
+touch /var/log/omarchy-install.log
+
+# Patch archinstall BEFORE Python loads it. orchestrator/main.py top-level
+# imports archinstall_adapter, which top-level imports archinstall.*; patching
+# inside a phase would be too late (bytecode already loaded).
+omarchy-iso-patch-archinstall
+
 cd /usr/share/omarchy-iso
-exec python -m orchestrator.main "$@"
+exec python -m orchestrator.main "$@" 2>&1 | tee -a /var/log/omarchy-install.log
