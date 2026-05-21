@@ -2,22 +2,25 @@
 set -euo pipefail
 
 use_omarchy_helpers() {
-  # The omarchy-installer package isn't installed in the live ISO environment;
-  # only mounted as part of the offline mirror. Source the helpers we still
-  # need (gum styling, run_logged) from the package's install/ tree by
-  # pulling it out of the offline mirror tarball into /tmp.
+  # Neither omarchy-installer nor omarchy-settings is installed in the live
+  # ISO; we just have the .pkg.tar.zst files in the offline mirror. Extract
+  # the bits we need (install/ from the installer; logo.txt/icon.txt and
+  # default/ from settings) to /tmp/omarchy-iso so OMARCHY_PATH resolves to
+  # a tree that looks like a real install.
   export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
-  if [[ ! -d /tmp/omarchy-installer-iso ]]; then
-    local pkg
-    pkg=$(ls /var/cache/omarchy/mirror/offline/omarchy-installer-*.pkg.tar.zst 2>/dev/null | head -1)
-    if [[ -z $pkg ]]; then
-      echo "ERROR: omarchy-installer package not found in offline mirror" >&2
+  if [[ ! -d /tmp/omarchy-iso ]]; then
+    local installer_pkg settings_pkg
+    installer_pkg=$(ls /var/cache/omarchy/mirror/offline/omarchy-installer-*.pkg.tar.zst 2>/dev/null | head -1)
+    settings_pkg=$(ls /var/cache/omarchy/mirror/offline/omarchy-settings-*.pkg.tar.zst 2>/dev/null | head -1)
+    [[ -n $installer_pkg && -n $settings_pkg ]] || {
+      echo "ERROR: omarchy-installer or omarchy-settings missing from offline mirror" >&2
       exit 1
-    fi
-    mkdir -p /tmp/omarchy-installer-iso
-    bsdtar -xf "$pkg" -C /tmp/omarchy-installer-iso usr/share/omarchy
+    }
+    mkdir -p /tmp/omarchy-iso
+    bsdtar -xf "$installer_pkg" -C /tmp/omarchy-iso usr/share/omarchy
+    bsdtar -xf "$settings_pkg"  -C /tmp/omarchy-iso usr/share/omarchy
   fi
-  export OMARCHY_PATH=/tmp/omarchy-installer-iso/usr/share/omarchy
+  export OMARCHY_PATH=/tmp/omarchy-iso/usr/share/omarchy
   export OMARCHY_INSTALL=$OMARCHY_PATH/install
   export OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log
   source "$OMARCHY_INSTALL/helpers/all.sh"
