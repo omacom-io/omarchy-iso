@@ -16,9 +16,7 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
   --local-source)
-    # Kept as a flag for back-compat (older callers passed it); the ISO
-    # build now always builds from local omarchy-installer + omarchy-pkgs
-    # checkouts.
+    LOCAL_SOURCE=1
     OMARCHY_MIRROR=edge
     shift
     ;;
@@ -56,16 +54,6 @@ OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-basecamp/omarchy}"
 OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
 OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
-# Source paths for the local package builds. The ISO builder pacstraps
-# locally-built omarchy* packages from /omarchy-installer and /omarchy-pkgs,
-# so these must point at checkouts of those repos.
-OMARCHY_INSTALLER_PATH="${OMARCHY_INSTALLER_PATH:-$BUILD_ROOT/../omarchy-installer}"
-OMARCHY_PKGS_PATH="${OMARCHY_PKGS_PATH:-$BUILD_ROOT/../omarchy-pkgs}"
-[[ -d $OMARCHY_INSTALLER_PATH ]] || { echo "Error: omarchy-installer checkout not found at $OMARCHY_INSTALLER_PATH" >&2; exit 1; }
-[[ -d $OMARCHY_PKGS_PATH ]]      || { echo "Error: omarchy-pkgs checkout not found at $OMARCHY_PKGS_PATH"           >&2; exit 1; }
-OMARCHY_INSTALLER_PATH=$(realpath "$OMARCHY_INSTALLER_PATH")
-OMARCHY_PKGS_PATH=$(realpath "$OMARCHY_PKGS_PATH")
-
 DOCKER_ARGS=(
   --rm
   --privileged
@@ -79,9 +67,24 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/archiso:/archiso:ro"
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
-  -v "$OMARCHY_INSTALLER_PATH:/omarchy-installer:ro"
-  -v "$OMARCHY_PKGS_PATH:/omarchy-pkgs:ro"
 )
+
+# --local-source: build the omarchy* packages from local omarchy-installer +
+# omarchy-pkgs checkouts (mounted into the container) instead of pulling them
+# from the omarchy network mirror. Useful for testing in-flight changes
+# before they're released through pkgs.omarchy.org.
+if [[ -n "${LOCAL_SOURCE-}" ]]; then
+  OMARCHY_INSTALLER_PATH="${OMARCHY_INSTALLER_PATH:-$BUILD_ROOT/../omarchy-installer}"
+  OMARCHY_PKGS_PATH="${OMARCHY_PKGS_PATH:-$BUILD_ROOT/../omarchy-pkgs}"
+  [[ -d $OMARCHY_INSTALLER_PATH ]] || { echo "Error: omarchy-installer checkout not found at $OMARCHY_INSTALLER_PATH" >&2; exit 1; }
+  [[ -d $OMARCHY_PKGS_PATH ]]      || { echo "Error: omarchy-pkgs checkout not found at $OMARCHY_PKGS_PATH"           >&2; exit 1; }
+  OMARCHY_INSTALLER_PATH=$(realpath "$OMARCHY_INSTALLER_PATH")
+  OMARCHY_PKGS_PATH=$(realpath "$OMARCHY_PKGS_PATH")
+  DOCKER_ARGS+=(
+    -v "$OMARCHY_INSTALLER_PATH:/omarchy-installer:ro"
+    -v "$OMARCHY_PKGS_PATH:/omarchy-pkgs:ro"
+  )
+fi
 
 # Use local pacman cache if you already have one on host to speed up repeat runs
 if [ -d "/var/cache/pacman/pkg" ]; then
