@@ -186,9 +186,14 @@ EOF
 # Run a bash command inside the chroot as the install user, with the env the
 # offline installer expects.
 chroot_run_as_user() {
+  # --unset XDG_RUNTIME_DIR because the live ISO inherits /run/user/0 (root's
+  # runtime dir) and arch-chroot -u doesn't reset it. Without this, dconf,
+  # flock targets under XDG_RUNTIME_DIR, etc. would fail with Permission
+  # denied trying to write to root's runtime dir as ryan.
   HOME=/home/$OMARCHY_USER \
     arch-chroot -u "$OMARCHY_USER" /mnt/ \
-    env OMARCHY_INSTALL_MODE=offline \
+    env --unset=XDG_RUNTIME_DIR \
+    OMARCHY_INSTALL_MODE=offline \
     OMARCHY_USER_NAME="$(<user_full_name.txt)" \
     OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
     OMARCHY_MIRROR="$OMARCHY_MIRROR" \
