@@ -48,10 +48,18 @@ install_arch() {
 
 install_omarchy() {
   # archinstall pacstrap'd omarchy + omarchy-installer (which pulls
-  # omarchy-settings + omarchy-limine) so /etc/skel is populated before user
-  # creation. But omarchy itself only hard-depends on the bricking set; the
-  # rest of the default install set lives in omarchy-base.packages and gets
-  # installed here in the chroot.
+  # omarchy-settings + omarchy-limine) and created the user. The user's
+  # home is missing /etc/skel content though, because archinstall creates
+  # the user BEFORE installing the additional packages list (we saw user
+  # creation at "Creating user $OMARCHY_USER" then omarchy-settings
+  # installing /etc/skel/.config/... much later). Seed it now.
+  arch-chroot /mnt bash -c "
+    cp -rT /etc/skel /home/$OMARCHY_USER/
+    chown -R $OMARCHY_USER:$OMARCHY_USER /home/$OMARCHY_USER/
+  "
+
+  # Install the rest of the default Omarchy install set (everything in
+  # omarchy-base.packages that isn't already a hard dep of omarchy).
   arch-chroot /mnt bash -c '
     mapfile -t pkgs < <(grep -v "^#\|^$" /usr/share/omarchy/install/omarchy-base.packages)
     pacman -S --noconfirm --needed "${pkgs[@]}"
