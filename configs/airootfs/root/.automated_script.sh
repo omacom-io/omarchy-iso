@@ -47,10 +47,15 @@ install_arch() {
 }
 
 install_omarchy() {
-  # omarchy-installer (and its depends omarchy + omarchy-settings + omarchy-limine)
-  # are pacstrap'd by archinstall via the configurator's packages list, so they
-  # land BEFORE archinstall creates the user — meaning /etc/skel/.config is in
-  # place and the user's $HOME is seeded with the Omarchy defaults at creation.
+  # archinstall pacstrap'd omarchy + omarchy-installer (which pulls
+  # omarchy-settings + omarchy-limine) so /etc/skel is populated before user
+  # creation. But omarchy itself only hard-depends on the bricking set; the
+  # rest of the default install set lives in omarchy-base.packages and gets
+  # installed here in the chroot.
+  arch-chroot /mnt bash -c '
+    mapfile -t pkgs < <(grep -v "^#\|^$" /usr/share/omarchy/install/omarchy-base.packages)
+    pacman -S --noconfirm --needed "${pkgs[@]}"
+  '
 
   # Run the installer's offline path. omarchy-install execs /usr/share/omarchy/
   # install.sh; OMARCHY_INSTALL_MODE=offline tells it the chroot install rules.
