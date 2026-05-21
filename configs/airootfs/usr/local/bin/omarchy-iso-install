@@ -2,13 +2,9 @@
 #
 # Live-ISO entry point for the Omarchy install orchestrator. Invoked from
 # /root/.automated_script.sh after the configurator wizard has produced its
-# user_*.json / user_*.txt files. Tees the full output to
-# /var/log/omarchy-install.log so omarchy-upload-log can pick it up.
+# user_*.json / user_*.txt files. The outer shim owns install logging.
 
 set -eEo pipefail
-
-mkdir -p /var/log
-touch /var/log/omarchy-install.log
 
 # Patch archinstall BEFORE Python loads it. orchestrator/main.py top-level
 # imports archinstall_adapter, which top-level imports archinstall.*; patching
@@ -16,4 +12,4 @@ touch /var/log/omarchy-install.log
 omarchy-iso-patch-archinstall
 
 cd /usr/share/omarchy-iso
-exec python -m orchestrator.main "$@" 2>&1 | tee -a /var/log/omarchy-install.log
+exec python -m orchestrator.main "$@"
