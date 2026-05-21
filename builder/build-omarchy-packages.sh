@@ -27,12 +27,14 @@ rm -rf "$work_dir"
 mkdir -p "$work_dir"
 
 # makepkg refuses to run as root; create a builder user with passwordless
-# sudo for pacman dep installation during the build.
+# sudo for pacman dep installation during the build, and hand it ownership
+# of the work dir so PKGDEST writes succeed.
 if ! id builder &>/dev/null; then
   useradd -m -s /bin/bash builder
 fi
 echo 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/99-omarchy-pkg-builder
 chmod 440 /etc/sudoers.d/99-omarchy-pkg-builder
+chown builder:builder "$work_dir"
 
 pacman -Sy --noconfirm
 
