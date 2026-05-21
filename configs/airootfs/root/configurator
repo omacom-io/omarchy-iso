@@ -479,7 +479,7 @@ cat <<-_EOF_ >user_configuration.json
         "base-devel",
         "git",
         "omarchy-keyring",
-        "snapper",
+        "omarchy",
         "omarchy-installer"
     ],
     "profile_config": {
