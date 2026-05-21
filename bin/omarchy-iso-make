@@ -5,6 +5,8 @@ set -e
 
 # Parse command line arguments
 NO_CACHE=""
+LOCAL_INSTALLER_PATH=""
+LOCAL_PKGS_PATH=""
 while [[ $# -gt 0 ]]; do
   case $1 in
   --no-cache)
@@ -16,9 +18,18 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
   --local-source)
-    LOCAL_SOURCE=1
+    # --local-source <installer-checkout> <pkgs-checkout>
+    # Builds omarchy* from the two checkouts and bundles them in the ISO's
+    # offline mirror instead of pulling published versions from the omarchy
+    # network mirror.
+    LOCAL_INSTALLER_PATH="${2:-}"
+    LOCAL_PKGS_PATH="${3:-}"
+    if [[ -z $LOCAL_INSTALLER_PATH || -z $LOCAL_PKGS_PATH ]]; then
+      echo "Error: --local-source requires two args: <installer-checkout> <pkgs-checkout>" >&2
+      exit 1
+    fi
     OMARCHY_MIRROR=edge
-    shift
+    shift 3
     ;;
   --dev)
     OMARCHY_INSTALLER_REF=dev
@@ -32,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--rc]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--dev|--rc] [--local-source <installer-checkout> <pkgs-checkout>]"
     exit 1
     ;;
   esac
@@ -69,20 +80,15 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
 
-# --local-source: build the omarchy* packages from local omarchy-installer +
-# omarchy-pkgs checkouts (mounted into the container) instead of pulling them
-# from the omarchy network mirror. Useful for testing in-flight changes
-# before they're released through pkgs.omarchy.org.
-if [[ -n "${LOCAL_SOURCE-}" ]]; then
-  OMARCHY_INSTALLER_PATH="${OMARCHY_INSTALLER_PATH:-$BUILD_ROOT/../omarchy-installer}"
-  OMARCHY_PKGS_PATH="${OMARCHY_PKGS_PATH:-$BUILD_ROOT/../omarchy-pkgs}"
-  [[ -d $OMARCHY_INSTALLER_PATH ]] || { echo "Error: omarchy-installer checkout not found at $OMARCHY_INSTALLER_PATH" >&2; exit 1; }
-  [[ -d $OMARCHY_PKGS_PATH ]]      || { echo "Error: omarchy-pkgs checkout not found at $OMARCHY_PKGS_PATH"           >&2; exit 1; }
-  OMARCHY_INSTALLER_PATH=$(realpath "$OMARCHY_INSTALLER_PATH")
-  OMARCHY_PKGS_PATH=$(realpath "$OMARCHY_PKGS_PATH")
+# Mount the local checkouts when --local-source was passed.
+if [[ -n $LOCAL_INSTALLER_PATH ]]; then
+  [[ -d $LOCAL_INSTALLER_PATH ]] || { echo "Error: installer checkout not found at $LOCAL_INSTALLER_PATH" >&2; exit 1; }
+  [[ -d $LOCAL_PKGS_PATH ]]      || { echo "Error: pkgs checkout not found at $LOCAL_PKGS_PATH"           >&2; exit 1; }
+  LOCAL_INSTALLER_PATH=$(realpath "$LOCAL_INSTALLER_PATH")
+  LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
   DOCKER_ARGS+=(
-    -v "$OMARCHY_INSTALLER_PATH:/omarchy-installer:ro"
-    -v "$OMARCHY_PKGS_PATH:/omarchy-pkgs:ro"
+    -v "$LOCAL_INSTALLER_PATH:/omarchy-installer:ro"
+    -v "$LOCAL_PKGS_PATH:/omarchy-pkgs:ro"
   )
 fi
 
