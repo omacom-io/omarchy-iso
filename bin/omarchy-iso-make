@@ -57,6 +57,41 @@ if [[ -n $LOCAL_INSTALLER_PATH ]]; then
   LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
 fi
 
+lint_file_permissions() {
+  local profiledef="configs/profiledef.sh"
+  local -A declared=()
+  local missing=()
+
+  while IFS= read -r path; do
+    [[ -n $path ]] && declared["$path"]=1
+  done < <(grep -oP '^\s*\["\K[^"]+(?="\])' "$profiledef" || true)
+
+  while IFS= read -r f; do
+    [[ -f $f ]] || continue
+
+    local rel="${f#configs/airootfs}"
+    local mode
+    mode=$(git ls-files --stage -- "$f" | awk '{print $1}')
+
+    if [[ $mode != 100755 && $(head -c 2 "$f") != "#!" ]]; then
+      continue
+    fi
+
+    if [[ -z ${declared[$rel]+x} ]]; then
+      missing+=("$rel")
+    fi
+  done < <(find configs/airootfs/usr/local/bin configs/airootfs/root -type f 2>/dev/null)
+
+  if (( ${#missing[@]} > 0 )); then
+    echo "ERROR: the following executable files are missing from $profiledef file_permissions:" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    echo "Add entries like [\"<path>\"]=\"0:0:755\" to profiledef.sh and retry." >&2
+    exit 1
+  fi
+}
+
+lint_file_permissions
+
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
