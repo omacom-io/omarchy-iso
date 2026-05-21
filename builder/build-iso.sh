@@ -16,6 +16,13 @@ pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy omarchy-keyring
 pacman-key --populate omarchy
 
+# Append the [omarchy] repo to the container's /etc/pacman.conf so subsequent
+# tools (notably makepkg in build-omarchy-packages.sh) can resolve omarchy-
+# only build deps like limine-snapper-sync and limine-mkinitcpio-hook.
+if ! grep -q '^\[omarchy\]' /etc/pacman.conf; then
+  awk '/^\[omarchy\]/,/^$/' /configs/pacman-online-${OMARCHY_MIRROR}.conf >> /etc/pacman.conf
+fi
+
 # Build locations
 build_cache_dir=/var/cache
 offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
