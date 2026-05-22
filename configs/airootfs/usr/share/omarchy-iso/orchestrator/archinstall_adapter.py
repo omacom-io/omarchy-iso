@@ -19,7 +19,6 @@ The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
         inst.minimal_installation(...)                # base + linux pacstrap
         inst.set_mirrors(handler, mirror_config, on_target=True)
         inst.setup_swap(algo=...)
-        inst.add_bootloader(bootloader, uki, removable)
         inst.create_users(users)
         inst.add_additional_packages(packages)
         inst.set_timezone(tz)
@@ -28,9 +27,9 @@ The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
         inst.enable_service(services)
         inst.genfstab()
 
-Our orchestrator interleaves `write_limine_config` between `add_bootloader`
-and the first `add_additional_packages` so the limine UKI hook fires once,
-correctly, on its first install.
+Our orchestrator installs Omarchy's Limine files directly instead of invoking
+archinstall's bootloader helper, so EFI paths and efibootmgr labels are ours
+from the start.
 """
 
 from __future__ import annotations
@@ -45,6 +44,8 @@ from archinstall.lib.args import ArchConfig, ArchConfigHandler
 from archinstall.lib.authentication.authentication_handler import AuthenticationHandler
 from archinstall.lib.configuration import ConfigurationOutput
 from archinstall.lib.disk.filesystem import FilesystemHandler
+from archinstall.lib.disk.utils import get_parent_device_path, get_unique_path_for_device
+from archinstall.lib.hardware import SysInfo
 from archinstall.lib.installer import Installer
 from archinstall.lib.mirror.mirror_handler import MirrorListHandler
 from archinstall.lib.models import Bootloader
@@ -121,9 +122,26 @@ def is_pre_mount(arch_config: ArchConfig) -> bool:
     )
 
 
+def bootloader_enabled(arch_config: ArchConfig) -> bool:
+    bl = arch_config.bootloader_config
+    return bool(bl and bl.bootloader != Bootloader.NO_BOOTLOADER)
+
+
 def is_limine(arch_config: ArchConfig) -> bool:
     bl = arch_config.bootloader_config
     return bool(bl and bl.bootloader == Bootloader.Limine)
+
+
+def has_uefi() -> bool:
+    return SysInfo.has_uefi()
+
+
+def parent_device_path(dev_path: Path) -> Path:
+    return get_parent_device_path(dev_path)
+
+
+def unique_device_path(dev_path: Path) -> Path | None:
+    return get_unique_path_for_device(dev_path)
 
 
 def root_user(arch_config: ArchConfig) -> User | None:

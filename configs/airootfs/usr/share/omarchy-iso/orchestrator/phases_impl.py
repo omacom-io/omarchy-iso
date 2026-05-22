@@ -6,8 +6,8 @@ Phase ordering (full-disk):
                              handlers (archinstall patch happens in the
                              wrapper before Python imports archinstall)
     arch_install_full      → archinstall-driven install (partition, base,
-                             bootloader, write limine config, early omarchy
-                             pkgs, useradd, runtime omarchy pkgs)
+                             early omarchy pkgs, Omarchy Limine setup,
+                             useradd, runtime omarchy pkgs)
     run_chroot_finalizer   → bind mounts + sudoers shim + arch-chroot finalize.sh
     configure_login        → sddm autologin for unencrypted installs
     validate_boot_full     → assert UKI / limine.conf / kernel cmdline are sane
@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 from . import archinstall_adapter as arch
@@ -50,6 +51,8 @@ from .ui import confirm, info
 EARLY_PACKAGES = [
     "base-devel",
     "git",
+    "limine",
+    "efibootmgr",
     "omarchy-keyring",
     "omarchy-settings",
 ]
@@ -98,9 +101,9 @@ def _install_disk(ctx: InstallContext) -> str | None:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # arch_install_full: everything inside a single Installer context manager.
-# Reorders guided.py's perform_installation() so our limine config write
-# lands between add_bootloader and the first add_additional_packages call,
-# and user creation happens AFTER early omarchy packages populate /etc/skel.
+# Reorders guided.py's perform_installation() so early Omarchy packages install
+# before user creation and before our Omarchy-owned Limine setup copies files
+# from the target's limine package.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def arch_install_full(ctx: InstallContext) -> None:
@@ -147,19 +150,19 @@ def arch_install_full(ctx: InstallContext) -> None:
         if config.swap and config.swap.enabled:
             installer.setup_swap(algo=config.swap.algorithm)
 
-        info("› installing bootloader (Limine)")
-        if config.bootloader_config:
-            installer.add_bootloader(
-                config.bootloader_config.bootloader,
-                config.bootloader_config.uki,
-                config.bootloader_config.removable,
-            )
-
-        info("› writing Limine config (so limine-mkinitcpio-hook fires correctly)")
-        _write_limine_defaults(ctx)
-
         info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
         installer.add_additional_packages(EARLY_PACKAGES)
+
+        if arch.bootloader_enabled(config):
+            if not arch.is_limine(config):
+                raise RuntimeError(
+                    "Omarchy full-disk installs only support Limine bootloader setup"
+                )
+            info("› installing bootloader (Limine)")
+            _install_limine_omarchy(ctx, installer, config)
+
+            info("› writing Limine config (so limine-mkinitcpio-hook fires correctly)")
+            _write_limine_defaults_from_config(ctx, installer, config)
 
         info("› creating user (with /etc/skel populated)")
         if config.auth_config and config.auth_config.users:
@@ -179,57 +182,163 @@ def arch_install_full(ctx: InstallContext) -> None:
         installer.genfstab()
 
 
-def _write_limine_defaults(ctx: InstallContext) -> None:
-    if not arch.is_limine(ctx.state["arch_config_handler"].config):
-        return
+def _install_limine_omarchy(ctx: InstallContext, installer, config) -> None:
+    boot_partition = installer._get_boot_partition()
+    efi_partition = installer._get_efi_partition()
+    root = installer._get_root()
 
-    # archinstall 4.3 writes limine.conf to one of:
-    #   <target>/<esp_mount>/EFI/arch-limine/limine.conf  (UEFI, non-removable)
-    #   <target>/<esp_mount>/EFI/BOOT/limine.conf         (UEFI, removable)
-    #   <target>/boot/limine/limine.conf                  (BIOS or fallback)
-    # Probe in that order and use whichever exists.
-    candidates = [
-        ctx.target / "boot" / "EFI" / "arch-limine" / "limine.conf",
-        ctx.target / "boot" / "EFI" / "BOOT" / "limine.conf",
-        ctx.target / "boot" / "limine" / "limine.conf",
-        ctx.target / "boot" / "limine.conf",  # very-old archinstall path
-    ]
-    limine_conf = next((p for p in candidates if p.exists()), None)
-    if limine_conf is None:
-        searched = "\n  ".join(str(p) for p in candidates)
-        raise RuntimeError(
-            "limine.conf not found after add_bootloader. Searched:\n  " + searched
+    if boot_partition is None:
+        raise RuntimeError(f"Could not detect boot at mountpoint {ctx.target}")
+    if root is None:
+        raise RuntimeError(f"Could not detect root at mountpoint {ctx.target}")
+
+    bootloader_config = config.bootloader_config
+    bootloader_removable = bool(
+        getattr(bootloader_config, "removable", False) if bootloader_config else False
+    )
+    limine_path = ctx.target / "usr" / "share" / "limine"
+
+    if arch.has_uefi():
+        if efi_partition is None:
+            raise RuntimeError("Could not detect EFI partition")
+        if not efi_partition.mountpoint:
+            raise RuntimeError("EFI partition is not mounted")
+
+        parent_dev_path = arch.parent_device_path(efi_partition.safe_dev_path)
+        efi_dir_path = ctx.target / efi_partition.mountpoint.relative_to("/") / "EFI"
+        efi_dir_path_target = efi_partition.mountpoint / "EFI"
+        if bootloader_removable:
+            efi_dir_path = efi_dir_path / "BOOT"
+            efi_dir_path_target = efi_dir_path_target / "BOOT"
+        else:
+            # Non-removable UEFI installs place the x64 binary at EFI/limine/BOOTX64.EFI.
+            efi_dir_path = efi_dir_path / "limine"
+            efi_dir_path_target = efi_dir_path_target / "limine"
+
+        efi_dir_path.mkdir(parents=True, exist_ok=True)
+        for filename in ("BOOTIA32.EFI", "BOOTX64.EFI"):
+            _copy_required(limine_path / filename, efi_dir_path / filename)
+
+        hook_command = (
+            f"/usr/bin/cp /usr/share/limine/BOOTIA32.EFI {efi_dir_path_target}/ && "
+            f"/usr/bin/cp /usr/share/limine/BOOTX64.EFI {efi_dir_path_target}/"
         )
 
-    cmdline = _extract_cmdline(limine_conf)
+        loader_path = _limine_efi_loader_path(bootloader_removable)
+        subprocess.run(
+            [
+                "efibootmgr",
+                "--create",
+                "--disk", str(parent_dev_path),
+                "--part", str(efi_partition.partn),
+                "--label", "Limine",
+                "--loader", loader_path,
+                "--unicode",
+                "--verbose",
+            ],
+            check=True,
+        )
+    else:
+        boot_limine_path = ctx.target / "boot" / "limine"
+        boot_limine_path.mkdir(parents=True, exist_ok=True)
+
+        parent_dev_path = arch.parent_device_path(boot_partition.safe_dev_path)
+        if unique_path := arch.unique_device_path(parent_dev_path):
+            parent_dev_path = unique_path
+
+        _copy_required(limine_path / "limine-bios.sys", boot_limine_path / "limine-bios.sys")
+        subprocess.run(
+            ["arch-chroot", str(ctx.target), "limine", "bios-install", str(parent_dev_path)],
+            check=True,
+        )
+        hook_command = (
+            f"/usr/bin/limine bios-install {parent_dev_path} && "
+            "/usr/bin/cp /usr/share/limine/limine-bios.sys /boot/limine/"
+        )
+
+    _write_limine_pacman_hook(ctx.target, hook_command)
+    installer._helper_flags["bootloader"] = "limine"
+
+
+def _copy_required(src: Path, dst: Path) -> None:
+    if not src.exists():
+        raise RuntimeError(f"Required Limine file missing: {src}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _limine_efi_loader_path(bootloader_removable: bool) -> str:
+    try:
+        efi_bitness = Path("/sys/firmware/efi/fw_platform_size").read_text().strip()
+    except Exception as err:
+        raise RuntimeError(
+            "Could not read /sys/firmware/efi/fw_platform_size to determine EFI bitness"
+        ) from err
+
+    if efi_bitness == "64":
+        return "\\EFI\\BOOT\\BOOTX64.EFI" if bootloader_removable else "\\EFI\\limine\\BOOTX64.EFI"
+    if efi_bitness == "32":
+        return "\\EFI\\BOOT\\BOOTIA32.EFI" if bootloader_removable else "\\EFI\\limine\\BOOTIA32.EFI"
+    raise RuntimeError(f'EFI bitness is neither 32 nor 64 bits. Found "{efi_bitness}".')
+
+
+def _write_limine_pacman_hook(target: Path, hook_command: str) -> None:
+    hook_contents = textwrap.dedent(
+        f"""\
+        [Trigger]
+        Operation = Upgrade
+        Type = Package
+        Target = limine
+
+        [Action]
+        Description = Deploying Omarchy Limine after upgrade...
+        When = PostTransaction
+        Exec = /bin/sh -c "{hook_command}"
+        """
+    )
+    hooks_dir = target / "etc" / "pacman.d" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "99-omarchy-limine.hook").write_text(hook_contents)
+
+
+def _write_limine_defaults_from_config(ctx: InstallContext, installer, config) -> None:
+    if not arch.is_limine(config):
+        return
+
+    root = installer._get_root()
+    if root is None:
+        raise RuntimeError(f"Could not detect root at mountpoint {ctx.target}")
+
+    cmdline = " ".join(installer._get_kernel_params(root))
     if not cmdline.strip():
-        raise RuntimeError("Could not extract kernel cmdline from limine.conf")
+        raise RuntimeError("Could not compute kernel cmdline from install config")
     if "root=" not in cmdline:
-        raise RuntimeError(f"Extracted cmdline has no root=: {cmdline!r}")
+        raise RuntimeError(f"Computed cmdline has no root=: {cmdline!r}")
 
-    # Template lives in omarchy-installer's install tree, present on the live
-    # ISO via the omarchy-installer package.
-    template = ctx.omarchy_path / "install" / "assets" / "limine" / "default.conf"
-    if not template.exists():
-        template = ctx.omarchy_path / "default" / "limine" / "default.conf"
-    if not template.exists():
-        raise RuntimeError(f"Limine template not found at {template}")
-
+    default_template = _limine_template(ctx, "default.conf")
     default_limine = ctx.target / "etc" / "default" / "limine"
     default_limine.parent.mkdir(parents=True, exist_ok=True)
-    default_limine.write_text(template.read_text().replace("@@CMDLINE@@", cmdline))
+    default_limine.write_text(default_template.read_text().replace("@@CMDLINE@@", cmdline))
 
     kernel_cmdline = ctx.target / "etc" / "kernel" / "cmdline"
     kernel_cmdline.parent.mkdir(parents=True, exist_ok=True)
     kernel_cmdline.write_text(cmdline + "\n")
 
+    limine_conf = ctx.target / "boot" / "limine.conf"
+    limine_conf.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_limine_template(ctx, "limine.conf"), limine_conf)
 
-def _extract_cmdline(limine_conf: Path) -> str:
-    for line in limine_conf.read_text().splitlines():
-        stripped = line.strip()
-        if stripped.startswith("cmdline:"):
-            return stripped[len("cmdline:"):].strip()
-    return ""
+
+def _limine_template(ctx: InstallContext, filename: str) -> Path:
+    candidates = [
+        ctx.omarchy_path / "install" / "assets" / "limine" / filename,
+        ctx.omarchy_path / "default" / "limine" / filename,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    searched = "\n  ".join(str(p) for p in candidates)
+    raise RuntimeError(f"Limine template {filename} not found. Searched:\n  {searched}")
 
 
 def _runtime_package_list(ctx: InstallContext) -> list[str]:
@@ -345,7 +454,7 @@ def arch_install_base(ctx: InstallContext) -> None:
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
 
-        # Protected mode never calls add_bootloader, so pacstrap limine +
+        # Protected mode owns boot setup separately, so pacstrap limine +
         # efibootmgr here while the live ISO's offline mirror is still the
         # active pacman source. Doing it later via arch-chroot would hit
         # the target's network-mirror pacman.conf and fail offline.
