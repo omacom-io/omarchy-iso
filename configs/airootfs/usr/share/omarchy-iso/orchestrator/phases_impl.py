@@ -331,6 +331,13 @@ def arch_install_base(ctx: InstallContext) -> None:
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
 
+        # Protected mode never calls add_bootloader, so pacstrap limine +
+        # efibootmgr here while the live ISO's offline mirror is still the
+        # active pacman source. Doing it later via arch-chroot would hit
+        # the target's network-mirror pacman.conf and fail offline.
+        info("› installing limine + efibootmgr (protected boot)")
+        installer.add_additional_packages(["limine", "efibootmgr"])
+
         if config.timezone:
             installer.set_timezone(config.timezone)
         if config.ntp:
@@ -353,13 +360,6 @@ def arch_install_base(ctx: InstallContext) -> None:
 
 def configure_protected_boot(ctx: InstallContext) -> None:
     protected = ctx.state["protected"]
-
-    info("› ensuring limine + efibootmgr installed in target")
-    subprocess.run(
-        ["arch-chroot", str(ctx.target), "pacman", "-S",
-         "--needed", "--noconfirm", "limine", "efibootmgr"],
-        check=True,
-    )
 
     info("› writing /etc/fstab")
     _write_fstab(ctx, protected)
