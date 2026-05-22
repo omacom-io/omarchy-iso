@@ -794,9 +794,10 @@ def _register_efibootmgr_entry(
 #     the same paths
 #  3. write a passwordless-sudo shim for the install user (finalize.sh's
 #     scripts run as the user and shell out to sudo repeatedly)
-#  4. copy the omarchy install tooling into /mnt/tmp/omarchy-install (the
-#     target never gets the omarchy-installer package installed)
-#  5. arch-chroot -u $user → /tmp/omarchy-install/finalize.sh
+#  4. copy the omarchy install tooling into /mnt/opt/omarchy-install (the
+#     target never gets the omarchy-installer package installed). Do NOT use
+#     /tmp: arch-chroot mounts a fresh tmpfs over the target's /tmp.
+#  5. arch-chroot -u $user → /opt/omarchy-install/finalize.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_chroot_finalizer(ctx: InstallContext) -> None:
@@ -825,10 +826,12 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     )
     sudoers.chmod(0o440)
 
-    # 4: copy install tooling to /mnt/tmp (ephemeral on first reboot, leaves
-    # zero install detritus on the target).
-    target_tooling = ctx.target / "tmp" / "omarchy-install"
-    target_tooling.parent.mkdir(exist_ok=True)
+    # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
+    # safe here: arch-chroot mounts a fresh tmpfs over the target's /tmp before
+    # running commands, so files copied to /mnt/tmp are invisible in the chroot.
+    tooling_path = Path("/opt/omarchy-install")
+    target_tooling = ctx.target / tooling_path.relative_to("/")
+    target_tooling.parent.mkdir(parents=True, exist_ok=True)
     if target_tooling.exists():
         shutil.rmtree(target_tooling)
     subprocess.run(
@@ -840,21 +843,13 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
             f"Copied installer tooling but {target_tooling / 'finalize.sh'} is missing"
         )
 
-    # Resolve ownership inside the target. The install user exists in
-    # /mnt/etc/passwd, not in the live ISO, and the user's primary group is not
-    # guaranteed to have the same name as the user. The trailing ':' asks chown
-    # to use the user's login group.
-    subprocess.run(
-        [
-            "arch-chroot", str(ctx.target),
-            "chown", "-R", f"{ctx.username}:", "/tmp/omarchy-install",
-        ],
-        check=True,
-    )
+    # Keep the payload root-owned. It only needs to be traversable/readable by
+    # the install user; sudoers below handles privileged work inside scripts.
+    subprocess.run(["chmod", "-R", "a+rX", str(target_tooling)], check=True)
     subprocess.run(
         [
             "arch-chroot", "-u", ctx.username, str(ctx.target),
-            "test", "-r", "/tmp/omarchy-install/finalize.sh",
+            "test", "-r", str(tooling_path / "finalize.sh"),
         ],
         check=True,
     )
@@ -863,7 +858,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     mirror_channel = _read_omarchy_mirror()
     env_extras = [
         "OMARCHY_INSTALL_MODE=offline",
-        "OMARCHY_PATH=/tmp/omarchy-install",
+        f"OMARCHY_PATH={tooling_path}",
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
@@ -877,7 +872,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         "env", "--unset=XDG_RUNTIME_DIR",
         *env_extras,
         "/bin/bash", "-lc",
-        "bash /tmp/omarchy-install/finalize.sh",
+        f"bash {tooling_path / 'finalize.sh'}",
     ]
     subprocess.run(cmd, check=True)
 
