@@ -173,6 +173,9 @@ def arch_install_full(ctx: InstallContext) -> None:
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
 
+        info("› configuring root Snapper snapshots")
+        _configure_snapper_root(ctx)
+
         # Standard arch finishers.
         if config.timezone:
             installer.set_timezone(config.timezone)
@@ -331,6 +334,58 @@ def _write_limine_defaults_from_config(ctx: InstallContext, installer, config) -
     shutil.copy2(_limine_template(ctx, "limine.conf"), limine_conf)
 
 
+def _configure_snapper_root(ctx: InstallContext) -> None:
+    """Configure Omarchy's root-only Snapper setup during the archinstall
+    phase, not inside the finalizer chroot.
+
+    archinstall's own setup_btrfs_snapshot() uses `snapper --no-dbus` because
+    snapperd/DBus are not available in arch-chroot. We mirror that proven
+    chroot-safe call, but only create the root config: Omarchy intentionally
+    does not snapshot /home user data.
+    """
+    config_path = ctx.target / "etc" / "snapper" / "configs" / "root"
+    if not config_path.exists():
+        subprocess.run(
+            [
+                "arch-chroot",
+                "-S",
+                str(ctx.target),
+                "snapper",
+                "--no-dbus",
+                "-c",
+                "root",
+                "create-config",
+                "/",
+            ],
+            check=True,
+        )
+
+    template_candidates = [
+        ctx.target / "etc" / "snapper" / "config-templates" / "omarchy",
+        ctx.target / "usr" / "share" / "omarchy" / "default" / "snapper" / "root",
+    ]
+    template = next((path for path in template_candidates if path.exists()), None)
+    if template is None:
+        searched = "\n  ".join(str(path) for path in template_candidates)
+        raise RuntimeError(f"Snapper root template not found. Searched:\n  {searched}")
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(template, config_path)
+
+    conf_path = ctx.target / "etc" / "conf.d" / "snapper"
+    conf_path.parent.mkdir(parents=True, exist_ok=True)
+    if conf_path.exists():
+        text = conf_path.read_text()
+        if re.search(r"^SNAPPER_CONFIGS=", text, flags=re.MULTILINE):
+            text = re.sub(r'^SNAPPER_CONFIGS=.*$', 'SNAPPER_CONFIGS="root"', text, flags=re.MULTILINE)
+        else:
+            text = text.rstrip() + '\nSNAPPER_CONFIGS="root"\n'
+        conf_path.write_text(text)
+    else:
+        conf_path.write_text('SNAPPER_CONFIGS="root"\n')
+
+
+
 def _limine_template(ctx: InstallContext, filename: str) -> Path:
     candidates = [
         ctx.omarchy_path / "install" / "assets" / "limine" / filename,
@@ -455,6 +510,9 @@ def arch_install_base(ctx: InstallContext) -> None:
 
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
+
+        info("› configuring root Snapper snapshots")
+        _configure_snapper_root(ctx)
 
         # Protected mode owns boot setup separately, so pacstrap limine +
         # efibootmgr here while the live ISO's offline mirror is still the
