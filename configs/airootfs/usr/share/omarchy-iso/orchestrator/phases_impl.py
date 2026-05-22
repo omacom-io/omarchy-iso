@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 
 from . import archinstall_adapter as arch
@@ -889,8 +890,9 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     # run_logged appends as the install user. Create the target log before
     # arch-chroot so the first redirection cannot fail on /var/log perms.
     target_log = ctx.target / "var" / "log" / "omarchy-install.log"
+    omarchy_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
     target_log.parent.mkdir(parents=True, exist_ok=True)
-    target_log.write_text("=== Omarchy Offline Finalizer Started ===\n")
+    target_log.write_text(f"=== Omarchy Installation Started: {omarchy_start_time} ===\n")
     target_log.chmod(0o666)
 
     # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
@@ -927,6 +929,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         "OMARCHY_INSTALL_MODE=offline",
         "OMARCHY_PATH=/usr/share/omarchy",
         f"OMARCHY_INSTALL={tooling_path / 'install'}",
+        f"OMARCHY_START_TIME={omarchy_start_time}",
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
