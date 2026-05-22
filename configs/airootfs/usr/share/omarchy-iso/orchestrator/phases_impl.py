@@ -183,9 +183,23 @@ def _write_limine_defaults(ctx: InstallContext) -> None:
     if not arch.is_limine(ctx.state["arch_config_handler"].config):
         return
 
-    limine_conf = ctx.target / "boot" / "limine.conf"
-    if not limine_conf.exists():
-        raise RuntimeError(f"{limine_conf} not found after add_bootloader")
+    # archinstall 4.3 writes limine.conf to one of:
+    #   <target>/<esp_mount>/EFI/arch-limine/limine.conf  (UEFI, non-removable)
+    #   <target>/<esp_mount>/EFI/BOOT/limine.conf         (UEFI, removable)
+    #   <target>/boot/limine/limine.conf                  (BIOS or fallback)
+    # Probe in that order and use whichever exists.
+    candidates = [
+        ctx.target / "boot" / "EFI" / "arch-limine" / "limine.conf",
+        ctx.target / "boot" / "EFI" / "BOOT" / "limine.conf",
+        ctx.target / "boot" / "limine" / "limine.conf",
+        ctx.target / "boot" / "limine.conf",  # very-old archinstall path
+    ]
+    limine_conf = next((p for p in candidates if p.exists()), None)
+    if limine_conf is None:
+        searched = "\n  ".join(str(p) for p in candidates)
+        raise RuntimeError(
+            "limine.conf not found after add_bootloader. Searched:\n  " + searched
+        )
 
     cmdline = _extract_cmdline(limine_conf)
     if not cmdline.strip():
