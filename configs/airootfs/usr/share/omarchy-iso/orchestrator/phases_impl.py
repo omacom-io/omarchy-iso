@@ -509,15 +509,15 @@ interface_branding: Omarchy Bootloader
 
 /Omarchy Linux
     protocol: linux
-    path: uuid({btrfs_uuid}):/@/boot/vmlinuz-{kernel}
+    path: {kernel_path}
     cmdline: {cmdline}
-    module_path: uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}.img
+    module_path: {initrd_path}
 
 /Omarchy Linux (fallback)
     protocol: linux
-    path: uuid({btrfs_uuid}):/@/boot/vmlinuz-{kernel}
+    path: {kernel_path}
     cmdline: {cmdline}
-    module_path: uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}-fallback.img
+    module_path: {initrd_fb_path}
 """
 
 
@@ -553,10 +553,23 @@ def _install_limine(ctx: InstallContext, protected: dict) -> None:
     shutil.copy2(src, dst)
 
     btrfs_uuid = _blkid_uuid(_btrfs_root_device(protected))
+    kernel = protected["kernel"]
+    if protected["esp_mount"] == "/boot":
+        kernel_path = f"boot():/vmlinuz-{kernel}"
+        initrd_path = f"boot():/initramfs-{kernel}.img"
+        initrd_fb_path = f"boot():/initramfs-{kernel}-fallback.img"
+    elif protected["esp_mount"] == "/efi":
+        kernel_path = f"uuid({btrfs_uuid}):/@/boot/vmlinuz-{kernel}"
+        initrd_path = f"uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}.img"
+        initrd_fb_path = f"uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}-fallback.img"
+    else:
+        raise RuntimeError(f"unsupported ESP mountpoint: {protected['esp_mount']}")
+
     cmdline = _build_cmdline(protected, btrfs_uuid)
     conf = LIMINE_CONF_TEMPLATE.format(
-        btrfs_uuid=btrfs_uuid,
-        kernel=protected["kernel"],
+        kernel_path=kernel_path,
+        initrd_path=initrd_path,
+        initrd_fb_path=initrd_fb_path,
         cmdline=cmdline,
     )
     (omarchy_esp / "limine.conf").write_text(conf)
@@ -838,11 +851,18 @@ def validate_boot_protected(ctx: InstallContext) -> None:
         if protected["luks_uuid"] not in crypttab.read_text():
             raise RuntimeError(f"{crypttab} missing LUKS UUID {protected['luks_uuid']}")
 
-    vmlinuz = ctx.target / "boot" / f"vmlinuz-{kernel}"
+    if protected["esp_mount"] == "/boot":
+        kernel_dir = ctx.target / protected["esp_mount"].lstrip("/")
+    elif protected["esp_mount"] == "/efi":
+        kernel_dir = ctx.target / "boot"
+    else:
+        raise RuntimeError(f"unsupported ESP mountpoint: {protected['esp_mount']}")
+
+    vmlinuz = kernel_dir / f"vmlinuz-{kernel}"
     if not vmlinuz.exists():
         raise RuntimeError(f"{vmlinuz} missing")
 
-    initramfs = ctx.target / "boot" / f"initramfs-{kernel}.img"
+    initramfs = kernel_dir / f"initramfs-{kernel}.img"
     if not initramfs.exists():
         raise RuntimeError(f"{initramfs} missing")
 

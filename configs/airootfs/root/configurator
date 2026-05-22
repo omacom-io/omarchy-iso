@@ -389,6 +389,17 @@ run_partition_install() {
     encrypt_installation=false
   fi
 
+  if [[ "$encrypt_installation" == "true" && -n "$shared_esp" ]]; then
+    abort "Encrypted install on a shared Windows ESP is not yet supported. Please choose unencrypted, or use Full Install."
+  fi
+
+  local esp_mount_in_target
+  if [[ "$encrypt_installation" == "true" ]]; then
+    esp_mount_in_target=/boot
+  else
+    esp_mount_in_target=/efi
+  fi
+
   # Detect T2 Mac and set appropriate kernel
   if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
     kernel_choice="linux-t2"
@@ -467,7 +478,7 @@ run_partition_install() {
     rmdir /mnt/btrfs-root
 
     mount -o noatime,compress=zstd,subvol=@ "$root_mapper" /mnt
-    mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/efi
+    mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt"$esp_mount_in_target"
     mount -o noatime,compress=zstd,subvol=@home "$root_mapper" /mnt/home
     mount -o noatime,compress=zstd,subvol=@log  "$root_mapper" /mnt/var/log
     mount -o noatime,compress=zstd,subvol=@pkg  "$root_mapper" /mnt/var/cache/pacman/pkg
@@ -475,7 +486,7 @@ run_partition_install() {
     if [[ -z "$shared_esp" ]]; then
       mkfs.fat -F32 -n OMARCHY_EFI "$efi_dev"
     fi
-    mount "$efi_dev" /mnt/efi
+    mount "$efi_dev" /mnt"$esp_mount_in_target"
   fi
 
   clear
@@ -573,7 +584,7 @@ _EOF_
 
   cat >/root/protected_install.json <<JSON
 {
-  "esp_mount": "/efi",
+  "esp_mount": "$esp_mount_in_target",
   "esp_path": "/EFI/Omarchy",
   "luks_uuid": $luks_uuid_json,
   "root_device": "$root_partition_device",
