@@ -21,8 +21,8 @@ Phase ordering (protected / pre-mounted):
     arch_install_base         → archinstall used as pacstrap + users +
                                 packages driver only; no bootloader,
                                 no fstab, no mkinitcpio
-    configure_protected_boot  → Omarchy-owned fstab/crypttab/mkinitcpio/
-                                bootloader — implemented in Step 8
+    configure_protected_boot  → protected fstab/crypttab + Limine EFI handoff;
+                                final UKI build still happens in finalizer
     run_chroot_finalizer      → same
     configure_login           → same
     validate_boot_protected   → implemented in Step 8
@@ -1047,7 +1047,26 @@ def cleanup_protected_state(ctx: InstallContext) -> None:
 # finish: prompt for reboot. Bind mounts are unwound in main()'s finally.
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _stop_install_dashboard() -> None:
+    pid = os.environ.get("OMARCHY_INSTALL_DASHBOARD_PID")
+    if not pid:
+        return
+    try:
+        os.kill(int(pid), 15)
+    except (OSError, ValueError):
+        pass
+    # Give the shell dashboard a moment to restore the cursor before gum draws.
+    time.sleep(0.1)
+    try:
+        with open("/dev/tty", "w", encoding="utf-8") as tty:
+            tty.write("\033[?25h\033[H\033[2J")
+            tty.flush()
+    except OSError:
+        pass
+
+
 def finish(ctx: InstallContext) -> None:
+    _stop_install_dashboard()
     info("Installation finished. Reboot when ready.")
     if confirm("Reboot now?", default=True):
         os.system("reboot")

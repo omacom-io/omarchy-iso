@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# Render the live Omarchy install dashboard on tty1 while installer output is
+# captured to logs. Intentionally has no external UI dependencies.
+set -euo pipefail
+
+LOG_FILE="${1:-/var/log/omarchy-install.log}"
+STATE_FILE="${2:-/run/omarchy-install/state.json}"
+TARGET_LOG_FILE="${3:-/mnt/var/log/omarchy-install.log}"
+LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
+
+CSI=$'\033['
+RESET="${CSI}0m"
+BOLD="${CSI}1m"
+DIM="${CSI}2m"
+HIDE_CURSOR="${CSI}?25l"
+SHOW_CURSOR="${CSI}?25h"
+CLEAR="${CSI}2J${CSI}H"
+HOME="${CSI}H"
+CLEAR_LINE="${CSI}2K"
+CLEAR_TO_END="${CSI}J"
+GREEN="${CSI}38;5;150m"
+GRAY="${CSI}38;5;245m"
+DARK="${CSI}38;5;238m"
+
+whimsy=(
+  "making Linux feel like home"
+  "installing the good defaults"
+  "putting the system in order"
+  "setting up a civilized desktop"
+  "clearing the path to Hyprland"
+  "preparing the command line sanctuary"
+  "teaching pacman the house rules"
+  "laying down the Tokyo Night carpet"
+  "arranging the sharp tools safely"
+  "keeping the boot path clean"
+  "giving Limine the keys"
+  "making snapshots worth having"
+  "saving future you a few hours"
+  "choosing boring where boring wins"
+  "leaving room for your dotfiles"
+  "tightening the last few screws"
+)
+
+cleanup() {
+  printf '%s%s' "$RESET" "$SHOW_CURSOR" >/dev/tty 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+term_size() {
+  stty size 2>/dev/null </dev/tty || printf '24 80\n'
+}
+
+term_cols() {
+  local size
+  size="$(term_size)"
+  printf '%s\n' "${size#* }"
+}
+
+repeat() {
+  local char="$1" count="$2" out=""
+  for ((i=0; i<count; i++)); do out+="$char"; done
+  printf '%s' "$out"
+}
+
+logo_width() {
+  if [[ -f $LOGO_PATH ]]; then
+    awk '{ if (length > max) max = length } END { print max+0 }' "$LOGO_PATH"
+  else
+    printf '81\n'
+  fi
+}
+
+LOGO_WIDTH="$(logo_width)"
+(( LOGO_WIDTH > 0 )) || LOGO_WIDTH=81
+CONTENT_WIDTH="$LOGO_WIDTH"
+
+left_padding() {
+  local width="${1:-$CONTENT_WIDTH}" cols pad
+  cols="$(term_cols)"
+  pad=$(( (cols - width) / 2 ))
+  (( pad < 0 )) && pad=0
+  printf '%*s' "$pad" ''
+}
+
+visible_len() {
+  local text="$1"
+  text="$(printf '%b' "$text" | sed -E $'s/\x1b\\[[0-9;?]*[A-Za-z]//g')"
+  printf '%s' "${#text}"
+}
+
+blank_line() {
+  printf '\r%s\n' "$CLEAR_LINE"
+}
+
+line_at() {
+  local width="${1:-$CONTENT_WIDTH}" indent="${2:-0}"
+  shift 2
+  printf '\r%s%s%*s' "$CLEAR_LINE" "$(left_padding "$width")" "$indent" ''
+  printf '%b' "$*"
+}
+
+center() {
+  local text="$1" width="${2:-$CONTENT_WIDTH}" len inner_pad
+  len="$(visible_len "$text")"
+  inner_pad=$(( (width - len) / 2 ))
+  (( inner_pad < 0 )) && inner_pad=0
+  printf '\r%s%s%*s%b%s\n' "$CLEAR_LINE" "$(left_padding "$width")" "$inner_pad" '' "$text" "$RESET"
+}
+
+render_logo() {
+  local pad
+  pad="$(left_padding "$LOGO_WIDTH")"
+  if [[ -f $LOGO_PATH ]]; then
+    while IFS= read -r line; do
+      printf '\r%s%s%b%s%b\n' "$CLEAR_LINE" "$pad" "$GREEN" "$line" "$RESET"
+    done <"$LOGO_PATH"
+  else
+    center "${GREEN}Omarchy${RESET}" "$CONTENT_WIDTH"
+  fi
+}
+
+progress_bar() {
+  local pct="$1" width="${2:-34}" filled empty
+  (( pct < 0 )) && pct=0
+  (( pct > 100 )) && pct=100
+  filled=$(( pct * width / 100 ))
+  empty=$(( width - filled ))
+  printf '%s%s%s%s%s %3d%%' "$GREEN" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET" "$pct"
+}
+
+state_value() {
+  local key="$1" fallback="$2"
+  [[ -f $STATE_FILE ]] || { printf '%s' "$fallback"; return; }
+  python - "$STATE_FILE" "$key" "$fallback" <<'PY' 2>/dev/null || true
+import json, sys
+path, key, fallback = sys.argv[1:4]
+try:
+    with open(path) as f:
+        state = json.load(f)
+except Exception:
+    print(fallback, end='')
+    raise SystemExit
+if key == 'phase':
+    print(state.get('current_phase') or 'Starting installation', end='')
+elif key == 'index':
+    print(state.get('current_index') or 0, end='')
+elif key == 'total':
+    print(state.get('total_phases') or 1, end='')
+elif key == 'done':
+    print(len([p for p in state.get('phases', []) if p.get('status') == 'ok']), end='')
+else:
+    print(fallback, end='')
+PY
+}
+
+last_log_line() {
+  local file line files
+  if [[ -s $TARGET_LOG_FILE && $TARGET_LOG_FILE -nt $LOG_FILE ]]; then
+    files=("$TARGET_LOG_FILE" "$LOG_FILE")
+  else
+    files=("$LOG_FILE" "$TARGET_LOG_FILE")
+  fi
+
+  for file in "${files[@]}"; do
+    [[ -s $file ]] || continue
+    line="$(grep -avE '^(\s*|===|\[.*\] (Starting|Completed):)' "$file" 2>/dev/null | tail -n 1 || true)"
+    if [[ -n $line ]]; then
+      line="${line//$'\r'/}"
+      line="$(printf '%s' "$line" | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g')"
+      printf '%s' "${line:0:$((CONTENT_WIDTH - 8))}"
+      return
+    fi
+  done
+  printf 'starting installer'
+}
+
+current_whimsy() {
+  local frame="$1" index="$2"
+  printf '%s' "${whimsy[$(( (index * 3 + frame / 8) % ${#whimsy[@]} ))]}"
+}
+
+render() {
+  local frame="$1" phase index total done pct spin log_line
+  phase="$(state_value phase 'Starting installation')"
+  index="$(state_value index 0)"
+  total="$(state_value total 1)"
+  done="$(state_value done 0)"
+  (( total < 1 )) && total=1
+  pct=$(( (done * 100) / total ))
+  # Give the active phase a little movement without pretending exact progress.
+  if (( done < total )); then
+    pct=$(( pct + (frame % 8) * (100 / total) / 8 ))
+  fi
+  (( pct > 100 )) && pct=100
+  spin=("◐" "◓" "◑" "◒")
+  log_line="$(last_log_line)"
+
+  printf '%s' "$HOME"
+  blank_line
+  render_logo
+  blank_line
+  center "Phase $((index + 1))/$total  $phase" "$CONTENT_WIDTH"
+  blank_line
+  line_at "$CONTENT_WIDTH" $(( (CONTENT_WIDTH - 40) / 2 )) ""
+  progress_bar "$pct" 34
+  printf '\n'
+  blank_line
+  center "Now: $log_line" "$CONTENT_WIDTH"
+  blank_line
+  center "${GREEN}${spin[$((frame % 4))]} $(current_whimsy "$frame" "$index") ${RESET}" "$CONTENT_WIDTH"
+  blank_line
+  center "${DIM}Logs are being saved for support${RESET}" "$CONTENT_WIDTH"
+  printf '%s' "$CLEAR_TO_END"
+}
+
+printf '%s%s' "$HIDE_CURSOR" "$CLEAR" >/dev/tty
+frame=0
+while true; do
+  render "$frame" >/dev/tty
+  frame=$((frame + 1))
+  sleep 0.5
+done

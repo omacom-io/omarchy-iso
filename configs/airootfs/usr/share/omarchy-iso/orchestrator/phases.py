@@ -23,10 +23,21 @@ class PhaseError(Exception):
 def run(ctx: InstallContext, phases: list[tuple[str, PhaseFn]]) -> None:
     ctx.state_dir.mkdir(parents=True, exist_ok=True)
     state_path = ctx.state_dir / "state.json"
-    state = {"started_at": time.time(), "phases": []}
+    state = {
+        "started_at": time.time(),
+        "total_phases": len(phases),
+        "current_index": 0,
+        "current_phase": "Starting installation",
+        "phases": [],
+    }
     _write_state(state_path, state)
 
-    for name, fn in phases:
+    for index, (name, fn) in enumerate(phases):
+        state["current_index"] = index
+        state["current_phase"] = name
+        state["phase_started_at"] = time.time()
+        _write_state(state_path, state)
+
         info(f"› {name}")
         started = time.time()
         try:
@@ -49,6 +60,8 @@ def run(ctx: InstallContext, phases: list[tuple[str, PhaseFn]]) -> None:
         state["phases"].append({"name": name, "status": "ok", "elapsed": elapsed})
         _write_state(state_path, state)
 
+    state["current_index"] = max(len(phases) - 1, 0)
+    state["current_phase"] = "Installation complete"
     state["finished_at"] = time.time()
     _write_state(state_path, state)
 

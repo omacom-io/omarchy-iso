@@ -43,11 +43,33 @@ export FORCE_COLOR=1
 cd /root
 ./configurator
 
+# Keep the actual install screen calm: the dashboard owns /dev/tty while the
+# noisy installer stream is captured to the support log.
+/usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json /mnt/var/log/omarchy-install.log >/dev/tty 2>&1 &
+dashboard_pid=$!
+export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
+
+stop_install_dashboard() {
+  if [[ -n ${dashboard_pid:-} ]]; then
+    kill "$dashboard_pid" 2>/dev/null || true
+    wait "$dashboard_pid" 2>/dev/null || true
+    unset dashboard_pid
+  fi
+  printf "\033[?25h" >/dev/tty
+}
+
 # Absolute paths because omarchy-iso-install cd's into /usr/share/omarchy-iso
 # before exec'ing python; relative paths would resolve against the wrong dir.
-exec /usr/local/bin/omarchy-iso-install \
+set +e
+/usr/local/bin/omarchy-iso-install \
   --config /root/user_configuration.json \
   --creds /root/user_credentials.json \
   --full-name-file /root/user_full_name.txt \
   --email-file /root/user_email_address.txt \
-  --encrypt-file /root/user_encrypt_installation.txt
+  --encrypt-file /root/user_encrypt_installation.txt \
+  > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") 2>&1
+install_status=$?
+set -e
+
+stop_install_dashboard
+exit "$install_status"
