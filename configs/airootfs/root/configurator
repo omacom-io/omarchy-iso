@@ -13,10 +13,18 @@ abort() {
   exit 1
 }
 
+# Drain any pending terminal-reply bytes (cursor position reports, etc.)
+# that gum's TUI startup sends but doesn't always consume. Without this,
+# bytes like ^[[13;1R show up next to step titles.
+_drain_tty() {
+  while IFS= read -r -t 0 -n 1024 _drain </dev/tty 2>/dev/null; do :; done
+}
+
 step() {
   clear_logo
   echo
   gum style "$1"
+  _drain_tty
   echo
 }
 
