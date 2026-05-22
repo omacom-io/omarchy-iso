@@ -428,13 +428,6 @@ def verify_protected_mounts(ctx: InstallContext) -> None:
     if not _is_mountpoint(target):
         raise RuntimeError(f"protected mode: {target} is not a mountpoint")
 
-    boot_mp = target / "boot"
-    efi_mp = target / "efi"
-    if not (_is_mountpoint(boot_mp) or _is_mountpoint(efi_mp)):
-        raise RuntimeError(
-            f"protected mode: no ESP mounted under {target} (checked {boot_mp}, {efi_mp})"
-        )
-
     if not PROTECTED_INTENT_PATH.exists():
         raise RuntimeError(
             f"protected mode: expected partition intent at {PROTECTED_INTENT_PATH} "
@@ -442,11 +435,23 @@ def verify_protected_mounts(ctx: InstallContext) -> None:
         )
 
     intent = json.loads(PROTECTED_INTENT_PATH.read_text())
-    for key in ("esp_mount", "esp_path", "luks_uuid", "root_device", "kernel"):
+    for key in ("esp_device", "esp_mount", "esp_path", "luks_uuid", "root_device", "kernel"):
         if key not in intent:
             raise RuntimeError(
                 f"protected mode: {PROTECTED_INTENT_PATH} missing key '{key}'"
             )
+
+    esp_mp = target / intent["esp_mount"].lstrip("/")
+    if not _is_mountpoint(esp_mp):
+        esp_dev = intent["esp_device"]
+        if not Path(esp_dev).exists():
+            raise RuntimeError(
+                f"protected mode: ESP device {esp_dev} from {PROTECTED_INTENT_PATH} does not exist"
+            )
+        info(f"› remounting protected ESP {esp_dev} at {esp_mp}")
+        esp_mp.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["mount", esp_dev, str(esp_mp)], check=True)
+
     ctx.state["protected"] = intent
     info(f"› protected intent loaded: kernel={intent['kernel']} esp={intent['esp_mount']}")
 

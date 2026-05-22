@@ -632,6 +632,7 @@ _EOF_
 
   cat >/root/protected_install.json <<JSON
 {
+  "esp_device": "$efi_dev",
   "esp_mount": "$esp_mount_in_target",
   "esp_path": "/EFI/Omarchy",
   "luks_uuid": $luks_uuid_json,
