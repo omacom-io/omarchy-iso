@@ -867,7 +867,8 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     mirror_channel = _read_omarchy_mirror()
     env_extras = [
         "OMARCHY_INSTALL_MODE=offline",
-        f"OMARCHY_PATH={tooling_path}",
+        "OMARCHY_PATH=/usr/share/omarchy",
+        f"OMARCHY_INSTALL={tooling_path / 'install'}",
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
