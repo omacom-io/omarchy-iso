@@ -890,6 +890,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     # run_logged appends as the install user. Create the target log before
     # arch-chroot so the first redirection cannot fail on /var/log perms.
     target_log = ctx.target / "var" / "log" / "omarchy-install.log"
+    omarchy_start_epoch = int(time.time())
     omarchy_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
     target_log.parent.mkdir(parents=True, exist_ok=True)
     target_log.write_text(f"=== Omarchy Installation Started: {omarchy_start_time} ===\n")
@@ -930,6 +931,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         "OMARCHY_PATH=/usr/share/omarchy",
         f"OMARCHY_INSTALL={tooling_path / 'install'}",
         f"OMARCHY_START_TIME={omarchy_start_time}",
+        f"OMARCHY_START_EPOCH={omarchy_start_epoch}",
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
