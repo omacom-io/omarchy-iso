@@ -536,7 +536,7 @@ _EOF_
     "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
-    "bootloader": "No bootloader",
+    "bootloader": "Limine",
     "custom_commands": [],
     "disk_config": {
         "config_type": "pre_mounted_config",
