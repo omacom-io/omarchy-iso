@@ -193,6 +193,17 @@ current_whimsy() {
 render_static() {
   printf '%s' "$CLEAR"
   blank_line
+
+  if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
+    if timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch 2>/dev/null; then
+      blank_line
+      return
+    fi
+    # If animation fails or times out, clear any partial frame before fallback.
+    printf '%s' "$CLEAR"
+    blank_line
+  fi
+
   render_logo
   blank_line
 }

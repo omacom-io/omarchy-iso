@@ -1173,22 +1173,59 @@ def _install_duration(ctx: InstallContext) -> str | None:
     return None
 
 
+def _render_tte_logo(logo_path: Path) -> bool:
+    if not logo_path.exists() or not shutil.which("tte"):
+        return False
+    try:
+        with open("/dev/tty", "rb", buffering=0) as stdin, open("/dev/tty", "wb", buffering=0) as stdout:
+            subprocess.run(
+                [
+                    "tte",
+                    "-i", str(logo_path),
+                    "--canvas-width", "0",
+                    "--anchor-text", "c",
+                    "--frame-rate", "920",
+                    "laseretch",
+                ],
+                stdin=stdin,
+                stdout=stdout,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                check=True,
+            )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _render_static_finish_logo(tty, logo_path: Path, cols: int) -> None:
+    green = "\033[32m"
+    reset = "\033[0m"
+    if logo_path.exists():
+        logo_lines = logo_path.read_text(errors="ignore").splitlines()
+        logo_width = max((len(line) for line in logo_lines), default=0)
+        left = max((cols - logo_width) // 2, 0)
+        for line in logo_lines:
+            tty.write(" " * left + green + line + reset + "\n")
+    else:
+        tty.write(_center_text("Omarchy", cols) + "\n")
+
+
 def _render_finish_screen(ctx: InstallContext) -> None:
     _, cols = _tty_size()
     logo_path = Path("/usr/share/omarchy/logo.txt")
-    green = "\033[32m"
-    reset = "\033[0m"
     try:
         with open("/dev/tty", "w", encoding="utf-8") as tty:
             tty.write("\033[?25h\033[H\033[2J\n")
-            if logo_path.exists():
-                logo_lines = logo_path.read_text(errors="ignore").splitlines()
-                logo_width = max((len(line) for line in logo_lines), default=0)
-                left = max((cols - logo_width) // 2, 0)
-                for line in logo_lines:
-                    tty.write(" " * left + green + line + reset + "\n")
-            else:
-                tty.write(_center_text(green + "Omarchy" + reset, cols) + "\n")
+            tty.flush()
+
+        if not _render_tte_logo(logo_path):
+            with open("/dev/tty", "w", encoding="utf-8") as tty:
+                tty.write("\033[?25h\033[H\033[2J\n")
+                _render_static_finish_logo(tty, logo_path, cols)
+                tty.flush()
+
+        with open("/dev/tty", "w", encoding="utf-8") as tty:
             tty.write("\n")
             duration = _install_duration(ctx)
             message = f"Installed in {duration}" if duration else "Finished installing"

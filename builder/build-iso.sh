@@ -67,7 +67,7 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 #      /etc/plymouth so mkinitcpio's plymouth hook picks up the Omarchy theme
 #      when mkarchiso builds the live initramfs (otherwise plymouth shows
 #      the default theme on boot).
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring omarchy-settings omarchy-installer lvm2 cryptsetup parted)
+arch_packages=(linux-t2 git gum jq openssl plymouth python-terminaltexteffects tzupdate omarchy-keyring omarchy-settings omarchy-installer lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target
