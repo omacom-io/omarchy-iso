@@ -350,7 +350,7 @@ run_partition_install() {
   local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
   local ALIGN=$mib
   local EFI_SIZE_B=$((2 * gib))
-  local MIN_ROOT_B=$((32 * gib))    # 32 GiB minimum for the root filesystem
+  local MIN_INSTALL_B=$((32 * gib))    # Minimum total Omarchy allocation
 
   local EFI_START_B=0 EFI_END_B=0 ROOT_START_B ROOT_END_B
   if [[ -z "$shared_esp" ]]; then
@@ -368,44 +368,51 @@ run_partition_install() {
     return 1
   fi
 
-  local ROOT_MAX_B=$((ROOT_END_B - ROOT_START_B))
-  if (( ROOT_MAX_B < MIN_ROOT_B )); then
-    local required_b=$MIN_ROOT_B
-    [[ -z "$shared_esp" ]] && required_b=$((required_b + EFI_SIZE_B))
-    gum style --foreground 1 "Usable root space ($(to_gb $ROOT_MAX_B)) is below the 32GB minimum for Omarchy."
-    gum style "This disk needs at least $(to_gb $required_b) unallocated in this free region."
+  local INSTALL_START_B INSTALL_MAX_B INSTALL_MAX_GIB INSTALL_SIZE_GIB
+  if [[ -z "$shared_esp" ]]; then
+    INSTALL_START_B=$EFI_START_B
+  else
+    INSTALL_START_B=$ROOT_START_B
+  fi
+  INSTALL_MAX_B=$((ROOT_END_B - INSTALL_START_B))
+
+  if (( INSTALL_MAX_B < MIN_INSTALL_B )); then
+    gum style --foreground 1 "Usable free space ($(to_gb $INSTALL_MAX_B)) is below the 32GB minimum for Omarchy."
     gum style "Open the partition tool, delete/shrink partitions until the target area says Free space, then leave it unallocated."
     gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
     return 1
   fi
 
-  local ROOT_MAX_GIB=$((ROOT_MAX_B / gib))
-  local ROOT_SIZE_GIB
+  INSTALL_MAX_GIB=$((INSTALL_MAX_B / gib))
   while true; do
     step "Choose Omarchy size"
     gum style "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
     if [[ -z "$shared_esp" ]]; then
-      gum style "2GiB will be used for a new EFI partition."
+      gum style "The size includes a new 2GiB EFI partition; the rest becomes root."
     else
       gum style "Using existing ESP: $shared_esp"
     fi
-    gum style "Root filesystem can be 32–${ROOT_MAX_GIB}GiB. Leave the default to use all available space."
+    gum style "Omarchy can use 32–${INSTALL_MAX_GIB}GiB total. Leave the default to use all available space."
     echo
 
-    ROOT_SIZE_GIB=$(gum input \
-      --value "$ROOT_MAX_GIB" \
-      --placeholder "32-${ROOT_MAX_GIB}" \
+    INSTALL_SIZE_GIB=$(gum input \
+      --value "$INSTALL_MAX_GIB" \
+      --placeholder "32-${INSTALL_MAX_GIB}" \
       --prompt.foreground="#845DF9" \
       --prompt "Omarchy size in GiB> ") || return 1
 
-    if [[ $ROOT_SIZE_GIB =~ ^[0-9]+$ ]] && (( ROOT_SIZE_GIB >= 32 && ROOT_SIZE_GIB <= ROOT_MAX_GIB )); then
+    if [[ $INSTALL_SIZE_GIB =~ ^[0-9]+$ ]] && (( INSTALL_SIZE_GIB >= 32 && INSTALL_SIZE_GIB <= INSTALL_MAX_GIB )); then
       break
     fi
 
-    notice "Enter a whole number from 32 to ${ROOT_MAX_GIB}" 1
+    notice "Enter a whole number from 32 to ${INSTALL_MAX_GIB}" 1
   done
 
-  ROOT_END_B=$((ROOT_START_B + ROOT_SIZE_GIB * gib))
+  if [[ -z "$shared_esp" ]]; then
+    ROOT_END_B=$((EFI_START_B + INSTALL_SIZE_GIB * gib))
+  else
+    ROOT_END_B=$((ROOT_START_B + INSTALL_SIZE_GIB * gib))
+  fi
 
   step "Proposed layout on $disk"
   gum style "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
