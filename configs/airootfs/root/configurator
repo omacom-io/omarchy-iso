@@ -17,7 +17,10 @@ abort() {
 # that gum's TUI startup sends but doesn't always consume. Without this,
 # bytes like ^[[13;1R show up next to step titles.
 _drain_tty() {
-  while IFS= read -r -t 0 -n 1024 _drain </dev/tty 2>/dev/null; do :; done
+  # Consume up to 9999 bytes of pending tty input with a short timeout.
+  # `read -t 0` only TESTS for input; it doesn't consume — that pattern
+  # hangs forever the moment any data is actually pending.
+  read -r -t 0.05 -N 9999 _drain </dev/tty 2>/dev/null || true
 }
 
 step() {

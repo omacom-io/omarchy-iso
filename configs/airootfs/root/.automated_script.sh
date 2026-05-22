@@ -38,9 +38,10 @@ mkdir -p /var/log
 touch "$OMARCHY_INSTALL_LOG_FILE"
 
 # Drain any stale terminal input (e.g., cursor-position-report responses left
-# in the kernel tty input buffer by archiso's boot init). If we don't, the
-# first gum invocation can echo them as visible "^[[13;1R" artifacts.
-while IFS= read -r -t 0 -n 1024 _drain </dev/tty 2>/dev/null; do :; done
+# in the kernel tty input buffer by archiso's boot init). `read -t 0` only
+# tests for input; we need a small positive timeout so the read actually
+# consumes bytes and then returns.
+read -r -t 0.05 -N 9999 _drain </dev/tty 2>/dev/null || true
 
 cd /root
 ./configurator >/dev/tty 2>/dev/tty
