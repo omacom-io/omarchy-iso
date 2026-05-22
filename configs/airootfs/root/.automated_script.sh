@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 #
 # Live ISO entry point on tty1: set up the live VT, run the configurator
-# wizard with full TTY access, then start broad logging and hand off to the
-# Python install orchestrator.
+# wizard, then hand off to the Python install orchestrator. Mirrors the
+# stream/env contract from the previously-working installer:
+#   - stdout teed to /var/log/omarchy-install.log (CSI-stripped) AND to tty
+#   - stderr direct to /dev/tty so gum (which draws its TUI on stderr)
+#     renders correctly
+#   - CLICOLOR_FORCE/FORCE_COLOR so gum emits ANSI even with stdout piped
+#   - COLUMNS/LINES so gum picks up real terminal size
 set -euo pipefail
 
 [[ $(tty) == /dev/tty1 ]] || exit 0
@@ -26,30 +31,17 @@ set_tokyo_night_colors() {
 }
 set_tokyo_night_colors
 
-# Tell gum and friends the actual terminal size. stty size on /dev/tty is
-# more reliable than tput when stdout could end up redirected.
-if size=$(stty size </dev/tty 2>/dev/null); then
-  export LINES="${size%% *}"
-  export COLUMNS="${size##* }"
-fi
-
-# Configurator phase: real TTY on both streams. No tee/pipe.
 mkdir -p /var/log
 touch "$OMARCHY_INSTALL_LOG_FILE"
 
-# Drain any stale terminal input (e.g., cursor-position-report responses left
-# in the kernel tty input buffer by archiso's boot init). `read -t 0` only
-# tests for input; we need a small positive timeout so the read actually
-# consumes bytes and then returns.
-read -r -t 0.05 -N 9999 _drain </dev/tty 2>/dev/null || true
+export COLUMNS=$(tput cols)
+export LINES=$(tput lines)
+exec > >(tee >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") 2>/dev/null) 2>/dev/tty
+export CLICOLOR_FORCE=1
+export FORCE_COLOR=1
 
 cd /root
-./configurator >/dev/tty 2>/dev/tty
-
-# Install phase: now safe to capture output to the install log. Strip CSI
-# escapes so the log file is readable. Keep stderr going to the log too so
-# install-time errors are captured.
-exec > >(tee >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") >/dev/tty) 2>&1
+./configurator
 
 # Absolute paths because omarchy-iso-install cd's into /usr/share/omarchy-iso
 # before exec'ing python; relative paths would resolve against the wrong dir.
