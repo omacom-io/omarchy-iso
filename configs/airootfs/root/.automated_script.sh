@@ -45,19 +45,49 @@ cd /root
 
 # Keep the actual install screen calm: the dashboard owns /dev/tty while the
 # noisy installer stream is captured to the support log.
-/usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json /mnt/var/log/omarchy-install.log >/dev/tty 2>&1 &
+/usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json >/dev/tty 2>&1 &
 dashboard_pid=$!
 export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
 
 stop_install_dashboard() {
   if [[ -n ${dashboard_pid:-} ]]; then
-    kill "$dashboard_pid" 2>/dev/null || true
+    if kill -0 "$dashboard_pid" 2>/dev/null; then
+      kill "$dashboard_pid" 2>/dev/null || true
+      for _ in {1..20}; do
+        kill -0 "$dashboard_pid" 2>/dev/null || break
+        sleep 0.05
+      done
+      if kill -0 "$dashboard_pid" 2>/dev/null; then
+        kill -9 "$dashboard_pid" 2>/dev/null || true
+      fi
+    fi
     wait "$dashboard_pid" 2>/dev/null || true
     unset dashboard_pid
   fi
   printf "\033[?25h" >/dev/tty
 }
-trap stop_install_dashboard EXIT INT TERM
+dashboard_error_handler() {
+  [[ $ERROR_HANDLING == "true" ]] && return
+  local exit_code=$?
+  stop_install_dashboard
+  catch_errors "$exit_code"
+}
+
+dashboard_exit_handler() {
+  local exit_code=$?
+  stop_install_dashboard
+  if (( exit_code != 0 )) && [[ $ERROR_HANDLING != "true" ]]; then
+    catch_errors "$exit_code"
+  else
+    show_cursor
+  fi
+  exit "$exit_code"
+}
+
+trap dashboard_error_handler ERR
+trap dashboard_exit_handler EXIT
+trap 'stop_install_dashboard; catch_errors 130' INT
+trap 'stop_install_dashboard; catch_errors 143' TERM
 
 # Absolute paths because omarchy-iso-install cd's into /usr/share/omarchy-iso
 # before exec'ing python; relative paths would resolve against the wrong dir.

@@ -67,4 +67,8 @@ def run(ctx: InstallContext, phases: list[tuple[str, PhaseFn]]) -> None:
 
 
 def _write_state(path: Path, state: dict) -> None:
-    path.write_text(json.dumps(state, indent=2, default=str))
+    # Dashboard polls this file while phases update it. Write atomically so the
+    # reader never observes a truncated/partial JSON document and resets UI.
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(state, indent=2, default=str))
+    tmp.replace(path)
