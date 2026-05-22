@@ -672,11 +672,12 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         ("/var/cache/omarchy/mirror/offline", "/var/cache/omarchy/mirror/offline"),
         ("/opt/packages", "/opt/packages"),
     ]
+    ctx.state.setdefault("bind_mounts", [])
     for src, dst in bind_mounts:
         target_dst = ctx.target / dst.lstrip("/")
         target_dst.mkdir(parents=True, exist_ok=True)
         subprocess.run(["mount", "--bind", src, str(target_dst)], check=True)
-    ctx.state["bind_mounts"] = [str(ctx.target / d.lstrip("/")) for _, d in bind_mounts]
+        ctx.state["bind_mounts"].append(str(target_dst))
 
     # 3: sudoers shim. Cleaned up by omarchy's first-run flow.
     sudoers = ctx.target / "etc" / "sudoers.d" / "99-omarchy-installer"
