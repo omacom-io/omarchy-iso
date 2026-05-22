@@ -44,10 +44,11 @@ from .context import InstallContext
 from .ui import confirm, info
 
 
-# Packages installed BEFORE useradd. omarchy-settings populates /etc/skel so
-# the user's home gets seeded correctly. omarchy-installer is INTENTIONALLY
-# absent — it's live-ISO-only install tooling, never installed on the target.
-# finalize.sh + install/ scripts get copied to /mnt/tmp/ in run_chroot_finalizer.
+# Packages installed BEFORE useradd. omarchy-settings and omarchy-nvim
+# populate /etc/skel so the user's home gets seeded correctly. omarchy-installer
+# is INTENTIONALLY absent — it's live-ISO-only install tooling, never installed
+# on the target. finalize.sh + install/ scripts get copied to /opt in
+# run_chroot_finalizer.
 EARLY_PACKAGES = [
     "base-devel",
     "git",
@@ -55,6 +56,7 @@ EARLY_PACKAGES = [
     "efibootmgr",
     "omarchy-keyring",
     "omarchy-settings",
+    "omarchy-nvim",
 ]
 
 
