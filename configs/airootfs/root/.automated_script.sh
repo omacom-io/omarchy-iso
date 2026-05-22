@@ -57,6 +57,7 @@ stop_install_dashboard() {
   fi
   printf "\033[?25h" >/dev/tty
 }
+trap stop_install_dashboard EXIT INT TERM
 
 # Absolute paths because omarchy-iso-install cd's into /usr/share/omarchy-iso
 # before exec'ing python; relative paths would resolve against the wrong dir.

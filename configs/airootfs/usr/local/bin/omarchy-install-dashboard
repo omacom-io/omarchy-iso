@@ -18,9 +18,11 @@ CLEAR="${CSI}2J${CSI}H"
 HOME="${CSI}H"
 CLEAR_LINE="${CSI}2K"
 CLEAR_TO_END="${CSI}J"
-GREEN="${CSI}38;5;150m"
-GRAY="${CSI}38;5;245m"
-DARK="${CSI}38;5;238m"
+# Use the 16-color ANSI palette configured by .automated_script.sh. The Linux
+# VT does not reliably map 256-color indexes the same way terminal emulators do.
+GREEN="${CSI}32m"
+GRAY="${CSI}37m"
+DARK="${CSI}90m"
 
 whimsy=(
   "making Linux feel like home"
@@ -128,28 +130,66 @@ progress_bar() {
   printf '%s%s%s%s%s %3d%%' "$GREEN" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET" "$pct"
 }
 
-state_value() {
-  local key="$1" fallback="$2"
-  [[ -f $STATE_FILE ]] || { printf '%s' "$fallback"; return; }
-  python - "$STATE_FILE" "$key" "$fallback" <<'PY' 2>/dev/null || true
-import json, sys
-path, key, fallback = sys.argv[1:4]
+install_progress() {
+  [[ -f $STATE_FILE ]] || { printf '1'; return; }
+  python - "$STATE_FILE" <<'PY' 2>/dev/null || printf '1'
+import json, sys, time
+
+path = sys.argv[1]
 try:
     with open(path) as f:
         state = json.load(f)
 except Exception:
-    print(fallback, end='')
+    print(1, end='')
     raise SystemExit
-if key == 'phase':
-    print(state.get('current_phase') or 'Starting installation', end='')
-elif key == 'index':
-    print(state.get('current_index') or 0, end='')
-elif key == 'total':
-    print(state.get('total_phases') or 1, end='')
-elif key == 'done':
-    print(len([p for p in state.get('phases', []) if p.get('status') == 'ok']), end='')
-else:
-    print(fallback, end='')
+
+phase = state.get('current_phase') or 'Starting installation'
+if state.get('finished_at') or phase == 'Installation complete':
+    print(100, end='')
+    raise SystemExit
+
+# Internal weighting only. The user sees one Omarchy install bar, but the bar
+# moves according to where the orchestrator is in the real install.
+weights = [
+    ('Starting installation', 1, 2, 3),
+    ('Preparing live environment', 2, 5, 10),
+    ('Verifying protected mounts', 5, 8, 10),
+    ('Installing Arch + Omarchy', 8, 86, 1500),
+    ('Installing base system', 8, 86, 1500),
+    ('Configuring protected boot', 86, 90, 20),
+    ('Finalizing in chroot', 90, 96, 180),
+    ('Configuring login', 96, 98, 10),
+    ('Validating protected boot setup', 98, 99, 10),
+    ('Validating boot setup', 98, 99, 10),
+    ('Finishing', 99, 100, 5),
+]
+
+start, end, expected = 1, 99, 600
+for name, s, e, seconds in weights:
+    if phase == name:
+        start, end, expected = s, e, seconds
+        break
+
+phase_started = state.get('phase_started_at') or state.get('started_at') or time.time()
+elapsed = max(0, time.time() - float(phase_started))
+span = max(0, end - start)
+# Move monotonically through most of the current phase, but leave the last
+# point for the actual phase transition so the bar never needs to go backward.
+active = min(max(span - 1, 0), int((elapsed / max(expected, 1)) * span))
+pct = min(100, start + active)
+print(pct, end='')
+PY
+}
+
+install_finished() {
+  [[ -f $STATE_FILE ]] || return 1
+  python - "$STATE_FILE" <<'PY' 2>/dev/null
+import json, sys
+try:
+    state = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if state.get('finished_at') else 1)
 PY
 }
 
@@ -175,22 +215,14 @@ last_log_line() {
 }
 
 current_whimsy() {
-  local frame="$1" index="$2"
-  printf '%s' "${whimsy[$(( (index * 3 + frame / 8) % ${#whimsy[@]} ))]}"
+  local frame="$1" pct="$2"
+  printf '%s' "${whimsy[$(( (pct / 8 + frame / 8) % ${#whimsy[@]} ))]}"
 }
 
 render() {
-  local frame="$1" phase index total done pct spin log_line
-  phase="$(state_value phase 'Starting installation')"
-  index="$(state_value index 0)"
-  total="$(state_value total 1)"
-  done="$(state_value done 0)"
-  (( total < 1 )) && total=1
-  pct=$(( (done * 100) / total ))
-  # Give the active phase a little movement without pretending exact progress.
-  if (( done < total )); then
-    pct=$(( pct + (frame % 8) * (100 / total) / 8 ))
-  fi
+  local frame="$1" pct spin log_line
+  pct="$(install_progress)"
+  [[ $pct =~ ^[0-9]+$ ]] || pct=1
   (( pct > 100 )) && pct=100
   spin=("◐" "◓" "◑" "◒")
   log_line="$(last_log_line)"
@@ -199,7 +231,7 @@ render() {
   blank_line
   render_logo
   blank_line
-  center "Phase $((index + 1))/$total  $phase" "$CONTENT_WIDTH"
+  center "Installing Omarchy" "$CONTENT_WIDTH"
   blank_line
   line_at "$CONTENT_WIDTH" $(( (CONTENT_WIDTH - 40) / 2 )) ""
   progress_bar "$pct" 34
@@ -207,7 +239,7 @@ render() {
   blank_line
   center "Now: $log_line" "$CONTENT_WIDTH"
   blank_line
-  center "${GREEN}${spin[$((frame % 4))]} $(current_whimsy "$frame" "$index") ${RESET}" "$CONTENT_WIDTH"
+  center "${GREEN}${spin[$((frame % 4))]} $(current_whimsy "$frame" "$pct") ${RESET}" "$CONTENT_WIDTH"
   blank_line
   center "${DIM}Logs are being saved for support${RESET}" "$CONTENT_WIDTH"
   printf '%s' "$CLEAR_TO_END"
@@ -217,6 +249,10 @@ printf '%s%s' "$HIDE_CURSOR" "$CLEAR" >/dev/tty
 frame=0
 while true; do
   render "$frame" >/dev/tty
+  if install_finished; then
+    sleep 1
+    break
+  fi
   frame=$((frame + 1))
   sleep 0.5
 done
