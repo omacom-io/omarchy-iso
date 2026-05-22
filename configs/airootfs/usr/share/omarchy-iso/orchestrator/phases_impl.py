@@ -835,9 +835,28 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         ["cp", "-a", f"{ctx.omarchy_path}/.", str(target_tooling)],
         check=True,
     )
+    if not (target_tooling / "finalize.sh").exists():
+        raise RuntimeError(
+            f"Copied installer tooling but {target_tooling / 'finalize.sh'} is missing"
+        )
+
+    # Resolve ownership inside the target. The install user exists in
+    # /mnt/etc/passwd, not in the live ISO, and the user's primary group is not
+    # guaranteed to have the same name as the user. The trailing ':' asks chown
+    # to use the user's login group.
     subprocess.run(
-        ["chown", "-R", f"{ctx.username}:{ctx.username}", str(target_tooling)],
-        check=False,
+        [
+            "arch-chroot", str(ctx.target),
+            "chown", "-R", f"{ctx.username}:", "/tmp/omarchy-install",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "arch-chroot", "-u", ctx.username, str(ctx.target),
+            "test", "-r", "/tmp/omarchy-install/finalize.sh",
+        ],
+        check=True,
     )
 
     # 5: arch-chroot -u $user → finalize.sh
