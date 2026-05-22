@@ -634,7 +634,7 @@ _EOF_
 {
   "esp_device": "$efi_dev",
   "esp_mount": "$esp_mount_in_target",
-  "esp_path": "/EFI/Omarchy",
+  "esp_path": "/EFI/limine",
   "luks_uuid": $luks_uuid_json,
   "root_device": "$root_partition_device",
   "kernel": "$kernel_choice"

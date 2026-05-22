@@ -536,15 +536,13 @@ def arch_install_base(ctx: InstallContext) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# configure_protected_boot: Omarchy-owned fstab/crypttab/mkinitcpio/bootloader.
+# configure_protected_boot: protected-mode fstab + Limine handoff.
 #
-# Order:
-#   1. fstab    — written from our known mount intent (no genfstab)
-#   2. crypttab + mkinitcpio.conf — encrypt/btrfs hooks + initramfs btrfs deps
-#   3. mkinitcpio -P — generate /boot/initramfs-{kernel}{,-fallback}.img
-#   4. Limine into EFI/Omarchy — never touches EFI/Microsoft or EFI/BOOT
-#   5. efibootmgr entry, BootOrder preserves whatever was there + Omarchy first
-#   6. Sanity: Windows entry must survive
+# Free-space installs should converge with full-disk installs as soon as the
+# target is mounted. This phase only writes the mount/boot intent that the
+# common finalizer needs, and registers a Limine EFI entry on the chosen ESP.
+# The final UKI/initramfs build is deliberately left to login/limine-snapper.sh
+# (`limine-update`), same as full-disk installs.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def configure_protected_boot(ctx: InstallContext) -> None:
@@ -557,18 +555,15 @@ def configure_protected_boot(ctx: InstallContext) -> None:
         info("› writing /etc/crypttab.initramfs")
         _write_crypttab(ctx, protected)
 
-    info("› editing /etc/mkinitcpio.conf")
-    _edit_mkinitcpio_conf(ctx, protected)
-
-    info("› running mkinitcpio -P")
-    _run_mkinitcpio(ctx)
+    info("› writing Limine defaults")
+    _write_protected_limine_defaults(ctx, protected)
 
     info("› capturing efibootmgr state pre-install")
     pre_state = _read_efibootmgr()
     windows_before = _find_label_entries(pre_state["entries"], "Windows")
 
-    info("› installing Limine into EFI/Omarchy")
-    _install_limine(ctx, protected)
+    info("› installing Limine into protected ESP")
+    _install_protected_limine_efi(ctx, protected)
 
     info("› registering efibootmgr entry")
     _register_efibootmgr_entry(ctx, protected, pre_state)
@@ -645,123 +640,66 @@ def _write_crypttab(ctx: InstallContext, protected: dict) -> None:
     crypttab.write_text(f"omarchy_root  UUID={luks_uuid}  none  luks,discard\n")
 
 
-# ── mkinitcpio.conf ──────────────────────────────────────────────────────────
-
-def _edit_mkinitcpio_conf(ctx: InstallContext, protected: dict) -> None:
-    conf = ctx.target / "etc" / "mkinitcpio.conf"
-    text = conf.read_text()
-
-    if protected.get("luks_uuid"):
-        hooks = (
-            "HOOKS=(base udev autodetect microcode modconf kms keyboard "
-            "keymap consolefont block encrypt filesystems fsck)"
-        )
-    else:
-        hooks = (
-            "HOOKS=(base udev autodetect microcode modconf kms keyboard "
-            "keymap consolefont block filesystems fsck)"
-        )
-
-    text = _replace_assignment(text, "HOOKS", hooks)
-    text = _replace_assignment(text, "MODULES", "MODULES=(btrfs)")
-    text = _replace_assignment(text, "BINARIES", "BINARIES=(/usr/bin/btrfs)")
-
-    conf.write_text(text)
-
-
-def _replace_assignment(text: str, key: str, new_line: str) -> str:
-    """Replace a `KEY=(...)` line in mkinitcpio.conf-style text. If the key
-    isn't present, append the line."""
-    pattern = re.compile(rf"^{re.escape(key)}=\(.*\)\s*$", re.MULTILINE)
-    if pattern.search(text):
-        return pattern.sub(new_line, text, count=1)
-    if not text.endswith("\n"):
-        text += "\n"
-    return text + new_line + "\n"
-
-
-# ── mkinitcpio ───────────────────────────────────────────────────────────────
-
-def _run_mkinitcpio(ctx: InstallContext) -> None:
-    subprocess.run(
-        ["arch-chroot", str(ctx.target), "mkinitcpio", "-P"],
-        check=True,
-    )
-
-
 # ── Limine ───────────────────────────────────────────────────────────────────
 
-LIMINE_CONF_TEMPLATE = """\
-timeout: 3
-default_entry: 1
-interface_branding: Omarchy Bootloader
-
-/Omarchy Linux
-    protocol: linux
-    path: {kernel_path}
-    cmdline: {cmdline}
-    module_path: {initrd_path}
-
-/Omarchy Linux (fallback)
-    protocol: linux
-    path: {kernel_path}
-    cmdline: {cmdline}
-    module_path: {initrd_fb_path}
-"""
+def _protected_esp_mount(ctx: InstallContext, protected: dict) -> Path:
+    return ctx.target / protected["esp_mount"].lstrip("/")
 
 
 def _omarchy_esp_path(ctx: InstallContext, protected: dict) -> Path:
-    esp_mount = ctx.target / protected["esp_mount"].lstrip("/")
-    return esp_mount / protected["esp_path"].lstrip("/")
+    return _protected_esp_mount(ctx, protected) / protected["esp_path"].lstrip("/")
 
 
 def _build_cmdline(protected: dict, btrfs_uuid: str) -> str:
     if protected.get("luks_uuid"):
         return (
             f"cryptdevice=UUID={protected['luks_uuid']}:omarchy_root "
-            "root=/dev/mapper/omarchy_root rw "
-            "rootflags=subvol=@ rootfstype=btrfs quiet splash"
+            "root=/dev/mapper/omarchy_root zswap.enabled=0 "
+            "rootflags=subvol=@ rw rootfstype=btrfs"
         )
     return (
-        f"root=UUID={btrfs_uuid} rw "
-        "rootflags=subvol=@ rootfstype=btrfs quiet splash"
+        f"root=UUID={btrfs_uuid} zswap.enabled=0 "
+        "rootflags=subvol=@ rw rootfstype=btrfs"
     )
 
 
-def _install_limine(ctx: InstallContext, protected: dict) -> None:
+def _write_protected_limine_defaults(ctx: InstallContext, protected: dict) -> None:
+    btrfs_uuid = _blkid_uuid(_btrfs_root_device(protected))
+    cmdline = _build_cmdline(protected, btrfs_uuid)
+
+    default_text = _limine_template(ctx, "default.conf").read_text()
+    default_text = default_text.replace("@@CMDLINE@@", cmdline)
+    default_text = re.sub(r'^ESP_PATH=.*$', f'ESP_PATH="{protected["esp_mount"]}"', default_text, flags=re.MULTILINE)
+    # Free-space installs may share a Windows ESP. Never claim EFI/BOOT as a
+    # fallback loader in that mode; use the explicit NVRAM entry instead.
+    default_text = re.sub(r'^ENABLE_LIMINE_FALLBACK=.*$', 'ENABLE_LIMINE_FALLBACK=no', default_text, flags=re.MULTILINE)
+
+    default_limine = ctx.target / "etc" / "default" / "limine"
+    default_limine.parent.mkdir(parents=True, exist_ok=True)
+    default_limine.write_text(default_text)
+
+    kernel_cmdline = ctx.target / "etc" / "kernel" / "cmdline"
+    kernel_cmdline.parent.mkdir(parents=True, exist_ok=True)
+    kernel_cmdline.write_text(cmdline + "\n")
+
+
+def _install_protected_limine_efi(ctx: InstallContext, protected: dict) -> None:
     src = ctx.target / "usr" / "share" / "limine" / "BOOTX64.EFI"
     if not src.exists():
         raise RuntimeError(
             f"Limine EFI binary not found at {src} — limine package missing in target"
         )
 
-    omarchy_esp = _omarchy_esp_path(ctx, protected)
-    omarchy_esp.mkdir(parents=True, exist_ok=True)
+    limine_dir = _omarchy_esp_path(ctx, protected)
+    limine_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, limine_dir / "limine_x64.efi")
 
-    dst = omarchy_esp / "BOOTX64.EFI"
-    shutil.copy2(src, dst)
-
-    btrfs_uuid = _blkid_uuid(_btrfs_root_device(protected))
-    kernel = protected["kernel"]
-    if protected["esp_mount"] == "/boot":
-        kernel_path = f"boot():/vmlinuz-{kernel}"
-        initrd_path = f"boot():/initramfs-{kernel}.img"
-        initrd_fb_path = f"boot():/initramfs-{kernel}-fallback.img"
-    elif protected["esp_mount"] == "/efi":
-        kernel_path = f"uuid({btrfs_uuid}):/@/boot/vmlinuz-{kernel}"
-        initrd_path = f"uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}.img"
-        initrd_fb_path = f"uuid({btrfs_uuid}):/@/boot/initramfs-{kernel}-fallback.img"
-    else:
-        raise RuntimeError(f"unsupported ESP mountpoint: {protected['esp_mount']}")
-
-    cmdline = _build_cmdline(protected, btrfs_uuid)
-    conf = LIMINE_CONF_TEMPLATE.format(
-        kernel_path=kernel_path,
-        initrd_path=initrd_path,
-        initrd_fb_path=initrd_fb_path,
-        cmdline=cmdline,
+    esp_mount_target = Path(protected["esp_mount"])
+    hook_command = (
+        f"/usr/bin/cp /usr/share/limine/BOOTX64.EFI "
+        f"{esp_mount_target / protected['esp_path'].lstrip('/')}/limine_x64.efi"
     )
-    (omarchy_esp / "limine.conf").write_text(conf)
+    _write_limine_pacman_hook(ctx.target, hook_command)
 
 
 # ── efibootmgr ───────────────────────────────────────────────────────────────
@@ -814,9 +752,9 @@ def _register_efibootmgr_entry(
     esp_dev = _esp_device(ctx, protected)
     disk, part_num = _split_partition_device(esp_dev)
 
-    # Clean up any stale "Omarchy Linux" entries so we don't accumulate dupes
-    # across re-installs.
-    for num in _find_label_entries(pre_state["entries"], "Omarchy Linux"):
+    # Clean up any stale Limine entries pointing at our protected install path
+    # so we don't accumulate dupes across re-installs.
+    for num in _find_label_entries(pre_state["entries"], "Limine"):
         subprocess.run(
             ["efibootmgr", "--bootnum", num, "--delete-bootnum"],
             check=False, capture_output=True,
@@ -828,18 +766,18 @@ def _register_efibootmgr_entry(
             "--create",
             "--disk", disk,
             "--part", str(part_num),
-            "--label", "Omarchy Linux",
-            "--loader", "\\EFI\\Omarchy\\BOOTX64.EFI",
+            "--label", "Limine",
+            "--loader", "\\EFI\\limine\\limine_x64.efi",
             "--unicode",
         ],
         check=True, capture_output=True, text=True,
     )
 
     post = _read_efibootmgr()
-    new_omarchy = _find_label_entries(post["entries"], "Omarchy Linux")
+    new_omarchy = _find_label_entries(post["entries"], "Limine")
     if not new_omarchy:
         raise RuntimeError(
-            "efibootmgr --create reported success but no Omarchy Linux entry found"
+            "efibootmgr --create reported success but no Limine entry found"
         )
     omarchy_num = new_omarchy[0]
 
@@ -1028,25 +966,26 @@ def validate_boot_full(ctx: InstallContext) -> None:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # validate_boot_protected: hard checks for the dualboot/protected path.
-# Mirrors validate_boot_full but checks the Omarchy ESP subdir, fstab/crypttab,
-# kernel/initramfs presence, and efibootmgr entry registration.
+# Mirrors validate_boot_full but checks the protected ESP, fstab/crypttab,
+# final Limine UKI, and efibootmgr entry registration.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validate_boot_protected(ctx: InstallContext) -> None:
     protected = ctx.state["protected"]
     kernel = protected["kernel"]
 
-    omarchy_esp = _omarchy_esp_path(ctx, protected)
+    limine_dir = _omarchy_esp_path(ctx, protected)
+    esp_mount = _protected_esp_mount(ctx, protected)
 
-    bootx64 = omarchy_esp / "BOOTX64.EFI"
+    bootx64 = limine_dir / "limine_x64.efi"
     if not bootx64.exists() or bootx64.stat().st_size == 0:
         raise RuntimeError(f"{bootx64} missing or empty")
 
-    limine_conf = omarchy_esp / "limine.conf"
+    limine_conf = esp_mount / "limine.conf"
     if not limine_conf.exists():
         raise RuntimeError(f"{limine_conf} missing")
-    if "/Omarchy Linux" not in limine_conf.read_text():
-        raise RuntimeError(f"{limine_conf} has no /Omarchy Linux entry")
+    if "Omarchy" not in limine_conf.read_text():
+        raise RuntimeError(f"{limine_conf} has no Omarchy entry")
 
     fstab = ctx.target / "etc" / "fstab"
     if not fstab.exists():
@@ -1066,24 +1005,13 @@ def validate_boot_protected(ctx: InstallContext) -> None:
         if protected["luks_uuid"] not in crypttab.read_text():
             raise RuntimeError(f"{crypttab} missing LUKS UUID {protected['luks_uuid']}")
 
-    if protected["esp_mount"] == "/boot":
-        kernel_dir = ctx.target / protected["esp_mount"].lstrip("/")
-    elif protected["esp_mount"] == "/efi":
-        kernel_dir = ctx.target / "boot"
-    else:
-        raise RuntimeError(f"unsupported ESP mountpoint: {protected['esp_mount']}")
-
-    vmlinuz = kernel_dir / f"vmlinuz-{kernel}"
-    if not vmlinuz.exists():
-        raise RuntimeError(f"{vmlinuz} missing")
-
-    initramfs = kernel_dir / f"initramfs-{kernel}.img"
-    if not initramfs.exists():
-        raise RuntimeError(f"{initramfs} missing")
+    uki = esp_mount / "EFI" / "Linux" / f"omarchy_{kernel}.efi"
+    if not uki.exists() or uki.stat().st_size == 0:
+        raise RuntimeError(f"{uki} missing or empty")
 
     post = _read_efibootmgr()
-    if not _find_label_entries(post["entries"], "Omarchy Linux"):
-        raise RuntimeError("no 'Omarchy Linux' entry registered in efibootmgr")
+    if not _find_label_entries(post["entries"], "Limine"):
+        raise RuntimeError("no 'Limine' entry registered in efibootmgr")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
