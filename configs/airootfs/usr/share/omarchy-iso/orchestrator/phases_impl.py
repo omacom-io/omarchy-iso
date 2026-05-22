@@ -826,6 +826,13 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     )
     sudoers.chmod(0o440)
 
+    # run_logged appends as the install user. Create the target log before
+    # arch-chroot so the first redirection cannot fail on /var/log perms.
+    target_log = ctx.target / "var" / "log" / "omarchy-install.log"
+    target_log.parent.mkdir(parents=True, exist_ok=True)
+    target_log.write_text("=== Omarchy Offline Finalizer Started ===\n")
+    target_log.chmod(0o666)
+
     # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
     # safe here: arch-chroot mounts a fresh tmpfs over the target's /tmp before
     # running commands, so files copied to /mnt/tmp are invisible in the chroot.
@@ -862,6 +869,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
+        "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
         f"USER={ctx.username}",
         f"HOME=/home/{ctx.username}",
     ]
@@ -871,8 +879,7 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         str(ctx.target),
         "env", "--unset=XDG_RUNTIME_DIR",
         *env_extras,
-        "/bin/bash", "-lc",
-        f"bash {tooling_path / 'finalize.sh'}",
+        "/bin/bash", str(tooling_path / "finalize.sh"),
     ]
     subprocess.run(cmd, check=True)
 
