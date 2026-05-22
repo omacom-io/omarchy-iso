@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build omarchy + omarchy-settings + omarchy-installer + omarchy-limine from
-# mounted source (/omarchy-installer + /omarchy-pkgs) and drop the .pkg.tar.zst
+# Build omarchy + companion omarchy packages from mounted source
+# (/omarchy-installer + /omarchy-pkgs) and drop the .pkg.tar.zst
 # files into the offline-mirror directory passed as $1.
 #
 # Run inside the ISO build container (build-iso.sh sources this).
@@ -48,6 +48,7 @@ packages=(
   omarchy-settings
   omarchy
   omarchy-installer
+  omarchy-nvim
 )
 
 for pkg in "${packages[@]}"; do
