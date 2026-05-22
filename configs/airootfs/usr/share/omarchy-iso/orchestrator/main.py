@@ -72,11 +72,13 @@ def main() -> int:
 
     info(f"Installing Omarchy for {ctx.username} → {ctx.target}")
 
-    from .phases_impl import cleanup_bind_mounts
+    from .phases_impl import cleanup_bind_mounts, cleanup_protected_state
 
+    success = False
     try:
         try:
             run(ctx, build_phases(ctx))
+            success = True
         except PhaseError:
             error("Installation halted.")
             return 1
@@ -88,6 +90,8 @@ def main() -> int:
         return 0
     finally:
         cleanup_bind_mounts(ctx)
+        if not success:
+            cleanup_protected_state(ctx)
 
 
 if __name__ == "__main__":

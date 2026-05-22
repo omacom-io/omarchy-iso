@@ -862,6 +862,24 @@ def cleanup_bind_mounts(ctx: InstallContext) -> None:
     ctx.state["bind_mounts"] = []
 
 
+def cleanup_protected_state(ctx: InstallContext) -> None:
+    """Tear down protected-mode mounts and LUKS mapper after a failed install.
+
+    Idempotent and safe to call multiple times. Successful protected installs
+    intentionally keep the target mounted until reboot.
+    """
+    if not ctx.is_protected:
+        return
+
+    subprocess.run(["umount", "-R", str(ctx.target)], check=False, capture_output=True)
+    if Path("/dev/mapper/omarchy_root").exists():
+        subprocess.run(
+            ["cryptsetup", "close", "omarchy_root"],
+            check=False,
+            capture_output=True,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # finish: prompt for reboot. Bind mounts are unwound in main()'s finally.
 # ─────────────────────────────────────────────────────────────────────────────
