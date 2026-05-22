@@ -135,13 +135,13 @@ def arch_install_full(ctx: InstallContext) -> None:
         if config.mirror_config:
             installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
 
-        info("› installing base system")
+        info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
         installer.minimal_installation(
             optional_repositories=(
                 config.mirror_config.optional_repositories
                 if config.mirror_config else []
             ),
-            mkinitcpio=True,
+            mkinitcpio=False,
             hostname=config.hostname,
             locale_config=config.locale_config,
             pacman_config=config.pacman_config,
