@@ -777,7 +777,7 @@ cat <<-_EOF_ >user_configuration.json
     "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
-    "bootloader": "Limine",
+    "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
     "custom_commands": [],
     "disk_config": {
         "btrfs_options": { 
