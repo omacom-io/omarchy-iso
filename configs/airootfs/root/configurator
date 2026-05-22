@@ -336,7 +336,8 @@ run_partition_install() {
 
   if [[ -z "$FREE_SPACE_INFO" ]]; then
     gum style --foreground 1 "No usable free space detected on $disk."
-    gum style "Open the partition tool to create unallocated free space, or choose Full disk install."
+    gum style "Partition install uses unallocated free space, not a pre-created partition."
+    gum style "Open the partition tool, delete/shrink partitions until the target area says Free space, then leave it unallocated."
     gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
     return 1
   fi
@@ -353,7 +354,8 @@ run_partition_install() {
 
   if (( FREE_SIZE_B < MIN_TOTAL_B )); then
     gum style --foreground 1 "Free space ($(to_gb $FREE_SIZE_B)) is below the 32GB minimum for Omarchy."
-    gum style "Open the partition tool to create more unallocated space, or choose a different install mode."
+    gum style "Partition install uses unallocated free space, not a pre-created partition."
+    gum style "Open the partition tool, delete/shrink partitions until the target area says Free space, then leave it unallocated."
     gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
     return 1
   fi
@@ -655,7 +657,8 @@ disk_form
 open_partition_tool() {
   step "Partition tool for $disk"
   gum style "Create unallocated free space for Omarchy, then write changes and quit."
-  gum style --foreground 8 "Tip: partition install needs at least 32GB of unallocated free space."
+  gum style --foreground 8 "Do not create an Omarchy partition here — leave the target area as Free space."
+  gum style --foreground 8 "Tip: free-space install needs at least 32GB unallocated, plus 2GB more if no ESP already exists."
   echo
   gum confirm --affirmative "Open cfdisk" --negative "Back" "Open partition tool for $disk?" || return 0
 
@@ -670,7 +673,7 @@ install_mode_form() {
   step "Installation mode"
   install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" \
     "Full disk install" \
-    "Partition install (alongside existing data)" \
+    "Free space install (alongside existing data)" \
     "Open partition tool") || abort
 }
 
@@ -681,7 +684,7 @@ while true; do
     "Full disk install")
       break
       ;;
-    "Partition install (alongside existing data)")
+    "Free space install (alongside existing data)")
       if run_partition_install "$@"; then
         exit 0
       fi
