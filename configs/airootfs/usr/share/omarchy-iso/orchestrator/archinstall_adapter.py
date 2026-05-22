@@ -99,7 +99,7 @@ def open_installer(
     if not arch_config.disk_config:
         raise RuntimeError("disk_config missing from arch config")
     with Installer(
-        str(mountpoint),
+        mountpoint,
         arch_config.disk_config,
         kernels=arch_config.kernels,
         silent=silent,
