@@ -335,7 +335,10 @@ run_partition_install() {
       }')
 
   if [[ -z "$FREE_SPACE_INFO" ]]; then
-    abort "No usable free space detected on $disk. Shrink an existing partition first."
+    gum style --foreground 1 "No usable free space detected on $disk."
+    gum style "Open the partition tool to create unallocated free space, or choose Full disk install."
+    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
+    return 1
   fi
 
   local FREE_START_B FREE_END_B FREE_SIZE_B
@@ -349,7 +352,10 @@ run_partition_install() {
   local MIN_TOTAL_B=$((32 * gib))    # 32 GiB minimum for the install
 
   if (( FREE_SIZE_B < MIN_TOTAL_B )); then
-    abort "Free space ($(to_gb $FREE_SIZE_B)) is below the 32GB minimum for Omarchy."
+    gum style --foreground 1 "Free space ($(to_gb $FREE_SIZE_B)) is below the 32GB minimum for Omarchy."
+    gum style "Open the partition tool to create more unallocated space, or choose a different install mode."
+    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
+    return 1
   fi
 
   local EFI_START_B=0 EFI_END_B=0 ROOT_START_B ROOT_END_B
@@ -363,7 +369,9 @@ run_partition_install() {
   ROOT_END_B=$((FREE_END_B / ALIGN * ALIGN))
 
   if (( ROOT_END_B <= ROOT_START_B )); then
-    abort "Not enough aligned free space for partitions after alignment."
+    gum style --foreground 1 "Not enough aligned free space for partitions after alignment."
+    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
+    return 1
   fi
 
   step "Proposed layout on $disk"
@@ -377,7 +385,7 @@ run_partition_install() {
   echo
 
   gum confirm --affirmative "Yes, partition" --negative "Cancel" \
-    "Create Omarchy partitions in the free space on $disk?" || abort
+    "Create Omarchy partitions in the free space on $disk?" || return 1
 
   echo
   if gum confirm \
@@ -644,19 +652,45 @@ disk_form
 
 # STEP 4: INSTALL MODE
 
+open_partition_tool() {
+  step "Partition tool for $disk"
+  gum style "Create unallocated free space for Omarchy, then write changes and quit."
+  gum style --foreground 8 "Tip: partition install needs at least 32GB of unallocated free space."
+  echo
+  gum confirm --affirmative "Open cfdisk" --negative "Back" "Open partition tool for $disk?" || return 0
+
+  clear
+  cfdisk "$disk" || true
+  partprobe "$disk" 2>/dev/null || true
+  sync
+  sleep 1
+}
+
 install_mode_form() {
   step "Installation mode"
   install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" \
     "Full disk install" \
-    "Partition install (alongside existing data)") || abort
+    "Partition install (alongside existing data)" \
+    "Open partition tool") || abort
 }
 
-install_mode_form
+while true; do
+  install_mode_form
 
-if [[ "$install_mode" == "Partition install (alongside existing data)" ]]; then
-  run_partition_install "$@"
-  exit 0
-fi
+  case "$install_mode" in
+    "Full disk install")
+      break
+      ;;
+    "Partition install (alongside existing data)")
+      if run_partition_install "$@"; then
+        exit 0
+      fi
+      ;;
+    "Open partition tool")
+      open_partition_tool
+      ;;
+  esac
+done
 
 confirm_disk_overwrite() {
   local mode="encrypted"
