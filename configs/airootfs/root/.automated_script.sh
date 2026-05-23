@@ -47,7 +47,7 @@ cd /root
 # noisy installer stream is captured to the support log.
 dashboard_tty=$(tty)
 export OMARCHY_DASHBOARD_TTY="$dashboard_tty"
-rm -f /run/omarchy-install/dashboard.stop /run/omarchy-install/dashboard.pid
+rm -f /run/omarchy-install/dashboard.stop /run/omarchy-install/dashboard.pid /run/omarchy-install/state.json
 setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json <"$dashboard_tty" >"$dashboard_tty" 2>&1 &
 dashboard_pid=$!
 # setsid may fork/exec differently across environments. The dashboard writes
