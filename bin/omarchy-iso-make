@@ -17,6 +17,10 @@ while [[ $# -gt 0 ]]; do
     NO_BOOT_OFFER=1
     shift
     ;;
+  --debug)
+    OMARCHY_INSTALL_DEBUG=1
+    shift
+    ;;
   --local-source)
     # --local-source <installer-checkout> <pkgs-checkout>
     # Builds omarchy* from the two checkouts and bundles them in the ISO's
@@ -43,7 +47,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--dev|--rc] [--local-source <installer-checkout> <pkgs-checkout>]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--debug] [--dev|--rc] [--local-source <installer-checkout> <pkgs-checkout>]"
     exit 1
     ;;
   esac
@@ -114,6 +118,7 @@ DOCKER_ARGS=(
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
   -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
+  -e "OMARCHY_INSTALL_DEBUG=${OMARCHY_INSTALL_DEBUG:-}"
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"

@@ -16,6 +16,9 @@ export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
 export OMARCHY_PATH=/usr/share/omarchy
 export OMARCHY_INSTALL=$OMARCHY_PATH/install
 export OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log
+if [[ -f /usr/share/omarchy-iso/install-debug ]]; then
+  export OMARCHY_INSTALL_DEBUG=1
+fi
 source "$OMARCHY_INSTALL/helpers/all.sh"
 
 # Tokyo Night palette so the live VT matches the installed look.
@@ -39,6 +42,13 @@ export LINES=$(tput lines)
 exec > >(tee >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") 2>/dev/null) 2>/dev/tty
 export CLICOLOR_FORCE=1
 export FORCE_COLOR=1
+
+if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
+  echo "=== Omarchy ISO debug build ==="
+  [[ -f /usr/share/omarchy-iso/build-info ]] && cat /usr/share/omarchy-iso/build-info
+  pacman -Q omarchy-installer omarchy-settings omarchy-keyring 2>/dev/null || true
+  echo "================================"
+fi
 
 cd /root
 ./configurator

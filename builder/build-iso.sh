@@ -41,6 +41,26 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 cp -r /configs/* "$build_cache_dir/"
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
+if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
+  mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
+  touch "$build_cache_dir/airootfs/usr/share/omarchy-iso/install-debug"
+  {
+    echo "debug=1"
+    echo "built_at=$(date -Is)"
+    echo "mirror=$OMARCHY_MIRROR"
+    if [[ -d /omarchy-installer ]]; then
+      echo "omarchy_installer_source=/omarchy-installer"
+      git -c safe.directory=/omarchy-installer -C /omarchy-installer rev-parse HEAD 2>/dev/null | sed 's/^/omarchy_installer_commit=/' || true
+      git -c safe.directory=/omarchy-installer -C /omarchy-installer status --short 2>/dev/null | sed 's/^/omarchy_installer_status=/' || true
+    fi
+    if [[ -d /omarchy-pkgs ]]; then
+      echo "omarchy_pkgs_source=/omarchy-pkgs"
+      git -c safe.directory=/omarchy-pkgs -C /omarchy-pkgs rev-parse HEAD 2>/dev/null | sed 's/^/omarchy_pkgs_commit=/' || true
+      git -c safe.directory=/omarchy-pkgs -C /omarchy-pkgs status --short 2>/dev/null | sed 's/^/omarchy_pkgs_status=/' || true
+    fi
+  } > "$build_cache_dir/airootfs/usr/share/omarchy-iso/build-info"
+fi
+
 # When --local-source is in effect, build omarchy* from the mounted source
 # trees and drop them in the offline mirror. Otherwise pacman -Syw below
 # downloads the published versions from the omarchy network mirror.

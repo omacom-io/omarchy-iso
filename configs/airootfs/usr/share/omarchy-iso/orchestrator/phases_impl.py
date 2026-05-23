@@ -29,7 +29,9 @@ Phase ordering (protected / pre-mounted):
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -787,6 +789,50 @@ def _register_efibootmgr_entry(
     )
 
 
+def _install_debug_enabled() -> bool:
+    return os.environ.get("OMARCHY_INSTALL_DEBUG") == "1" or Path("/usr/share/omarchy-iso/install-debug").exists()
+
+
+def _debug_log(ctx: InstallContext, message: str) -> None:
+    if not _install_debug_enabled():
+        return
+    ctx.log_path.parent.mkdir(parents=True, exist_ok=True)
+    with ctx.log_path.open("a", encoding="utf-8") as log:
+        log.write(f"[install-debug] {message}\n")
+
+
+def _debug_dump_file(ctx: InstallContext, path: Path, max_lines: int = 120) -> None:
+    if not _install_debug_enabled():
+        return
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        _debug_log(ctx, f"dumping {path} sha256={digest}")
+        with ctx.log_path.open("a", encoding="utf-8") as log:
+            for line_no, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
+                if line_no > max_lines:
+                    log.write(f"[install-debug] ... truncated after {max_lines} lines ...\n")
+                    break
+                log.write(f"[install-debug] {path}:{line_no}: {line}\n")
+    except OSError as exc:
+        _debug_log(ctx, f"unable to dump {path}: {exc}")
+
+
+def _debug_run(ctx: InstallContext, cmd: list[str]) -> None:
+    if not _install_debug_enabled():
+        return
+    _debug_log(ctx, "+ " + " ".join(cmd))
+    proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
+    if proc.stdout:
+        with ctx.log_path.open("a", encoding="utf-8") as log:
+            for line in proc.stdout.splitlines():
+                log.write(f"[install-debug] stdout: {line}\n")
+    if proc.stderr:
+        with ctx.log_path.open("a", encoding="utf-8") as log:
+            for line in proc.stderr.splitlines():
+                log.write(f"[install-debug] stderr: {line}\n")
+    _debug_log(ctx, f"exit {proc.returncode}: " + " ".join(cmd))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # run_chroot_finalizer:
 #  1. point the target at the offline pacman.conf so chroot pacman uses the
@@ -802,6 +848,8 @@ def _register_efibootmgr_entry(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_chroot_finalizer(ctx: InstallContext) -> None:
+    debug_enabled = _install_debug_enabled()
+
     # 1: offline pacman.conf
     shutil.copy("/etc/pacman.conf", str(ctx.target / "etc" / "pacman.conf"))
 
@@ -895,6 +943,30 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
             f"USER={ctx.username}",
             f"HOME=/home/{ctx.username}",
         ]
+        if debug_enabled:
+            env_extras.append("OMARCHY_INSTALL_DEBUG=1")
+            _debug_log(ctx, "finalizer debug enabled")
+            _debug_log(ctx, f"copied installer tooling from {ctx.omarchy_path} to {target_tooling}")
+            _debug_dump_file(ctx, target_tooling / "finalize.sh")
+            _debug_run(ctx, [
+                "arch-chroot", "-u", ctx.username, str(ctx.target),
+                "env", "--unset=XDG_RUNTIME_DIR", *env_extras,
+                "/bin/bash", "-n", str(tooling_path / "finalize.sh"),
+            ])
+            _debug_run(ctx, [
+                "arch-chroot", "-u", ctx.username, str(ctx.target),
+                "env", "--unset=XDG_RUNTIME_DIR", *env_extras,
+                "/bin/bash", "-lc",
+                "set -o pipefail; "
+                "echo debug-user=$(id); "
+                "echo debug-pwd=$(pwd); "
+                "echo debug-home=$HOME; "
+                "echo debug-omarchy-install=$OMARCHY_INSTALL; "
+                "echo debug-omarchy-path=$OMARCHY_PATH; "
+                "ls -ld /opt/omarchy-install /opt/omarchy-install/install /opt/omarchy-install/install/helpers /usr/share/omarchy /usr/share/omarchy/migrations /home/$USER /home/$USER/.local 2>&1 || true; "
+                "grep -nE '^[[:space:]]*(source|\\.)[[:space:]].*helpers/all[.]sh' /opt/omarchy-install/finalize.sh || true; "
+                "bash --version | head -1",
+            ])
         cmd = [
             "arch-chroot",
             "-u", ctx.username,
@@ -903,7 +975,12 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
             *env_extras,
             "/bin/bash", str(tooling_path / "finalize.sh"),
         ]
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            if debug_enabled:
+                _debug_log(ctx, f"finalizer command exited with status {exc.returncode}")
+            raise
     finally:
         sudoers.unlink(missing_ok=True)
         if log_bind_mounted:
