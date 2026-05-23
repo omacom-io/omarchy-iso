@@ -850,59 +850,59 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         with ctx.log_path.open("a", encoding="utf-8") as log:
             log.write(f"[orchestrator] WARNING: failed to bind unified finalizer log: {exc}\n")
 
-    # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
-    # safe here: arch-chroot mounts a fresh tmpfs over the target's /tmp before
-    # running commands, so files copied to /mnt/tmp are invisible in the chroot.
-    tooling_path = Path("/opt/omarchy-install")
-    target_tooling = ctx.target / tooling_path.relative_to("/")
-    target_tooling.parent.mkdir(parents=True, exist_ok=True)
-    if target_tooling.exists():
-        shutil.rmtree(target_tooling)
-    subprocess.run(
-        ["cp", "-a", f"{ctx.omarchy_path}/.", str(target_tooling)],
-        check=True,
-    )
-    if not (target_tooling / "finalize.sh").exists():
-        raise RuntimeError(
-            f"Copied installer tooling but {target_tooling / 'finalize.sh'} is missing"
+    try:
+        # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
+        # safe here: arch-chroot mounts a fresh tmpfs over the target's /tmp before
+        # running commands, so files copied to /mnt/tmp are invisible in the chroot.
+        tooling_path = Path("/opt/omarchy-install")
+        target_tooling = ctx.target / tooling_path.relative_to("/")
+        target_tooling.parent.mkdir(parents=True, exist_ok=True)
+        if target_tooling.exists():
+            shutil.rmtree(target_tooling)
+        subprocess.run(
+            ["cp", "-a", f"{ctx.omarchy_path}/.", str(target_tooling)],
+            check=True,
+        )
+        if not (target_tooling / "finalize.sh").exists():
+            raise RuntimeError(
+                f"Copied installer tooling but {target_tooling / 'finalize.sh'} is missing"
+            )
+
+        # Keep the payload root-owned. It only needs to be traversable/readable by
+        # the install user; sudoers below handles privileged work inside scripts.
+        subprocess.run(["chmod", "-R", "a+rX", str(target_tooling)], check=True)
+        subprocess.run(
+            [
+                "arch-chroot", "-u", ctx.username, str(ctx.target),
+                "test", "-r", str(tooling_path / "finalize.sh"),
+            ],
+            check=True,
         )
 
-    # Keep the payload root-owned. It only needs to be traversable/readable by
-    # the install user; sudoers below handles privileged work inside scripts.
-    subprocess.run(["chmod", "-R", "a+rX", str(target_tooling)], check=True)
-    subprocess.run(
-        [
-            "arch-chroot", "-u", ctx.username, str(ctx.target),
-            "test", "-r", str(tooling_path / "finalize.sh"),
-        ],
-        check=True,
-    )
-
-    # 5: arch-chroot -u $user → finalize.sh
-    mirror_channel = _read_omarchy_mirror()
-    env_extras = [
-        "OMARCHY_INSTALL_MODE=offline",
-        "OMARCHY_CHROOT_FINALIZER=1",
-        "OMARCHY_PATH=/usr/share/omarchy",
-        f"OMARCHY_INSTALL={tooling_path / 'install'}",
-        f"OMARCHY_START_TIME={omarchy_start_time}",
-        f"OMARCHY_START_EPOCH={omarchy_start_epoch}",
-        f"OMARCHY_USER_NAME={ctx.full_name}",
-        f"OMARCHY_USER_EMAIL={ctx.email}",
-        f"OMARCHY_MIRROR={mirror_channel}",
-        "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
-        f"USER={ctx.username}",
-        f"HOME=/home/{ctx.username}",
-    ]
-    cmd = [
-        "arch-chroot",
-        "-u", ctx.username,
-        str(ctx.target),
-        "env", "--unset=XDG_RUNTIME_DIR",
-        *env_extras,
-        "/bin/bash", str(tooling_path / "finalize.sh"),
-    ]
-    try:
+        # 5: arch-chroot -u $user → finalize.sh
+        mirror_channel = _read_omarchy_mirror()
+        env_extras = [
+            "OMARCHY_INSTALL_MODE=offline",
+            "OMARCHY_CHROOT_FINALIZER=1",
+            "OMARCHY_PATH=/usr/share/omarchy",
+            f"OMARCHY_INSTALL={tooling_path / 'install'}",
+            f"OMARCHY_START_TIME={omarchy_start_time}",
+            f"OMARCHY_START_EPOCH={omarchy_start_epoch}",
+            f"OMARCHY_USER_NAME={ctx.full_name}",
+            f"OMARCHY_USER_EMAIL={ctx.email}",
+            f"OMARCHY_MIRROR={mirror_channel}",
+            "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
+            f"USER={ctx.username}",
+            f"HOME=/home/{ctx.username}",
+        ]
+        cmd = [
+            "arch-chroot",
+            "-u", ctx.username,
+            str(ctx.target),
+            "env", "--unset=XDG_RUNTIME_DIR",
+            *env_extras,
+            "/bin/bash", str(tooling_path / "finalize.sh"),
+        ]
         subprocess.run(cmd, check=True)
     finally:
         sudoers.unlink(missing_ok=True)
