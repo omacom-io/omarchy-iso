@@ -49,14 +49,33 @@ from .ui import info
 # is INTENTIONALLY absent — it's live-ISO-only install tooling, never installed
 # on the target. finalize.sh + install/ scripts get copied to /opt in
 # run_chroot_finalizer.
-EARLY_PACKAGES = [
+EARLY_BOOTSTRAP_PACKAGES = [
     "base-devel",
     "git",
     "limine",
     "efibootmgr",
     "omarchy-keyring",
     "omarchy-settings",
+]
+
+# Install LuaRocks before omarchy-nvim pulls in lua51-lpeg. Arch's lua-luarocks
+# post_install script tries to rebuild manifests for existing rocks trees before
+# the unversioned luarocks-admin command exists if both arrive in the wrong
+# transaction order. Splitting this transaction avoids the harmless but noisy
+# "luarocks-admin: command not found" line during ISO installs.
+EARLY_LUAROCKS_PACKAGES = [
+    "lua51",
+    "luarocks",
+]
+
+EARLY_USER_SEED_PACKAGES = [
     "omarchy-nvim",
+]
+
+EARLY_PACKAGES = [
+    *EARLY_BOOTSTRAP_PACKAGES,
+    *EARLY_LUAROCKS_PACKAGES,
+    *EARLY_USER_SEED_PACKAGES,
 ]
 
 
@@ -154,8 +173,7 @@ def arch_install_full(ctx: InstallContext) -> None:
             if config.swap and config.swap.enabled:
                 installer.setup_swap(algo=config.swap.algorithm)
 
-            info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
-            installer.add_additional_packages(EARLY_PACKAGES)
+            _install_early_packages(installer)
 
             if arch.bootloader_enabled(config):
                 if not arch.is_limine(config):
@@ -171,11 +189,11 @@ def arch_install_full(ctx: InstallContext) -> None:
             info("› creating user (with /etc/skel populated)")
             if config.auth_config and config.auth_config.users:
                 installer.create_users(config.auth_config.users)
+
+            info("› installing Omarchy runtime + omarchy-base.packages")
+            installer.add_additional_packages(_runtime_package_list(ctx))
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
-
-        info("› installing Omarchy runtime + omarchy-base.packages")
-        installer.add_additional_packages(_runtime_package_list(ctx))
 
         info("› configuring root Snapper snapshots")
         _configure_snapper_root(ctx)
@@ -402,30 +420,67 @@ def _limine_template(ctx: InstallContext, filename: str) -> Path:
     raise RuntimeError(f"Limine template {filename} not found. Searched:\n  {searched}")
 
 
-def _mask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
-    """Temporarily suppress mkinitcpio pacman hooks between base and runtime.
+DEFERRED_BOOT_HOOKS = (
+    "60-mkinitcpio-remove.hook",
+    "60-limine-mkinitcpio-remove-pre.hook",
+    "80-limine-efi-deploy.hook",
+    "90-limine-mkinitcpio-remove-post.hook",
+    "90-mkinitcpio-install.hook",
+)
 
-    The final Limine UKI build happens after all boot config is known. Pacman
-    would otherwise rebuild initramfs during the base linux transaction and
-    again when early settings/plymouth packages land.
+
+def _install_early_packages(installer) -> None:
+    info(f"› installing early Omarchy packages: {', '.join(EARLY_BOOTSTRAP_PACKAGES)}")
+    installer.add_additional_packages(EARLY_BOOTSTRAP_PACKAGES)
+
+    info(f"› installing LuaRocks prerequisites: {', '.join(EARLY_LUAROCKS_PACKAGES)}")
+    installer.add_additional_packages(EARLY_LUAROCKS_PACKAGES)
+
+    info(f"› installing user seed packages: {', '.join(EARLY_USER_SEED_PACKAGES)}")
+    installer.add_additional_packages(EARLY_USER_SEED_PACKAGES)
+
+
+def _is_devnull_symlink(path: Path) -> bool:
+    try:
+        return path.is_symlink() and path.readlink() == Path("/dev/null")
+    except OSError:
+        return False
+
+
+def _mask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
+    """Temporarily suppress boot-image pacman hooks during pacstrap.
+
+    pacstrap uses the live system's /etc/pacman.conf. pacman.conf(5) notes that
+    HookDir is absolute and the target root is not prepended, so target-side
+    /mnt/etc/pacman.d/hooks masks do not override target /usr/share/libalpm
+    hooks during installation. Mask the live HookDir instead; the target's real
+    hooks still get installed and become active after reboot.
     """
-    hooks_dir = ctx.target / "etc" / "pacman.d" / "hooks"
+    hooks_dir = Path("/etc/pacman.d/hooks")
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("90-mkinitcpio-install.hook", "60-mkinitcpio-remove.hook"):
+    for name in DEFERRED_BOOT_HOOKS:
         path = hooks_dir / name
-        path.unlink(missing_ok=True)
+        backup = hooks_dir / f"{name}.omarchy-backup"
+        if _is_devnull_symlink(path):
+            continue
+        if path.exists() or path.is_symlink():
+            backup.unlink(missing_ok=True)
+            path.rename(backup)
         path.symlink_to("/dev/null")
 
 
 def _unmask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
-    hooks_dir = ctx.target / "etc" / "pacman.d" / "hooks"
-    for name in ("90-mkinitcpio-install.hook", "60-mkinitcpio-remove.hook"):
+    hooks_dir = Path("/etc/pacman.d/hooks")
+    for name in DEFERRED_BOOT_HOOKS:
         path = hooks_dir / name
+        backup = hooks_dir / f"{name}.omarchy-backup"
         try:
-            if path.is_symlink() and path.readlink() == Path("/dev/null"):
+            if _is_devnull_symlink(path):
                 path.unlink()
-        except OSError:
-            pass
+            if backup.exists() or backup.is_symlink():
+                backup.rename(path)
+        except OSError as exc:
+            info(f"warning: failed to restore pacman hook mask for {name}: {exc}")
 
 
 def _runtime_package_list(ctx: InstallContext) -> list[str]:
@@ -538,27 +593,26 @@ def arch_install_base(ctx: InstallContext) -> None:
             if config.swap and config.swap.enabled:
                 installer.setup_swap(algo=config.swap.algorithm)
 
-            info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
-            installer.add_additional_packages(EARLY_PACKAGES)
+            _install_early_packages(installer)
 
             info("› creating user (with /etc/skel populated)")
             if config.auth_config and config.auth_config.users:
                 installer.create_users(config.auth_config.users)
+
+            info("› installing Omarchy runtime + omarchy-base.packages")
+            installer.add_additional_packages(_runtime_package_list(ctx))
+
+            info("› configuring root Snapper snapshots")
+            _configure_snapper_root(ctx)
+
+            # Protected mode owns boot setup separately, so pacstrap limine +
+            # efibootmgr here while the live ISO's offline mirror is still the
+            # active pacman source. Doing it later via arch-chroot would hit
+            # the target's network-mirror pacman.conf and fail offline.
+            info("› installing limine + efibootmgr (protected boot)")
+            installer.add_additional_packages(["limine", "efibootmgr"])
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
-
-        info("› installing Omarchy runtime + omarchy-base.packages")
-        installer.add_additional_packages(_runtime_package_list(ctx))
-
-        info("› configuring root Snapper snapshots")
-        _configure_snapper_root(ctx)
-
-        # Protected mode owns boot setup separately, so pacstrap limine +
-        # efibootmgr here while the live ISO's offline mirror is still the
-        # active pacman source. Doing it later via arch-chroot would hit
-        # the target's network-mirror pacman.conf and fail offline.
-        info("› installing limine + efibootmgr (protected boot)")
-        installer.add_additional_packages(["limine", "efibootmgr"])
 
         if config.timezone:
             installer.set_timezone(config.timezone)
