@@ -43,85 +43,18 @@ export FORCE_COLOR=1
 cd /root
 ./configurator
 
-# Keep the actual install screen calm: the dashboard owns /dev/tty while the
-# noisy installer stream is captured to the support log.
-dashboard_tty=$(tty)
-export OMARCHY_DASHBOARD_TTY="$dashboard_tty"
-rm -f /run/omarchy-install/dashboard.stop /run/omarchy-install/dashboard.pid /run/omarchy-install/state.json
-setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json <"$dashboard_tty" >"$dashboard_tty" 2>&1 &
-dashboard_pid=$!
-# setsid may fork/exec differently across environments. The dashboard writes
-# its own real PID as soon as it starts; prefer that for shutdown.
-for _ in {1..20}; do
-  [[ -s /run/omarchy-install/dashboard.pid ]] && break
-  sleep 0.05
-done
-if [[ -s /run/omarchy-install/dashboard.pid ]]; then
-  dashboard_pid=$(cat /run/omarchy-install/dashboard.pid)
-fi
-export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
-
-stop_install_dashboard() {
-  touch /run/omarchy-install/dashboard.stop 2>/dev/null || true
-  if [[ -s /run/omarchy-install/dashboard.pid ]]; then
-    dashboard_pid=$(cat /run/omarchy-install/dashboard.pid)
-  fi
-  if [[ -n ${dashboard_pid:-} ]]; then
-    if kill -0 "$dashboard_pid" 2>/dev/null; then
-      # The dashboard runs under setsid, so $dashboard_pid is also its process
-      # group. Kill the group first so child sleep/tte processes cannot keep
-      # the dashboard alive over the final/error UI.
-      kill -- -"$dashboard_pid" 2>/dev/null || true
-      kill "$dashboard_pid" 2>/dev/null || true
-      for _ in {1..20}; do
-        kill -0 "$dashboard_pid" 2>/dev/null || break
-        sleep 0.05
-      done
-      if kill -0 "$dashboard_pid" 2>/dev/null; then
-        kill -9 -- -"$dashboard_pid" 2>/dev/null || true
-        kill -9 "$dashboard_pid" 2>/dev/null || true
-      fi
-    fi
-    wait "$dashboard_pid" 2>/dev/null || true
-    unset dashboard_pid
-  fi
-  printf "\033[?25h" >/dev/tty
-}
-dashboard_error_handler() {
-  [[ $ERROR_HANDLING == "true" ]] && return
-  local exit_code=$?
-  stop_install_dashboard
-  catch_errors "$exit_code"
-}
-
-dashboard_exit_handler() {
-  local exit_code=$?
-  stop_install_dashboard
-  if (( exit_code != 0 )) && [[ $ERROR_HANDLING != "true" ]]; then
-    catch_errors "$exit_code"
-  else
-    show_cursor
-  fi
-  exit "$exit_code"
-}
-
-trap dashboard_error_handler ERR
-trap dashboard_exit_handler EXIT
-trap 'stop_install_dashboard; catch_errors 130' INT
-trap 'stop_install_dashboard; catch_errors 143' TERM
-
-# Absolute paths because omarchy-iso-install cd's into /usr/share/omarchy-iso
-# before exec'ing python; relative paths would resolve against the wrong dir.
-set +e
-/usr/local/bin/omarchy-iso-install \
-  --config /root/user_configuration.json \
-  --creds /root/user_credentials.json \
-  --full-name-file /root/user_full_name.txt \
-  --email-file /root/user_email_address.txt \
-  --encrypt-file /root/user_encrypt_installation.txt \
-  > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") 2>&1
-install_status=$?
-set -e
-
-stop_install_dashboard
-exit "$install_status"
+# The foreground dashboard is now the sole visible install UI owner. It starts
+# the actual installer as a non-interactive child, logs child output, waits for
+# completion, then renders the final installed-time/reboot prompt itself.
+export OMARCHY_DASHBOARD_TTY="$(tty)"
+rm -f /run/omarchy-install/state.json
+/usr/local/bin/omarchy-install-dashboard \
+  "$OMARCHY_INSTALL_LOG_FILE" \
+  /run/omarchy-install/state.json \
+  -- \
+  /usr/local/bin/omarchy-iso-install \
+    --config /root/user_configuration.json \
+    --creds /root/user_credentials.json \
+    --full-name-file /root/user_full_name.txt \
+    --email-file /root/user_email_address.txt \
+    --encrypt-file /root/user_encrypt_installation.txt

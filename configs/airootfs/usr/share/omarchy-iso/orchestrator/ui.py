@@ -16,12 +16,6 @@ def style(text: str, *, foreground: str | None = None, padding: str | None = Non
     subprocess.run(cmd, check=False)
 
 
-def confirm(prompt: str, *, default: bool = True) -> bool:
-    cmd = ["gum", "confirm", "--default" if default else "--no-default", prompt]
-    with open("/dev/tty", "rb") as stdin, open("/dev/tty", "wb") as stdout:
-        return subprocess.run(cmd, stdin=stdin, stdout=stdout, stderr=stdout).returncode == 0
-
-
 def info(text: str) -> None:
     style(text, foreground="3", padding="1 0 0 4")
 

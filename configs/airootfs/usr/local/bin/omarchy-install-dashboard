@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
-# Render the live Omarchy install dashboard on tty1 while installer output is
-# captured to logs. This is presentation only: it must never read input or gate
-# install completion.
+# Foreground Omarchy ISO install UI supervisor.
+#
+# This process is the only owner of the visible install UI. It launches the
+# actual installer as a non-interactive child, sends child output to the support
+# log, renders progress while the child runs, then renders the final installed
+# time + reboot prompt itself. There is deliberately no background dashboard.
 set -euo pipefail
 
-LOG_FILE="${1:-/var/log/omarchy-install.log}"
-STATE_FILE="${2:-/run/omarchy-install/state.json}"
-STATE_DIR="$(dirname "$STATE_FILE")"
-STOP_FILE="$STATE_DIR/dashboard.stop"
-PID_FILE="$STATE_DIR/dashboard.pid"
-LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
-TTY_PATH="${OMARCHY_DASHBOARD_TTY:-/dev/tty}"
+usage() {
+  echo "Usage: $0 <log-file> <state-file> -- <installer command...>" >&2
+  exit 2
+}
 
+(( $# >= 4 )) || usage
+LOG_FILE="$1"
+STATE_FILE="$2"
+shift 2
+[[ ${1:-} == "--" ]] || usage
+shift
+(( $# > 0 )) || usage
+INSTALL_CMD=("$@")
+
+TTY_PATH="${OMARCHY_DASHBOARD_TTY:-/dev/tty}"
+LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
 CSI=$'\033['
 RESET="${CSI}0m"
 DIM="${CSI}2m"
@@ -20,10 +31,11 @@ SHOW_CURSOR="${CSI}?25h"
 CLEAR="${CSI}2J${CSI}H"
 CLEAR_LINE="${CSI}2K"
 CLEAR_TO_END="${CSI}J"
-# Use the 16-color ANSI palette configured by .automated_script.sh. The Linux
-# VT does not reliably map 256-color indexes the same way terminal emulators do.
 GREEN="${CSI}32m"
 DARK="${CSI}90m"
+
+child_pid=""
+child_pgid=""
 
 whimsy=(
   "making Linux feel like home"
@@ -46,10 +58,37 @@ whimsy=(
 
 cleanup() {
   printf '%s%s' "$RESET" "$SHOW_CURSOR" >"$TTY_PATH" 2>/dev/null || true
-  rm -f "$PID_FILE" 2>/dev/null || true
 }
+
+stop_child() {
+  [[ -n ${child_pid:-} ]] || return 0
+  if kill -0 "$child_pid" 2>/dev/null; then
+    if [[ -n ${child_pgid:-} ]]; then
+      kill -- -"$child_pgid" 2>/dev/null || true
+    fi
+    kill "$child_pid" 2>/dev/null || true
+    for _ in {1..20}; do
+      kill -0 "$child_pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    if kill -0 "$child_pid" 2>/dev/null; then
+      [[ -n ${child_pgid:-} ]] && kill -9 -- -"$child_pgid" 2>/dev/null || true
+      kill -9 "$child_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$child_pid" 2>/dev/null || true
+}
+
+interrupt() {
+  local code="$1"
+  stop_child
+  cleanup
+  exit "$code"
+}
+
 trap cleanup EXIT
-trap 'cleanup; exit 0' INT TERM
+trap 'interrupt 130' INT
+trap 'interrupt 143' TERM
 
 term_size() { stty size 2>/dev/null <"$TTY_PATH" || printf '24 80\n'; }
 term_cols() { local size; size="$(term_size)"; printf '%s\n' "${size#* }"; }
@@ -150,8 +189,6 @@ phase = state.get('current_phase') or 'Starting installation'
 if state.get('finished_at') or phase == 'Installation complete':
     print(100, end='')
     raise SystemExit
-# Internal weighting only. Keep estimates conservative but close to observed
-# ISO installs so the bar does not sit at 12% then jump to 90%.
 weights = [
     ('Starting installation', 1, 2, 2),
     ('Preparing live environment', 2, 6, 5),
@@ -163,7 +200,6 @@ weights = [
     ('Configuring login', 98, 99, 3),
     ('Validating protected boot setup', 99, 100, 5),
     ('Validating boot setup', 99, 100, 5),
-    ('Finishing', 99, 100, 3),
 ]
 start, end, expected = 1, 99, 90
 for name, s, e, seconds in weights:
@@ -178,22 +214,6 @@ print(min(100, start + active), end='')
 PY
 }
 
-dashboard_should_stop() {
-  [[ -f $STATE_FILE ]] || return 1
-  python - "$STATE_FILE" <<'PY' 2>/dev/null
-import json, sys
-try:
-    state = json.load(open(sys.argv[1]))
-except Exception:
-    raise SystemExit(1)
-phase = state.get('current_phase')
-# The final installed-time/reboot prompt is rendered inside the Finishing
-# phase. Stop before drawing another dashboard frame so the prompt cannot be
-# covered while it waits for input.
-raise SystemExit(0 if state.get('finished_at') or phase in ('Finishing', 'Installation complete') else 1)
-PY
-}
-
 current_whimsy() {
   local frame="$1" pct="$2"
   printf '%s' "${whimsy[$(( (pct / 8 + frame / 8) % ${#whimsy[@]} ))]}"
@@ -204,11 +224,10 @@ render_static() {
   blank_line
 
   if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
-    if timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch 2>/dev/null; then
+    if timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch >"$TTY_PATH" 2>/dev/null; then
       blank_line
       return
     fi
-    # If animation fails or times out, clear any partial frame before fallback.
     printf '%s' "$CLEAR"
     blank_line
   fi
@@ -239,22 +258,92 @@ render_dynamic() {
   printf '%s' "$CLEAR_TO_END"
 }
 
-if [[ ! -e $TTY_PATH ]]; then
-  exit 0
-fi
+install_duration() {
+  local path line duration
+  for path in /mnt/var/log/omarchy-install.log "$LOG_FILE"; do
+    [[ -f $path ]] || continue
+    for prefix in Total Omarchy; do
+      line="$(grep "^$prefix:" "$path" 2>/dev/null | tail -n 1 || true)"
+      [[ -n $line ]] || continue
+      duration="${line#*:}"
+      duration="${duration#${duration%%[![:space:]]*}}"
+      [[ -n $duration ]] && { printf '%s' "$duration"; return; }
+    done
+  done
+}
 
-mkdir -p "$STATE_DIR"
-echo "$$" >"$PID_FILE"
+render_finish() {
+  local duration message cols
+  cols="$(term_cols)"
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH"
+  if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
+    timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch >"$TTY_PATH" 2>/dev/null || true
+  else
+    render_logo >"$TTY_PATH"
+  fi
+  duration="$(install_duration)"
+  message="Finished installing"
+  [[ -n $duration ]] && message="Installed in $duration"
+  {
+    blank_line
+    center "$message" "$cols"
+    blank_line
+  } >"$TTY_PATH"
+}
 
+reboot_prompt() {
+  local prompt_pad
+  prompt_pad=$(( ( $(term_cols) - 18 ) / 2 ))
+  (( prompt_pad < 0 )) && prompt_pad=0
+  gum confirm \
+    --padding "0 0 0 $prompt_pad" \
+    --show-help=false \
+    --default \
+    --affirmative "Reboot Now" \
+    --negative "" \
+    "" <"$TTY_PATH" >"$TTY_PATH" 2>&1
+}
+
+launch_child() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  # Child is non-interactive. All visible UI belongs to this supervisor.
+  setsid "${INSTALL_CMD[@]}" </dev/null > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$LOG_FILE") 2>&1 &
+  child_pid=$!
+  child_pgid=$child_pid
+}
+
+[[ -e $TTY_PATH ]] || exit 2
 printf '%s' "$HIDE_CURSOR" >"$TTY_PATH"
 render_static >"$TTY_PATH"
+launch_child
+
 frame=0
-while true; do
-  [[ -e $STOP_FILE ]] && break
-  dashboard_should_stop && break
+while jobs -pr | grep -qx "$child_pid"; do
   render_dynamic "$frame" >"$TTY_PATH"
-  [[ -e $STOP_FILE ]] && break
-  dashboard_should_stop && break
   frame=$((frame + 1))
   sleep 0.5
 done
+
+set +e
+wait "$child_pid"
+status=$?
+set -e
+child_pid=""
+child_pgid=""
+
+if (( status != 0 )); then
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH"
+  exit "$status"
+fi
+
+render_finish
+if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
+  exit 0
+fi
+
+if reboot_prompt; then
+  printf '%s' "$CLEAR" >"$TTY_PATH"
+  reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+fi
+
+exit 0

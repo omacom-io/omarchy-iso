@@ -38,7 +38,6 @@ def build_phases(ctx: InstallContext):
         configure_login,
         validate_boot_full,
         validate_boot_protected,
-        finish,
     )
 
     if ctx.is_protected:
@@ -50,7 +49,6 @@ def build_phases(ctx: InstallContext):
             ("Finalizing in chroot",            run_chroot_finalizer),
             ("Configuring login",               configure_login),
             ("Validating protected boot setup", validate_boot_protected),
-            ("Finishing",                       finish),
         ]
 
     return [
@@ -59,7 +57,6 @@ def build_phases(ctx: InstallContext):
         ("Finalizing in chroot",       run_chroot_finalizer),
         ("Configuring login",          configure_login),
         ("Validating boot setup",      validate_boot_full),
-        ("Finishing",                  finish),
     ]
 
 

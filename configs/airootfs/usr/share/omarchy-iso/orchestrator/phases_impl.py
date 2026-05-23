@@ -11,7 +11,6 @@ Phase ordering (full-disk):
     run_chroot_finalizer   → bind mounts + sudoers shim + arch-chroot finalize.sh
     configure_login        → sddm autologin for unencrypted installs
     validate_boot_full     → assert UKI / limine.conf / kernel cmdline are sane
-    finish                 → reboot prompt
 
 Phase ordering (protected / pre-mounted):
 
@@ -26,13 +25,11 @@ Phase ordering (protected / pre-mounted):
     run_chroot_finalizer      → same
     configure_login           → same
     validate_boot_protected   → implemented in Step 8
-    finish                    → same
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -42,7 +39,7 @@ from pathlib import Path
 
 from . import archinstall_adapter as arch
 from .context import InstallContext
-from .ui import confirm, info
+from .ui import info
 
 
 # Packages installed BEFORE useradd. omarchy-settings and omarchy-nvim
@@ -1045,215 +1042,3 @@ def cleanup_protected_state(ctx: InstallContext) -> None:
             check=False,
             capture_output=True,
         )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# finish: prompt for reboot. Bind mounts are unwound in main()'s finally.
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _dashboard_stopped(pid: int) -> bool:
-    stat = Path(f"/proc/{pid}/stat")
-    if not stat.exists():
-        return True
-    try:
-        # /proc/<pid>/stat field 3 is process state. A zombie cannot write to
-        # the tty anymore; the shell parent will reap it when control returns.
-        return stat.read_text().split()[2] == "Z"
-    except OSError:
-        return True
-
-
-def _pid_is_dashboard(pid: int) -> bool:
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
-    except OSError:
-        return False
-    return b"omarchy-install-dashboard" in cmdline
-
-
-def _add_dashboard_pid(pids: list[int], pid_text: str | None) -> None:
-    if not pid_text:
-        return
-    try:
-        pid = int(pid_text.strip())
-    except ValueError:
-        return
-    if pid not in pids and _pid_is_dashboard(pid):
-        pids.append(pid)
-
-
-def _dashboard_pids() -> list[int]:
-    pids: list[int] = []
-
-    _add_dashboard_pid(pids, os.environ.get("OMARCHY_INSTALL_DASHBOARD_PID"))
-
-    pid_file = Path("/run/omarchy-install/dashboard.pid")
-    try:
-        _add_dashboard_pid(pids, pid_file.read_text())
-    except OSError:
-        pass
-
-    # Last-resort /proc scan. Do not rely on pgrep being present in the ISO.
-    for proc_dir in Path("/proc").iterdir():
-        if not proc_dir.name.isdigit():
-            continue
-        _add_dashboard_pid(pids, proc_dir.name)
-
-    return pids
-
-
-def _signal_dashboard(pid: int, signal_number: int) -> None:
-    # Dashboard is launched with setsid, making its PID the process group ID.
-    # Signal the group first so child sleep/tte processes cannot keep drawing.
-    try:
-        os.killpg(pid, signal_number)
-    except OSError:
-        pass
-    try:
-        os.kill(pid, signal_number)
-    except OSError:
-        pass
-
-
-def _stop_install_dashboard() -> None:
-    stop_file = Path("/run/omarchy-install/dashboard.stop")
-    try:
-        stop_file.parent.mkdir(parents=True, exist_ok=True)
-        stop_file.touch()
-    except OSError:
-        pass
-
-    pids = _dashboard_pids()
-    for signal_number in (15, 9):
-        for pid in pids:
-            if _dashboard_stopped(pid):
-                continue
-            if not _pid_is_dashboard(pid):
-                continue
-            _signal_dashboard(pid, signal_number)
-        deadline = time.time() + (1.0 if signal_number == 15 else 0.5)
-        while time.time() < deadline:
-            if all(_dashboard_stopped(pid) for pid in pids):
-                break
-            time.sleep(0.05)
-        if all(_dashboard_stopped(pid) for pid in pids):
-            break
-
-    try:
-        with open("/dev/tty", "w", encoding="utf-8") as tty:
-            tty.write("\033[?25h\033[H\033[2J")
-            tty.flush()
-    except OSError:
-        pass
-
-
-def _tty_size() -> tuple[int, int]:
-    try:
-        with open("/dev/tty", "rb") as tty:
-            res = subprocess.run(
-                ["stty", "size"],
-                stdin=tty,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        rows, cols = res.stdout.strip().split()
-        return int(rows), int(cols)
-    except Exception:  # noqa: BLE001
-        return 24, 80
-
-
-def _center_text(text: str, width: int) -> str:
-    pad = max((width - len(text)) // 2, 0)
-    return " " * pad + text
-
-
-def _install_duration(ctx: InstallContext) -> str | None:
-    candidates = [
-        ctx.target / "var" / "log" / "omarchy-install.log",
-        Path("/var/log/omarchy-install.log"),
-    ]
-    patterns = ("Total:", "Omarchy:")
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            lines = path.read_text(errors="ignore").splitlines()
-        except OSError:
-            continue
-        for prefix in patterns:
-            for line in reversed(lines[-80:]):
-                if line.startswith(prefix):
-                    duration = line.split(":", 1)[1].strip()
-                    if duration:
-                        return duration
-    return None
-
-
-def _render_tte_logo(logo_path: Path) -> bool:
-    if not logo_path.exists() or not shutil.which("tte"):
-        return False
-    try:
-        with open("/dev/tty", "rb", buffering=0) as stdin, open("/dev/tty", "wb", buffering=0) as stdout:
-            subprocess.run(
-                [
-                    "tte",
-                    "-i", str(logo_path),
-                    "--canvas-width", "0",
-                    "--anchor-text", "c",
-                    "--frame-rate", "920",
-                    "laseretch",
-                ],
-                stdin=stdin,
-                stdout=stdout,
-                stderr=subprocess.DEVNULL,
-                timeout=8,
-                check=True,
-            )
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def _render_static_finish_logo(tty, logo_path: Path, cols: int) -> None:
-    green = "\033[32m"
-    reset = "\033[0m"
-    if logo_path.exists():
-        logo_lines = logo_path.read_text(errors="ignore").splitlines()
-        logo_width = max((len(line) for line in logo_lines), default=0)
-        left = max((cols - logo_width) // 2, 0)
-        for line in logo_lines:
-            tty.write(" " * left + green + line + reset + "\n")
-    else:
-        tty.write(_center_text("Omarchy", cols) + "\n")
-
-
-def _render_finish_screen(ctx: InstallContext) -> None:
-    _, cols = _tty_size()
-    logo_path = Path("/usr/share/omarchy/logo.txt")
-    try:
-        with open("/dev/tty", "w", encoding="utf-8") as tty:
-            tty.write("\033[?25h\033[H\033[2J\n")
-            tty.flush()
-
-        if not _render_tte_logo(logo_path):
-            with open("/dev/tty", "w", encoding="utf-8") as tty:
-                tty.write("\033[?25h\033[H\033[2J\n")
-                _render_static_finish_logo(tty, logo_path, cols)
-                tty.flush()
-
-        with open("/dev/tty", "w", encoding="utf-8") as tty:
-            tty.write("\n")
-            duration = _install_duration(ctx)
-            message = f"Installed in {duration}" if duration else "Finished installing"
-            tty.write(_center_text(message, cols) + "\n\n")
-            tty.flush()
-    except OSError:
-        pass
-
-
-def finish(ctx: InstallContext) -> None:
-    _stop_install_dashboard()
-    _render_finish_screen(ctx)
-    if confirm("Reboot now?", default=True):
-        os.system("reboot")
