@@ -1102,7 +1102,27 @@ def _dashboard_pids() -> list[int]:
     return pids
 
 
+def _signal_dashboard(pid: int, signal_number: int) -> None:
+    # Dashboard is launched with setsid, making its PID the process group ID.
+    # Signal the group first so child sleep/tte processes cannot keep drawing.
+    try:
+        os.killpg(pid, signal_number)
+    except OSError:
+        pass
+    try:
+        os.kill(pid, signal_number)
+    except OSError:
+        pass
+
+
 def _stop_install_dashboard() -> None:
+    stop_file = Path("/run/omarchy-install/dashboard.stop")
+    try:
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        stop_file.touch()
+    except OSError:
+        pass
+
     pids = _dashboard_pids()
     for signal_number in (15, 9):
         for pid in pids:
@@ -1110,10 +1130,7 @@ def _stop_install_dashboard() -> None:
                 continue
             if not _pid_is_dashboard(pid):
                 continue
-            try:
-                os.kill(pid, signal_number)
-            except OSError:
-                pass
+            _signal_dashboard(pid, signal_number)
         deadline = time.time() + (1.0 if signal_number == 15 else 0.5)
         while time.time() < deadline:
             if all(_dashboard_stopped(pid) for pid in pids):

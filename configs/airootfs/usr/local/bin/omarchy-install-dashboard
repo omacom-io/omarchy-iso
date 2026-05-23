@@ -6,6 +6,8 @@ set -euo pipefail
 
 LOG_FILE="${1:-/var/log/omarchy-install.log}"
 STATE_FILE="${2:-/run/omarchy-install/state.json}"
+STATE_DIR="$(dirname "$STATE_FILE")"
+STOP_FILE="$STATE_DIR/dashboard.stop"
 LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
 
 CSI=$'\033['
@@ -151,13 +153,13 @@ weights = [
     ('Starting installation', 1, 2, 2),
     ('Preparing live environment', 2, 6, 5),
     ('Verifying protected mounts', 6, 8, 3),
-    ('Installing Arch + Omarchy', 8, 86, 80),
-    ('Installing base system', 8, 86, 80),
-    ('Configuring protected boot', 86, 90, 8),
-    ('Finalizing in chroot', 90, 96, 25),
-    ('Configuring login', 96, 97, 3),
-    ('Validating protected boot setup', 97, 99, 5),
-    ('Validating boot setup', 97, 99, 5),
+    ('Installing Arch + Omarchy', 8, 82, 60),
+    ('Installing base system', 8, 82, 60),
+    ('Configuring protected boot', 82, 86, 8),
+    ('Finalizing in chroot', 86, 98, 90),
+    ('Configuring login', 98, 99, 3),
+    ('Validating protected boot setup', 99, 100, 5),
+    ('Validating boot setup', 99, 100, 5),
     ('Finishing', 99, 100, 3),
 ]
 start, end, expected = 1, 99, 90
@@ -234,8 +236,9 @@ printf '%s' "$HIDE_CURSOR" >/dev/tty
 render_static >/dev/tty
 frame=0
 while true; do
+  [[ -e $STOP_FILE ]] && break
   render_dynamic "$frame" >/dev/tty
-  if install_finished; then
+  if install_finished || [[ -e $STOP_FILE ]]; then
     sleep 1
     break
   fi

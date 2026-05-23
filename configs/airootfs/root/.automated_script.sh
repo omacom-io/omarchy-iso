@@ -45,19 +45,26 @@ cd /root
 
 # Keep the actual install screen calm: the dashboard owns /dev/tty while the
 # noisy installer stream is captured to the support log.
-/usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json >/dev/tty 2>&1 &
+rm -f /run/omarchy-install/dashboard.stop
+setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json >/dev/tty 2>&1 &
 dashboard_pid=$!
 export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
 
 stop_install_dashboard() {
+  touch /run/omarchy-install/dashboard.stop 2>/dev/null || true
   if [[ -n ${dashboard_pid:-} ]]; then
     if kill -0 "$dashboard_pid" 2>/dev/null; then
+      # The dashboard runs under setsid, so $dashboard_pid is also its process
+      # group. Kill the group first so child sleep/tte processes cannot keep
+      # the dashboard alive over the final/error UI.
+      kill -- -"$dashboard_pid" 2>/dev/null || true
       kill "$dashboard_pid" 2>/dev/null || true
       for _ in {1..20}; do
         kill -0 "$dashboard_pid" 2>/dev/null || break
         sleep 0.05
       done
       if kill -0 "$dashboard_pid" 2>/dev/null; then
+        kill -9 -- -"$dashboard_pid" 2>/dev/null || true
         kill -9 "$dashboard_pid" 2>/dev/null || true
       fi
     fi
