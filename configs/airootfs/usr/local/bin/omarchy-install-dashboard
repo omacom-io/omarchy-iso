@@ -267,9 +267,10 @@ install_duration() {
       [[ -n $line ]] || continue
       duration="${line#*:}"
       duration="${duration#${duration%%[![:space:]]*}}"
-      [[ -n $duration ]] && { printf '%s' "$duration"; return; }
+      [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
     done
   done
+  return 0
 }
 
 render_finish() {
@@ -281,7 +282,7 @@ render_finish() {
   else
     render_logo >"$TTY_PATH"
   fi
-  duration="$(install_duration)"
+  duration="$(install_duration || true)"
   message="Finished installing"
   [[ -n $duration ]] && message="Installed in $duration"
   {

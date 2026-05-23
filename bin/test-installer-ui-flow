@@ -75,6 +75,19 @@ LOG
 EOF
 chmod +x "$success_worker"
 
+no_duration_worker="$tmp/no-duration-worker"
+cat >"$no_duration_worker" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+state="\$1"
+mkdir -p "\$(dirname "\$state")"
+python - "\$state" "Validating boot setup" <<'PY'
+$write_state_py
+PY
+sleep 0.2
+EOF
+chmod +x "$no_duration_worker"
+
 fail_worker="$tmp/fail-worker"
 cat >"$fail_worker" <<EOF
 #!/usr/bin/env bash
@@ -97,6 +110,14 @@ OMARCHY_UI_AUTO_REBOOT=no OMARCHY_PATH="$OMARCHY_PATH_FOR_TEST" script -qfec \
   "$success_capture" >/dev/null
 assert_contains "$success_capture" "Installing Omarchy"
 assert_contains "$success_capture" "Installed in 1m 40s"
+
+no_duration_state="$tmp/no-duration-state.json"
+no_duration_log="$tmp/no-duration.log"
+no_duration_capture="$tmp/no-duration.capture"
+OMARCHY_UI_AUTO_REBOOT=no OMARCHY_PATH="$OMARCHY_PATH_FOR_TEST" script -qfec \
+  "$DASHBOARD '$no_duration_log' '$no_duration_state' -- '$no_duration_worker' '$no_duration_state'" \
+  "$no_duration_capture" >/dev/null
+assert_contains "$no_duration_capture" "Finished installing"
 
 fail_state="$tmp/fail-state.json"
 fail_log="$tmp/fail.log"
