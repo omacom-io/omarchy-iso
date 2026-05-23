@@ -130,10 +130,48 @@ mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw \
   "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
 
+prune_stale_package_versions() {
+  local dir="$1"
+  local pkgfile name version cmp
+  local -a stale=()
+  declare -A newest_file=()
+  declare -A newest_version=()
+
+  while IFS= read -r pkgfile; do
+    read -r name version < <(pacman -Qp "$pkgfile" 2>/dev/null) || continue
+    [[ -n $name && -n $version ]] || continue
+
+    if [[ -z ${newest_version[$name]+x} ]]; then
+      newest_version[$name]="$version"
+      newest_file[$name]="$pkgfile"
+      continue
+    fi
+
+    cmp=$(vercmp "$version" "${newest_version[$name]}")
+    if (( cmp > 0 )); then
+      stale+=("${newest_file[$name]}")
+      newest_version[$name]="$version"
+      newest_file[$name]="$pkgfile"
+    else
+      stale+=("$pkgfile")
+    fi
+  done < <(find "$dir" -maxdepth 1 -type f -name '*.pkg.tar.*' ! -name '*.sig' -print | sort)
+
+  if (( ${#stale[@]} > 0 )); then
+    echo "Pruning stale package versions from offline mirror:"
+    for pkgfile in "${stale[@]}"; do
+      echo "  $(basename "$pkgfile")"
+      rm -f "$pkgfile" "$pkgfile.sig"
+    done
+  fi
+}
+
 # Rebuild the offline repo db from scratch so size/checksum/depends entries
-# always reflect the current .pkg.tar.zst on disk. With the persistent cache,
-# 'repo-add --new' skipped updates for already-known package names, leaving
-# stale entries when we rebuild omarchy-* in place (new content, same filename).
+# always reflect the current package files. The persistent cache can contain
+# multiple versions of the same package; repo-add keeps the last one it sees,
+# which is lexical glob order, not version order (e.g. pkgrel -9 can override
+# -15). Prune to one newest version per package before indexing.
+prune_stale_package_versions "$offline_mirror_dir"
 rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
 repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
