@@ -178,7 +178,7 @@ print(min(100, start + active), end='')
 PY
 }
 
-install_finished() {
+dashboard_should_stop() {
   [[ -f $STATE_FILE ]] || return 1
   python - "$STATE_FILE" <<'PY' 2>/dev/null
 import json, sys
@@ -186,7 +186,11 @@ try:
     state = json.load(open(sys.argv[1]))
 except Exception:
     raise SystemExit(1)
-raise SystemExit(0 if state.get('finished_at') else 1)
+phase = state.get('current_phase')
+# The final installed-time/reboot prompt is rendered inside the Finishing
+# phase. Stop before drawing another dashboard frame so the prompt cannot be
+# covered while it waits for input.
+raise SystemExit(0 if state.get('finished_at') or phase in ('Finishing', 'Installation complete') else 1)
 PY
 }
 
@@ -247,11 +251,10 @@ render_static >"$TTY_PATH"
 frame=0
 while true; do
   [[ -e $STOP_FILE ]] && break
+  dashboard_should_stop && break
   render_dynamic "$frame" >"$TTY_PATH"
-  if install_finished || [[ -e $STOP_FILE ]]; then
-    sleep 1
-    break
-  fi
+  [[ -e $STOP_FILE ]] && break
+  dashboard_should_stop && break
   frame=$((frame + 1))
   sleep 0.5
 done
