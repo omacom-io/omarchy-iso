@@ -94,9 +94,13 @@ cat >"$fail_worker" <<EOF
 set -euo pipefail
 state="\$1"
 mkdir -p "\$(dirname "\$state")"
-python - "\$state" "Installing Arch + Omarchy" <<'PY'
+python - "\$state" "Finalizing in chroot" <<'PY'
 $write_state_py
 PY
+echo "Syncing the system..."
+echo "Installation completed without any errors."
+printf '\033[?25h'
+echo "You may reboot when ready."
 sleep 0.2
 exit 7
 EOF
@@ -132,8 +136,15 @@ if [[ $fail_status -ne 7 ]]; then
   echo "Expected failure worker status 7, got $fail_status" >&2
   exit 1
 fi
+assert_contains "$fail_log" "Installation completed without any errors."
 assert_contains "$fail_log" "[dashboard] installer child exited with status 7"
-assert_contains "$fail_log" "[dashboard] last installer phase: Installing Arch + Omarchy"
+assert_contains "$fail_log" "[dashboard] last installer phase: Finalizing in chroot"
+python - "$fail_log" <<'PY'
+from pathlib import Path
+import sys
+if "\x1b[?25h" in Path(sys.argv[1]).read_text(errors="ignore"):
+    raise SystemExit("CSI cursor sequence leaked into log")
+PY
 assert_not_contains "$fail_capture" "Installed in"
 assert_not_contains "$fail_capture" "Finished installing"
 

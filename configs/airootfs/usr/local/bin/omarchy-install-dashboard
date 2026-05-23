@@ -60,6 +60,10 @@ cleanup() {
   printf '%s%s' "$RESET" "$SHOW_CURSOR" >"$TTY_PATH" 2>/dev/null || true
 }
 
+dashboard_log() {
+  printf '[dashboard] %s\n' "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
 stop_child() {
   [[ -n ${child_pid:-} ]] || return 0
   if kill -0 "$child_pid" 2>/dev/null; then
@@ -308,7 +312,7 @@ reboot_prompt() {
 launch_child() {
   mkdir -p "$(dirname "$LOG_FILE")"
   # Child is non-interactive. All visible UI belongs to this supervisor.
-  setsid "${INSTALL_CMD[@]}" </dev/null > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>"$LOG_FILE") 2>&1 &
+  setsid "${INSTALL_CMD[@]}" </dev/null > >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$LOG_FILE") 2>&1 &
   child_pid=$!
   child_pgid=$child_pid
 }
@@ -320,7 +324,7 @@ launch_child
 
 frame=0
 while jobs -pr | grep -qx "$child_pid"; do
-  render_dynamic "$frame" >"$TTY_PATH"
+  render_dynamic "$frame" >"$TTY_PATH" 2>/dev/null || true
   frame=$((frame + 1))
   sleep 0.5
 done
@@ -332,11 +336,11 @@ set -e
 child_pid=""
 child_pgid=""
 
-echo "[dashboard] installer child exited with status $status" >>"$LOG_FILE"
+dashboard_log "installer child exited with status $status"
 
 if (( status != 0 )); then
   if [[ -f $STATE_FILE ]]; then
-    python - "$STATE_FILE" >>"$LOG_FILE" <<'PY' 2>/dev/null || true
+    state_summary="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
 import json, sys
 try:
     state = json.load(open(sys.argv[1]))
@@ -344,10 +348,20 @@ except Exception:
     raise SystemExit(0)
 phase = state.get("current_phase")
 if phase:
-    print(f"[dashboard] last installer phase: {phase}")
+    print(f"last installer phase: {phase}")
+for item in reversed(state.get("phases", [])):
+    if item.get("status") == "failed":
+        print(f"failed phase: {item.get('name')}: {item.get('error')}")
+        break
 PY
+)"
+    if [[ -n ${state_summary:-} ]]; then
+      while IFS= read -r line; do
+        [[ -n $line ]] && dashboard_log "$line"
+      done <<<"$state_summary"
+    fi
   fi
-  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH"
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
   exit "$status"
 fi
 
@@ -356,7 +370,7 @@ render_finish
 finish_render_status=$?
 set -e
 if (( finish_render_status != 0 )); then
-  echo "[dashboard] finish screen render failed with status $finish_render_status; using fallback" >>"$LOG_FILE"
+  dashboard_log "finish screen render failed with status $finish_render_status; using fallback"
   {
     printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
     printf '\nFinished installing\n\n'
@@ -368,7 +382,7 @@ if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
 fi
 
 if reboot_prompt; then
-  printf '%s' "$CLEAR" >"$TTY_PATH"
+  printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
   reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
 fi
 

@@ -827,14 +827,28 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
     )
     sudoers.chmod(0o440)
 
-    # run_logged appends as the install user. Create the target log before
-    # arch-chroot so the first redirection cannot fail on /var/log perms.
+    # run_logged appends as the install user. Bind the target's
+    # /var/log/omarchy-install.log to the live ISO log so the error UI, upload,
+    # and "view full log" all show the finalizer details instead of a separate
+    # hidden target-only log.
     target_log = ctx.target / "var" / "log" / "omarchy-install.log"
     omarchy_start_epoch = int(time.time())
     omarchy_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    ctx.log_path.parent.mkdir(parents=True, exist_ok=True)
+    ctx.log_path.touch(exist_ok=True)
+    ctx.log_path.chmod(0o666)
     target_log.parent.mkdir(parents=True, exist_ok=True)
-    target_log.write_text(f"=== Omarchy Installation Started: {omarchy_start_time} ===\n")
+    target_log.touch(exist_ok=True)
     target_log.chmod(0o666)
+    with ctx.log_path.open("a", encoding="utf-8") as log:
+        log.write(f"=== Omarchy Finalizer Started: {omarchy_start_time} ===\n")
+    log_bind_mounted = False
+    try:
+        subprocess.run(["mount", "--bind", str(ctx.log_path), str(target_log)], check=True)
+        log_bind_mounted = True
+    except subprocess.CalledProcessError as exc:
+        with ctx.log_path.open("a", encoding="utf-8") as log:
+            log.write(f"[orchestrator] WARNING: failed to bind unified finalizer log: {exc}\n")
 
     # 4: copy install tooling somewhere arch-chroot will not mask. /tmp is not
     # safe here: arch-chroot mounts a fresh tmpfs over the target's /tmp before
@@ -892,6 +906,20 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         subprocess.run(cmd, check=True)
     finally:
         sudoers.unlink(missing_ok=True)
+        if log_bind_mounted:
+            subprocess.run(["umount", str(target_log)], check=False, capture_output=True)
+            try:
+                shutil.copy2(ctx.log_path, target_log)
+                target_log.chmod(0o644)
+            except OSError:
+                pass
+        else:
+            try:
+                with ctx.log_path.open("a", encoding="utf-8") as live_log:
+                    live_log.write("\n=== Target finalizer log ===\n")
+                    live_log.write(target_log.read_text(errors="ignore"))
+            except OSError:
+                pass
 
 
 def _read_omarchy_mirror() -> str:
