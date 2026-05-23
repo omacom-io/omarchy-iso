@@ -332,12 +332,37 @@ set -e
 child_pid=""
 child_pgid=""
 
+echo "[dashboard] installer child exited with status $status" >>"$LOG_FILE"
+
 if (( status != 0 )); then
+  if [[ -f $STATE_FILE ]]; then
+    python - "$STATE_FILE" >>"$LOG_FILE" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    state = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+phase = state.get("current_phase")
+if phase:
+    print(f"[dashboard] last installer phase: {phase}")
+PY
+  fi
   printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH"
   exit "$status"
 fi
 
+set +e
 render_finish
+finish_render_status=$?
+set -e
+if (( finish_render_status != 0 )); then
+  echo "[dashboard] finish screen render failed with status $finish_render_status; using fallback" >>"$LOG_FILE"
+  {
+    printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
+    printf '\nFinished installing\n\n'
+  } >"$TTY_PATH" 2>/dev/null || true
+fi
+
 if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
   exit 0
 fi

@@ -132,6 +132,8 @@ if [[ $fail_status -ne 7 ]]; then
   echo "Expected failure worker status 7, got $fail_status" >&2
   exit 1
 fi
+assert_contains "$fail_log" "[dashboard] installer child exited with status 7"
+assert_contains "$fail_log" "[dashboard] last installer phase: Installing Arch + Omarchy"
 assert_not_contains "$fail_capture" "Installed in"
 assert_not_contains "$fail_capture" "Finished installing"
 
