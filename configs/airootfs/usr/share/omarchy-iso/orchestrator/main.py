@@ -34,6 +34,7 @@ def build_phases(ctx: InstallContext):
         arch_install_base,
         verify_protected_mounts,
         configure_protected_boot,
+        configure_hibernation,
         run_chroot_finalizer,
         configure_login,
         validate_boot_full,
@@ -46,6 +47,7 @@ def build_phases(ctx: InstallContext):
             ("Verifying protected mounts",      verify_protected_mounts),
             ("Installing base system",          arch_install_base),
             ("Configuring protected boot",      configure_protected_boot),
+            ("Configuring hibernation",         configure_hibernation),
             ("Finalizing in chroot",            run_chroot_finalizer),
             ("Configuring login",               configure_login),
             ("Validating protected boot setup", validate_boot_protected),
@@ -54,6 +56,7 @@ def build_phases(ctx: InstallContext):
     return [
         ("Preparing live environment", prepare_live),
         ("Installing Arch + Omarchy",  arch_install_full),
+        ("Configuring hibernation",    configure_hibernation),
         ("Finalizing in chroot",       run_chroot_finalizer),
         ("Configuring login",          configure_login),
         ("Validating boot setup",      validate_boot_full),

@@ -134,41 +134,45 @@ def arch_install_full(ctx: InstallContext) -> None:
         if config.mirror_config:
             installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
 
-        info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
-        installer.minimal_installation(
-            optional_repositories=(
-                config.mirror_config.optional_repositories
-                if config.mirror_config else []
-            ),
-            mkinitcpio=False,
-            hostname=config.hostname,
-            locale_config=config.locale_config,
-            pacman_config=config.pacman_config,
-        )
+        _mask_mkinitcpio_pacman_hooks(ctx)
+        try:
+            info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
+            installer.minimal_installation(
+                optional_repositories=(
+                    config.mirror_config.optional_repositories
+                    if config.mirror_config else []
+                ),
+                mkinitcpio=False,
+                hostname=config.hostname,
+                locale_config=config.locale_config,
+                pacman_config=config.pacman_config,
+            )
 
-        if config.mirror_config:
-            installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
+            if config.mirror_config:
+                installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
 
-        if config.swap and config.swap.enabled:
-            installer.setup_swap(algo=config.swap.algorithm)
+            if config.swap and config.swap.enabled:
+                installer.setup_swap(algo=config.swap.algorithm)
 
-        info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
-        installer.add_additional_packages(EARLY_PACKAGES)
+            info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
+            installer.add_additional_packages(EARLY_PACKAGES)
 
-        if arch.bootloader_enabled(config):
-            if not arch.is_limine(config):
-                raise RuntimeError(
-                    "Omarchy full-disk installs only support Limine bootloader setup"
-                )
-            info("› installing bootloader (Limine)")
-            _install_limine_omarchy(ctx, installer, config)
+            if arch.bootloader_enabled(config):
+                if not arch.is_limine(config):
+                    raise RuntimeError(
+                        "Omarchy full-disk installs only support Limine bootloader setup"
+                    )
+                info("› installing bootloader (Limine)")
+                _install_limine_omarchy(ctx, installer, config)
 
-            info("› writing Limine config (so limine-mkinitcpio-hook fires correctly)")
-            _write_limine_defaults_from_config(ctx, installer, config)
+                info("› writing Limine config (so limine-mkinitcpio-hook fires correctly)")
+                _write_limine_defaults_from_config(ctx, installer, config)
 
-        info("› creating user (with /etc/skel populated)")
-        if config.auth_config and config.auth_config.users:
-            installer.create_users(config.auth_config.users)
+            info("› creating user (with /etc/skel populated)")
+            if config.auth_config and config.auth_config.users:
+                installer.create_users(config.auth_config.users)
+        finally:
+            _unmask_mkinitcpio_pacman_hooks(ctx)
 
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
@@ -398,6 +402,32 @@ def _limine_template(ctx: InstallContext, filename: str) -> Path:
     raise RuntimeError(f"Limine template {filename} not found. Searched:\n  {searched}")
 
 
+def _mask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
+    """Temporarily suppress mkinitcpio pacman hooks between base and runtime.
+
+    The final Limine UKI build happens after all boot config is known. Pacman
+    would otherwise rebuild initramfs during the base linux transaction and
+    again when early settings/plymouth packages land.
+    """
+    hooks_dir = ctx.target / "etc" / "pacman.d" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("90-mkinitcpio-install.hook", "60-mkinitcpio-remove.hook"):
+        path = hooks_dir / name
+        path.unlink(missing_ok=True)
+        path.symlink_to("/dev/null")
+
+
+def _unmask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
+    hooks_dir = ctx.target / "etc" / "pacman.d" / "hooks"
+    for name in ("90-mkinitcpio-install.hook", "60-mkinitcpio-remove.hook"):
+        path = hooks_dir / name
+        try:
+            if path.is_symlink() and path.readlink() == Path("/dev/null"):
+                path.unlink()
+        except OSError:
+            pass
+
+
 def _runtime_package_list(ctx: InstallContext) -> list[str]:
     """omarchy + every package in install/omarchy-base.packages that isn't
     already in EARLY_PACKAGES."""
@@ -488,30 +518,34 @@ def arch_install_base(ctx: InstallContext) -> None:
         if config.mirror_config:
             installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
 
-        info("› installing base system (mkinitcpio deferred to configure_protected_boot)")
-        installer.minimal_installation(
-            optional_repositories=(
-                config.mirror_config.optional_repositories
-                if config.mirror_config else []
-            ),
-            mkinitcpio=False,
-            hostname=config.hostname,
-            locale_config=config.locale_config,
-            pacman_config=config.pacman_config,
-        )
+        _mask_mkinitcpio_pacman_hooks(ctx)
+        try:
+            info("› installing base system (mkinitcpio deferred to configure_protected_boot)")
+            installer.minimal_installation(
+                optional_repositories=(
+                    config.mirror_config.optional_repositories
+                    if config.mirror_config else []
+                ),
+                mkinitcpio=False,
+                hostname=config.hostname,
+                locale_config=config.locale_config,
+                pacman_config=config.pacman_config,
+            )
 
-        if config.mirror_config:
-            installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
+            if config.mirror_config:
+                installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
 
-        if config.swap and config.swap.enabled:
-            installer.setup_swap(algo=config.swap.algorithm)
+            if config.swap and config.swap.enabled:
+                installer.setup_swap(algo=config.swap.algorithm)
 
-        info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
-        installer.add_additional_packages(EARLY_PACKAGES)
+            info(f"› installing early Omarchy packages: {', '.join(EARLY_PACKAGES)}")
+            installer.add_additional_packages(EARLY_PACKAGES)
 
-        info("› creating user (with /etc/skel populated)")
-        if config.auth_config and config.auth_config.users:
-            installer.create_users(config.auth_config.users)
+            info("› creating user (with /etc/skel populated)")
+            if config.auth_config and config.auth_config.users:
+                installer.create_users(config.auth_config.users)
+        finally:
+            _unmask_mkinitcpio_pacman_hooks(ctx)
 
         info("› installing Omarchy runtime + omarchy-base.packages")
         installer.add_additional_packages(_runtime_package_list(ctx))
@@ -787,6 +821,30 @@ def _register_efibootmgr_entry(
         ["efibootmgr", "--bootorder", new_order],
         check=True, capture_output=True,
     )
+
+
+def configure_hibernation(ctx: InstallContext) -> None:
+    """Configure swap/resume in the target as root before user finalization.
+
+    Hibernation is system boot configuration, not per-user setup. Keep it out
+    of finalize.sh so the finalizer stays focused on user/session defaults.
+    The final Limine UKI build still happens later in limine-snapper.sh, after
+    this writes the resume hook and kernel cmdline drop-in.
+    """
+    setup = ctx.target / "usr" / "bin" / "omarchy-hibernation-setup"
+    if not setup.exists():
+        _debug_log(ctx, "skipping hibernation: /usr/bin/omarchy-hibernation-setup is not installed")
+        return
+
+    subprocess.run([
+        "arch-chroot", str(ctx.target),
+        "env",
+        "OMARCHY_INSTALL_MODE=offline",
+        "OMARCHY_CHROOT_INSTALL=1",
+        "OMARCHY_PATH=/usr/share/omarchy",
+        "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
+        "/usr/bin/omarchy-hibernation-setup", "--force", "--no-rebuild",
+    ], check=True)
 
 
 def _install_debug_enabled() -> bool:
