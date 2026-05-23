@@ -45,8 +45,10 @@ cd /root
 
 # Keep the actual install screen calm: the dashboard owns /dev/tty while the
 # noisy installer stream is captured to the support log.
+dashboard_tty=$(tty)
+export OMARCHY_DASHBOARD_TTY="$dashboard_tty"
 rm -f /run/omarchy-install/dashboard.stop
-setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json >/dev/tty 2>&1 &
+setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json <"$dashboard_tty" >"$dashboard_tty" 2>&1 &
 dashboard_pid=$!
 export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
 

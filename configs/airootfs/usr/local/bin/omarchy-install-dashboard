@@ -9,6 +9,7 @@ STATE_FILE="${2:-/run/omarchy-install/state.json}"
 STATE_DIR="$(dirname "$STATE_FILE")"
 STOP_FILE="$STATE_DIR/dashboard.stop"
 LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
+TTY_PATH="${OMARCHY_DASHBOARD_TTY:-/dev/tty}"
 
 CSI=$'\033['
 RESET="${CSI}0m"
@@ -43,12 +44,12 @@ whimsy=(
 )
 
 cleanup() {
-  printf '%s%s' "$RESET" "$SHOW_CURSOR" >/dev/tty 2>/dev/null || true
+  printf '%s%s' "$RESET" "$SHOW_CURSOR" >"$TTY_PATH" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'cleanup; exit 0' INT TERM
 
-term_size() { stty size 2>/dev/null </dev/tty || printf '24 80\n'; }
+term_size() { stty size 2>/dev/null <"$TTY_PATH" || printf '24 80\n'; }
 term_cols() { local size; size="$(term_size)"; printf '%s\n' "${size#* }"; }
 
 repeat() {
@@ -232,12 +233,16 @@ render_dynamic() {
   printf '%s' "$CLEAR_TO_END"
 }
 
-printf '%s' "$HIDE_CURSOR" >/dev/tty
-render_static >/dev/tty
+if [[ ! -e $TTY_PATH ]]; then
+  exit 0
+fi
+
+printf '%s' "$HIDE_CURSOR" >"$TTY_PATH"
+render_static >"$TTY_PATH"
 frame=0
 while true; do
   [[ -e $STOP_FILE ]] && break
-  render_dynamic "$frame" >/dev/tty
+  render_dynamic "$frame" >"$TTY_PATH"
   if install_finished || [[ -e $STOP_FILE ]]; then
     sleep 1
     break
