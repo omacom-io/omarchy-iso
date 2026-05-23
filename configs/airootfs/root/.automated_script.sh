@@ -47,13 +47,25 @@ cd /root
 # noisy installer stream is captured to the support log.
 dashboard_tty=$(tty)
 export OMARCHY_DASHBOARD_TTY="$dashboard_tty"
-rm -f /run/omarchy-install/dashboard.stop
+rm -f /run/omarchy-install/dashboard.stop /run/omarchy-install/dashboard.pid
 setsid /usr/local/bin/omarchy-install-dashboard "$OMARCHY_INSTALL_LOG_FILE" /run/omarchy-install/state.json <"$dashboard_tty" >"$dashboard_tty" 2>&1 &
 dashboard_pid=$!
+# setsid may fork/exec differently across environments. The dashboard writes
+# its own real PID as soon as it starts; prefer that for shutdown.
+for _ in {1..20}; do
+  [[ -s /run/omarchy-install/dashboard.pid ]] && break
+  sleep 0.05
+done
+if [[ -s /run/omarchy-install/dashboard.pid ]]; then
+  dashboard_pid=$(cat /run/omarchy-install/dashboard.pid)
+fi
 export OMARCHY_INSTALL_DASHBOARD_PID="$dashboard_pid"
 
 stop_install_dashboard() {
   touch /run/omarchy-install/dashboard.stop 2>/dev/null || true
+  if [[ -s /run/omarchy-install/dashboard.pid ]]; then
+    dashboard_pid=$(cat /run/omarchy-install/dashboard.pid)
+  fi
   if [[ -n ${dashboard_pid:-} ]]; then
     if kill -0 "$dashboard_pid" 2>/dev/null; then
       # The dashboard runs under setsid, so $dashboard_pid is also its process

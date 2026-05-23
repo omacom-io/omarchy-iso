@@ -8,6 +8,7 @@ LOG_FILE="${1:-/var/log/omarchy-install.log}"
 STATE_FILE="${2:-/run/omarchy-install/state.json}"
 STATE_DIR="$(dirname "$STATE_FILE")"
 STOP_FILE="$STATE_DIR/dashboard.stop"
+PID_FILE="$STATE_DIR/dashboard.pid"
 LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
 TTY_PATH="${OMARCHY_DASHBOARD_TTY:-/dev/tty}"
 
@@ -45,6 +46,7 @@ whimsy=(
 
 cleanup() {
   printf '%s%s' "$RESET" "$SHOW_CURSOR" >"$TTY_PATH" 2>/dev/null || true
+  rm -f "$PID_FILE" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'cleanup; exit 0' INT TERM
@@ -236,6 +238,9 @@ render_dynamic() {
 if [[ ! -e $TTY_PATH ]]; then
   exit 0
 fi
+
+mkdir -p "$STATE_DIR"
+echo "$$" >"$PID_FILE"
 
 printf '%s' "$HIDE_CURSOR" >"$TTY_PATH"
 render_static >"$TTY_PATH"

@@ -1071,34 +1071,34 @@ def _pid_is_dashboard(pid: int) -> bool:
     return b"omarchy-install-dashboard" in cmdline
 
 
+def _add_dashboard_pid(pids: list[int], pid_text: str | None) -> None:
+    if not pid_text:
+        return
+    try:
+        pid = int(pid_text.strip())
+    except ValueError:
+        return
+    if pid not in pids and _pid_is_dashboard(pid):
+        pids.append(pid)
+
+
 def _dashboard_pids() -> list[int]:
     pids: list[int] = []
-    pid_text = os.environ.get("OMARCHY_INSTALL_DASHBOARD_PID")
-    if pid_text:
-        try:
-            pid = int(pid_text)
-            if _pid_is_dashboard(pid):
-                pids.append(pid)
-        except ValueError:
-            pass
 
-    # Belt-and-suspenders fallback in case the env var was lost before finish.
+    _add_dashboard_pid(pids, os.environ.get("OMARCHY_INSTALL_DASHBOARD_PID"))
+
+    pid_file = Path("/run/omarchy-install/dashboard.pid")
     try:
-        proc = subprocess.run(
-            ["pgrep", "-f", "omarchy-install-dashboard"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for line in proc.stdout.splitlines():
-            try:
-                pid = int(line)
-            except ValueError:
-                continue
-            if pid not in pids and _pid_is_dashboard(pid):
-                pids.append(pid)
+        _add_dashboard_pid(pids, pid_file.read_text())
     except OSError:
         pass
+
+    # Last-resort /proc scan. Do not rely on pgrep being present in the ISO.
+    for proc_dir in Path("/proc").iterdir():
+        if not proc_dir.name.isdigit():
+            continue
+        _add_dashboard_pid(pids, proc_dir.name)
+
     return pids
 
 
