@@ -2,28 +2,135 @@
 
 set -e
 
-ISO="$1"
-REUSE="$2"
+ISO=""
+REUSE=""
+SSH_HOST="${OMARCHY_VM_SSH_HOST:-127.0.0.1}"
+SSH_PORT="${OMARCHY_VM_SSH_PORT:-2222}"
+NETWORK="${OMARCHY_VM_NETWORK:-1}"
+DISK="${OMARCHY_VM_DISK:-/tmp/omarchy-iso-boot.qcow2}"
+OVMF_VARS="${OMARCHY_VM_OVMF_VARS:-/tmp/OVMF_VARS.4m.fd}"
+EXTRA_QEMU_ARGS=()
 
-if [ $# -eq 0 ]; then
+usage() {
+  cat <<USAGE
+Usage: omarchy-iso-boot [options] [release/omarchy.iso] [reuse]
+
+Options:
+  --reuse              Reuse the existing VM disk
+  --ssh-port PORT      Forward host PORT to guest port 22 (default: $SSH_PORT)
+  --ssh-host HOST      Host address for SSH forwarding (default: $SSH_HOST)
+  --no-network         Boot without a virtual NIC
+  --disk PATH          VM disk path (default: $DISK)
+  --ovmf-vars PATH     OVMF vars path (default: $OVMF_VARS)
+  -h, --help           Show this help
+  --                   Pass the remaining arguments directly to QEMU
+
+SSH access after starting sshd in the guest:
+  ssh -p $SSH_PORT root@localhost
+  scp -P $SSH_PORT /path/to/system-manifest root@localhost:/tmp/
+USAGE
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --reuse|reuse)
+      REUSE="reuse"
+      shift
+      ;;
+    --ssh-port)
+      SSH_PORT="${2:-}"
+      shift 2
+      ;;
+    --ssh-port=*)
+      SSH_PORT="${1#*=}"
+      shift
+      ;;
+    --ssh-host)
+      SSH_HOST="${2:-}"
+      shift 2
+      ;;
+    --ssh-host=*)
+      SSH_HOST="${1#*=}"
+      shift
+      ;;
+    --no-network|--no-net)
+      NETWORK=0
+      shift
+      ;;
+    --disk)
+      DISK="${2:-}"
+      shift 2
+      ;;
+    --disk=*)
+      DISK="${1#*=}"
+      shift
+      ;;
+    --ovmf-vars)
+      OVMF_VARS="${2:-}"
+      shift 2
+      ;;
+    --ovmf-vars=*)
+      OVMF_VARS="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      EXTRA_QEMU_ARGS+=("$@")
+      break
+      ;;
+    *)
+      if [[ -z $ISO ]]; then
+        ISO="$1"
+      else
+        echo "Unexpected argument: $1" >&2
+        usage >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z $ISO && -t 0 ]]; then
   ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
   if gum confirm --default=false "Reuse existing disk?"; then
     REUSE="reuse"
   fi
 fi
 
-if [ -z "$ISO" ]; then
-  echo "Usage: omarchy-iso-boot [release/omarchy.iso] [reuse]"
-  echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh)"
+if [[ -z $ISO ]]; then
+  usage
+  exit 1
+fi
+
+if [[ -z $DISK || -z $OVMF_VARS ]]; then
+  echo "Disk and OVMF vars paths must not be empty" >&2
   exit 1
 fi
 
 omarchy-pkg-add qemu-full edk2-ovmf
 
-DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 40G
-  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
+  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$OVMF_VARS"
+fi
+
+NET_ARGS=()
+if [[ $NETWORK != "0" && $NETWORK != "false" && $NETWORK != "no" ]]; then
+  if [[ -n $SSH_PORT && $SSH_PORT != "0" ]]; then
+    NET_ARGS=(-netdev "user,id=net0,hostfwd=tcp:${SSH_HOST}:${SSH_PORT}-:22" -device virtio-net-pci,netdev=net0)
+    echo "SSH forwarding enabled: ssh -p $SSH_PORT root@localhost"
+    echo "SCP example: scp -P $SSH_PORT /path/to/system-manifest root@localhost:/tmp/"
+  else
+    NET_ARGS=(-netdev user,id=net0 -device virtio-net-pci,netdev=net0)
+    echo "Networking enabled without SSH port forwarding."
+  fi
+else
+  echo "Networking disabled."
 fi
 
 # Boot from ISO before we've installed, then boot from drive after
@@ -32,7 +139,7 @@ qemu-system-x86_64 \
   -smp "$(nproc)" \
   -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.4m.fd \
+  -drive if=pflash,format=raw,file="$OVMF_VARS" \
   -drive file="$DISK",format=qcow2,if=none,id=drive0 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
@@ -40,6 +147,6 @@ qemu-system-x86_64 \
   -device virtio-vga-gl \
   -display gtk,gl=on \
   -usb -device usb-tablet \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-  -device virtio-net-pci,netdev=net0 \
-  -boot menu=on
+  "${NET_ARGS[@]}" \
+  -boot menu=on \
+  "${EXTRA_QEMU_ARGS[@]}"

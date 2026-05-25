@@ -34,6 +34,7 @@ from the start.
 
 from __future__ import annotations
 
+import importlib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -142,6 +143,63 @@ def parent_device_path(dev_path: Path) -> Path:
 
 def unique_device_path(dev_path: Path) -> Path | None:
     return get_unique_path_for_device(dev_path)
+
+
+def _application_handler():
+    """Return archinstall's application handler across archinstall versions."""
+    module = importlib.import_module("archinstall.lib.applications.application_handler")
+    handler = getattr(module, "application_handler", None)
+    if handler is not None and callable(getattr(handler, "install_applications", None)):
+        return handler
+
+    handler_class = getattr(module, "ApplicationHandler", None)
+    if handler_class is None:
+        raise RuntimeError("archinstall application handler is unavailable")
+    try:
+        handler = handler_class()
+    except TypeError as exc:
+        raise RuntimeError("archinstall ApplicationHandler cannot be constructed") from exc
+    if not callable(getattr(handler, "install_applications", None)):
+        raise RuntimeError("archinstall ApplicationHandler has no install_applications method")
+    return handler
+
+
+def _method_accepts_users(method) -> bool:
+    """Return whether a bound archinstall method accepts the users argument.
+
+    Do not use inspect.signature here: Python 3.14 may evaluate archinstall's
+    lazy annotations, and some archinstall releases annotate with names that are
+    only imported under TYPE_CHECKING.
+    """
+    fn = getattr(method, "__func__", method)
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        return True
+
+    positional = code.co_varnames[:code.co_argcount]
+    kwonly = code.co_varnames[code.co_argcount:code.co_argcount + code.co_kwonlyargcount]
+    return "users" in (*positional, *kwonly)
+
+
+def install_applications(installer: Installer, arch_config: ArchConfig) -> None:
+    """Install archinstall application selections such as PipeWire audio.
+
+    The configurator still writes archinstall's audio_config. We own phase
+    ordering now, but should not silently drop archinstall's hardware-aware
+    application installers (SOF/ALSA firmware detection, PipeWire packages,
+    Bluetooth selections, etc.).
+    """
+    app_config = arch_config.app_config
+    if not app_config:
+        return
+
+    users = arch_config.auth_config.users if arch_config.auth_config else None
+    handler = _application_handler()
+    install_applications_method = handler.install_applications
+    if _method_accepts_users(install_applications_method):
+        install_applications_method(installer, app_config, users)
+    else:
+        install_applications_method(installer, app_config)
 
 
 def root_user(arch_config: ArchConfig) -> User | None:

@@ -32,7 +32,16 @@ CLEAR="${CSI}2J${CSI}H"
 CLEAR_LINE="${CSI}2K"
 CLEAR_TO_END="${CSI}J"
 GREEN="${CSI}32m"
+RED="${CSI}31m"
 DARK="${CSI}90m"
+
+# The dashboard owns the final reboot prompt now, so keep the gum confirm
+# styling that used to come from install/helpers/presentation.sh.
+export GUM_CONFIRM_PROMPT_FOREGROUND="${GUM_CONFIRM_PROMPT_FOREGROUND:-6}"
+export GUM_CONFIRM_SELECTED_FOREGROUND="${GUM_CONFIRM_SELECTED_FOREGROUND:-0}"
+export GUM_CONFIRM_SELECTED_BACKGROUND="${GUM_CONFIRM_SELECTED_BACKGROUND:-2}"
+export GUM_CONFIRM_UNSELECTED_FOREGROUND="${GUM_CONFIRM_UNSELECTED_FOREGROUND:-7}"
+export GUM_CONFIRM_UNSELECTED_BACKGROUND="${GUM_CONFIRM_UNSELECTED_BACKGROUND:-0}"
 
 child_pid=""
 child_pgid=""
@@ -206,6 +215,7 @@ weights = [
     ('Finalizing user', 96, 98, 10),
     ('Finalizing in chroot', 88, 98, 10),
     ('Configuring login', 98, 99, 3),
+    ('Configuring DNS resolver', 99, 100, 2),
     ('Validating protected boot setup', 99, 100, 5),
     ('Validating boot setup', 99, 100, 5),
 ]
@@ -268,6 +278,30 @@ render_dynamic() {
 
 install_duration() {
   local path line duration
+
+  if [[ -f $STATE_FILE ]]; then
+    duration="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    state = json.load(open(sys.argv[1]))
+    started = float(state.get("started_at") or 0)
+    finished = float(state.get("finished_at") or 0)
+except Exception:
+    raise SystemExit(0)
+if started <= 0 or finished <= 0 or finished < started:
+    raise SystemExit(0)
+seconds = int(round(finished - started))
+hours, remainder = divmod(seconds, 3600)
+minutes, seconds = divmod(remainder, 60)
+if hours:
+    print(f"{hours}h {minutes}m {seconds}s", end="")
+else:
+    print(f"{minutes}m {seconds}s", end="")
+PY
+)"
+    [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
+  fi
+
   for path in /mnt/var/log/omarchy-install.log "$LOG_FILE"; do
     [[ -f $path ]] || continue
     for prefix in Total Omarchy; do
@@ -313,10 +347,185 @@ reboot_prompt() {
     "" <"$TTY_PATH" >"$TTY_PATH" 2>&1
 }
 
+truncate_for_width() {
+  local text="$1" width="$2"
+  if (( ${#text} > width )); then
+    printf '%s…' "${text:0:$((width - 1))}"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+render_failure_log_tail() {
+  local rows lines width line tail_log label
+  rows=$(term_size)
+  rows=${rows%% *}
+  lines=$((rows - LOGO_HEIGHT - 18))
+  (( lines < 6 )) && lines=6
+  (( lines > 14 )) && lines=14
+  width=$((CONTENT_WIDTH - 4))
+  (( width < 40 )) && width=40
+
+  tail_log="${OMARCHY_FAILURE_TAIL_LOG:-}"
+  if [[ -z $tail_log ]]; then
+    if [[ -f /mnt/var/log/omarchy-install.log ]]; then
+      tail_log=/mnt/var/log/omarchy-install.log
+    else
+      tail_log="$LOG_FILE"
+    fi
+  fi
+  [[ -f $tail_log ]] || return 0
+
+  label="Last log lines:"
+  [[ $tail_log == /mnt/* ]] && label="Last target log lines:"
+  line_at "$CONTENT_WIDTH" 2 "${DIM}${label}${RESET}"
+  printf '\n'
+  tail -n "$lines" "$tail_log" 2>/dev/null | while IFS= read -r line; do
+    line_at "$CONTENT_WIDTH" 2 "$(truncate_for_width "$line" "$width")"
+    printf '\n'
+  done
+}
+
+find_log_uploader() {
+  local candidate
+  for candidate in omarchy-upload-log /usr/local/bin/omarchy-upload-log /usr/bin/omarchy-upload-log /mnt/usr/bin/omarchy-upload-log; do
+    if [[ $candidate == */* ]]; then
+      [[ -x $candidate ]] && { printf '%s' "$candidate"; return 0; }
+    elif command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+prompt_enter() {
+  printf '\nPress Enter to continue…' >"$TTY_PATH"
+  IFS= read -r _ <"$TTY_PATH" || true
+}
+
+upload_failure_log() {
+  local uploader
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  if uploader=$(find_log_uploader); then
+    "$uploader" install >"$TTY_PATH" 2>&1 || true
+  else
+    {
+      echo "No log uploader is available in this environment."
+      echo "Install log: $LOG_FILE"
+      [[ -f /mnt/var/log/omarchy-install.log ]] && echo "Target log: /mnt/var/log/omarchy-install.log"
+    } >"$TTY_PATH"
+  fi
+  prompt_enter
+}
+
+view_failure_log() {
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  if command -v less >/dev/null 2>&1 && [[ -f $LOG_FILE ]]; then
+    less "$LOG_FILE" <"$TTY_PATH" >"$TTY_PATH" 2>&1 || true
+  else
+    tail -n 200 "$LOG_FILE" >"$TTY_PATH" 2>&1 || true
+    prompt_enter
+  fi
+}
+
+render_failure() {
+  local status="$1" state_summary="${2:-}" line
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
+  blank_line
+  render_logo
+  blank_line
+  center "${RED}Omarchy installation stopped${RESET}" "$CONTENT_WIDTH"
+  center "Installer exited with status $status" "$CONTENT_WIDTH"
+
+  if [[ -n $state_summary ]]; then
+    blank_line
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      center "${DIM}$(truncate_for_width "$line" "$CONTENT_WIDTH")${RESET}" "$CONTENT_WIDTH"
+    done <<<"$state_summary"
+  fi
+
+  blank_line
+  render_failure_log_tail
+  blank_line
+  center "${DIM}Get help at https://omarchy.org/discord${RESET}" "$CONTENT_WIDTH"
+  blank_line
+}
+
+failure_menu() {
+  local choice uploader
+
+  [[ ${OMARCHY_UI_FAILURE_ACTION:-} == "exit" ]] && return 0
+
+  while true; do
+    uploader=""
+    uploader=$(find_log_uploader || true)
+    if [[ -n $uploader ]]; then
+      choice=$(gum choose \
+        --height 6 \
+        --header "What would you like to do?" \
+        "Upload log for support" \
+        "View full log" \
+        "Drop to shell" \
+        "Reboot" \
+        "Power off" \
+        <"$TTY_PATH" 2>"$TTY_PATH") || choice="Drop to shell"
+    else
+      choice=$(gum choose \
+        --height 5 \
+        --header "What would you like to do?" \
+        "View full log" \
+        "Drop to shell" \
+        "Reboot" \
+        "Power off" \
+        <"$TTY_PATH" 2>"$TTY_PATH") || choice="Drop to shell"
+    fi
+
+    case "$choice" in
+      "Upload log for support")
+        upload_failure_log
+        render_failure "${failure_status:-1}" "${failure_summary:-}" >"$TTY_PATH" 2>/dev/null || true
+        ;;
+      "View full log")
+        view_failure_log
+        render_failure "${failure_status:-1}" "${failure_summary:-}" >"$TTY_PATH" 2>/dev/null || true
+        ;;
+      "Reboot")
+        reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+        ;;
+      "Power off")
+        poweroff 2>/dev/null || systemctl poweroff 2>/dev/null || true
+        ;;
+      "Drop to shell"|"")
+        return 0
+        ;;
+    esac
+  done
+}
+
+sanitize_child_output() {
+  # Archinstall is only a library subsystem in Omarchy's installer. Its own
+  # post-install success/reboot banner can be buffered until process exit and
+  # appear after an Omarchy failure, which makes the unified log contradictory.
+  # Keep that third-party banner out of Omarchy's support log; the raw
+  # archinstall log is still uploaded separately by omarchy-upload-log.
+  sed -u \
+    -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' \
+    -e '/^Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \
+    -e '/^Enabling service systemd-timesyncd$/d' \
+    -e '/^Setting password for root$/d' \
+    -e '/^Updating \/mnt\/etc\/fstab$/d' \
+    -e '/^Syncing the system\.\.\.$/d' \
+    -e '/^Installation completed without any errors\.$/d' \
+    -e '/^Log files temporarily available at \/var\/log\/archinstall\.$/d' \
+    -e '/^You may reboot when ready\.$/d'
+}
+
 launch_child() {
   mkdir -p "$(dirname "$LOG_FILE")"
   # Child is non-interactive. All visible UI belongs to this supervisor.
-  setsid "${INSTALL_CMD[@]}" </dev/null > >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$LOG_FILE") 2>&1 &
+  PYTHONUNBUFFERED=1 setsid "${INSTALL_CMD[@]}" </dev/null > >(sanitize_child_output >>"$LOG_FILE") 2>&1 &
   child_pid=$!
   child_pgid=$child_pid
 }
@@ -343,8 +552,10 @@ child_pgid=""
 dashboard_log "installer child exited with status $status"
 
 if (( status != 0 )); then
+  failure_status="$status"
+  failure_summary=""
   if [[ -f $STATE_FILE ]]; then
-    state_summary="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
+    failure_summary="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
 import json, sys
 try:
     state = json.load(open(sys.argv[1]))
@@ -359,14 +570,15 @@ for item in reversed(state.get("phases", [])):
         break
 PY
 )"
-    if [[ -n ${state_summary:-} ]]; then
+    if [[ -n $failure_summary ]]; then
       while IFS= read -r line; do
         [[ -n $line ]] && dashboard_log "$line"
-      done <<<"$state_summary"
+      done <<<"$failure_summary"
     fi
   fi
-  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
-  exit "$status"
+  render_failure "$failure_status" "$failure_summary" >"$TTY_PATH" 2>/dev/null || true
+  failure_menu
+  exit "$failure_status"
 fi
 
 set +e

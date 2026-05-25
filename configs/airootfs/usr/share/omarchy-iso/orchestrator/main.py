@@ -36,6 +36,7 @@ def build_phases(ctx: InstallContext):
         run_system_finalizer,
         finalize_limine_boot,
         run_chroot_finalizer,
+        configure_dns_resolver,
         configure_login,
         validate_boot,
     )
@@ -49,6 +50,7 @@ def build_phases(ctx: InstallContext):
         ("Finalizing Limine boot",     finalize_limine_boot),
         ("Finalizing user",            run_chroot_finalizer),
         ("Configuring login",          configure_login),
+        ("Configuring DNS resolver",   configure_dns_resolver),
         ("Validating boot setup",      validate_boot),
     ]
 

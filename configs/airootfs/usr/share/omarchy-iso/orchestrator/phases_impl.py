@@ -14,7 +14,7 @@ Phase ordering (full-disk and protected/pre-mounted):
     run_system_finalizer   → arch-chroot root omarchy-setup-system
     finalize_limine_boot   → final Limine config/UKI build after hardware drop-ins
     run_chroot_finalizer   → arch-chroot -u user omarchy-setup-user
-    configure_login        → sddm autologin for unencrypted installs
+    configure_login        → sddm state + encrypted-install autologin
     validate_boot          → assert UKI / limine.conf / kernel cmdline are sane
 """
 
@@ -181,6 +181,10 @@ def arch_install_system(ctx: InstallContext) -> None:
             info("› creating user (with /etc/skel populated)")
             if config.auth_config and config.auth_config.users:
                 installer.create_users(config.auth_config.users)
+
+            if config.app_config:
+                info("› installing archinstall application selections")
+                arch.install_applications(installer, config)
 
             info("› installing Omarchy runtime + omarchy-base.packages")
             installer.add_additional_packages(_runtime_package_list(ctx))
@@ -901,6 +905,29 @@ def _ensure_finalizer_log_started(ctx: InstallContext) -> tuple[str, int]:
     return ctx.state["omarchy_start_time"], ctx.state["omarchy_start_epoch"]
 
 
+def _target_user_env(ctx: InstallContext, user: str) -> list[str]:
+    home = f"/home/{user}"
+    shell = "/bin/bash"
+    passwd = ctx.target / "etc" / "passwd"
+
+    try:
+        for line in passwd.read_text(errors="ignore").splitlines():
+            fields = line.split(":")
+            if len(fields) >= 7 and fields[0] == user:
+                home = fields[5] or home
+                shell = fields[6] or shell
+                break
+    except OSError:
+        pass
+
+    return [
+        f"HOME={home}",
+        f"USER={user}",
+        f"LOGNAME={user}",
+        f"SHELL={shell}",
+    ]
+
+
 def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str | None = None) -> None:
     _prepare_target_setup(ctx)
     omarchy_start_time, omarchy_start_epoch = _ensure_finalizer_log_started(ctx)
@@ -929,6 +956,7 @@ def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str 
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
         "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
+        "OMARCHY_LOG_TO_STDOUT=1",
     ]
     if _install_debug_enabled():
         env_extras.append("OMARCHY_INSTALL_DEBUG=1")
@@ -937,6 +965,7 @@ def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str 
     chroot_cmd = ["arch-chroot"]
     if user:
         chroot_cmd += ["-u", user]
+        env_extras.extend(_target_user_env(ctx, user))
     chroot_cmd += [str(ctx.target), "env", "--unset=XDG_RUNTIME_DIR", *env_extras, *cmd]
 
     try:
@@ -1069,31 +1098,54 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         user=ctx.username,
     )
 
+
+def configure_dns_resolver(ctx: InstallContext) -> None:
+    """Put the installed system in systemd-resolved stub mode.
+
+    Arch's systemd-resolved docs explicitly say not to create this symlink from
+    inside arch-chroot because /etc/resolv.conf may be a bind mount from the
+    live environment. Do it from the ISO against /mnt instead.
+    """
+    resolv_conf = ctx.target / "etc" / "resolv.conf"
+    target = "../run/systemd/resolve/stub-resolv.conf"
+
+    if resolv_conf.is_symlink() and os.readlink(resolv_conf) == target:
+        return
+
+    info("› configuring /etc/resolv.conf for systemd-resolved")
+    resolv_conf.parent.mkdir(parents=True, exist_ok=True)
+    resolv_conf.unlink(missing_ok=True)
+    resolv_conf.symlink_to(target)
+
+
 def _read_omarchy_mirror() -> str:
     p = Path("/root/omarchy_mirror")
     return p.read_text().strip() if p.exists() else "stable"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# configure_login: sddm autologin for unencrypted installs only (encrypted
-# installs already get a LUKS unlock prompt, no need for sddm autologin).
+# configure_login: seed SDDM's last user/session for the password-only Omarchy
+# greeter. Encrypted installs autologin because the LUKS prompt is the auth
+# boundary; unencrypted installs leave SDDM as the auth screen.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def configure_login(ctx: InstallContext) -> None:
-    if ctx.encrypt:
-        return
-
     sddm_dir = ctx.target / "etc" / "sddm.conf.d"
     sddm_dir.mkdir(parents=True, exist_ok=True)
     (sddm_dir / "99-omarchy-login.conf").write_text(
         "[Theme]\nCurrent=omarchy\n\n"
         "[Users]\nRememberLastUser=true\nRememberLastSession=true\n"
     )
-    (sddm_dir / "autologin.conf").write_text(
-        "[Autologin]\n"
-        f"User={ctx.username}\n"
-        "Session=omarchy.desktop\n"
-    )
+
+    autologin_conf = sddm_dir / "autologin.conf"
+    if ctx.encrypt:
+        autologin_conf.write_text(
+            "[Autologin]\n"
+            f"User={ctx.username}\n"
+            "Session=omarchy.desktop\n"
+        )
+    else:
+        autologin_conf.unlink(missing_ok=True)
 
     state_dir = ctx.target / "var" / "lib" / "sddm"
     state_dir.mkdir(parents=True, exist_ok=True)
