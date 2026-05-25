@@ -1,7 +1,7 @@
 #!/bin/bash
 
 MAKE_ARGS=()
-INSTALLER_REF=master
+ISO_REF=stable
 RELEASE_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
@@ -12,7 +12,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   --rc)
     MAKE_ARGS+=("$1")
-    INSTALLER_REF=rc
+    ISO_REF=rc
     RELEASE_SUFFIX="-rc"
     shift
     ;;
@@ -42,21 +42,21 @@ BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 
 # Make ISOs
 if [[ ! " ${MAKE_ARGS[*]} " =~ " --no-make " ]]; then
-  echo -e "\e[32mMaking $INSTALLER_REF ISO\e[0m"
+  echo -e "\e[32mMaking $ISO_REF ISO\e[0m"
   omarchy-iso-make --no-cache --no-boot-offer "${MAKE_ARGS[@]}"
 else
   echo -e "\e[31mSkipping remaking ISOs\e[0m"
 fi
 
 # Sign and upload ISO
-latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso | head -n1)
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$ISO_REF".iso | head -n1)
 release_iso="$BUILD_RELEASE_PATH/omarchy-$BUILD_VERSION$RELEASE_SUFFIX.iso"
 cp "$latest_iso" "$release_iso"
 
-echo -e "\e[32mSigning $INSTALLER_REF ISO\e[0m"
+echo -e "\e[32mSigning $ISO_REF ISO\e[0m"
 omarchy-iso-sign "$release_iso"
 
 iso_sha=$(sha256sum "$release_iso")
-echo -e "\e[32mSHA256 for $INSTALLER_REF ISO: $iso_sha\e[0m"
+echo -e "\e[32mSHA256 for $ISO_REF ISO: $iso_sha\e[0m"
 
 omarchy-iso-upload "$release_iso"

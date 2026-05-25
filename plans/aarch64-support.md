@@ -16,7 +16,7 @@ These exist outside omarchy-iso. Flagged for visibility — without them, nothin
 
 1. **aarch64 base packages must exist somewhere we can pacman from.** Vanilla Arch (`geo.mirror.pkgbuild.com`) is x86_64-only — there is no `core/os/aarch64`. The realistic source is **Arch Linux ARM** (`mirror.archlinuxarm.org`) for `core`/`extra`/`alarm`/`aur`. Decision required: target Arch Linux ARM as the aarch64 base distribution.
 2. **`pkgs.omarchy.org/{stable,edge}/aarch64/`** must serve a real repo. Probed today, both return 404. omarchy-pkgs already has multi-arch build support per its README, so this is a publish step, not a port.
-3. **Omarchy installer guard** at `~/.local/share/omarchy/install/preflight/guard.sh:25` hard-aborts on `uname -m != x86_64`. Must be relaxed to allow aarch64 (or scoped behind a flag).
+3. **Omarchy ISO architecture guard** must allow supported architectures or scope any x86_64-only checks behind an explicit guard.
 4. **archinstall + Limine** must work end-to-end on aarch64. archinstall supports it; Limine supports aarch64 UEFI. Worth a manual verification before committing to this bootloader path on ARM.
 
 ---
@@ -109,9 +109,9 @@ Both scripts hardcode the OVMF path; small, mechanical fix.
 ### 10. Release script — `bin/omarchy-iso-release:52`
 
 ```bash
-latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso | head -n1)
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*${OMARCHY_ARCH}-"$ISO_REF".iso | head -n1)
 ```
-Hardcoded `x86_64` glob. Take an arch arg, or do `*${OMARCHY_ARCH}-${INSTALLER_REF}.iso`. The ISO filename already contains arch (set by archiso from `profiledef.sh`), so this just needs the glob parameterized.
+Hardcoded `x86_64` glob. Take an arch arg, or do `*${OMARCHY_ARCH}-${ISO_REF}.iso`. The ISO filename already contains arch (set by archiso from `profiledef.sh`), so this just needs the glob parameterized.
 
 ### 11. CI — `.github/workflows/nightly-build.yml`
 

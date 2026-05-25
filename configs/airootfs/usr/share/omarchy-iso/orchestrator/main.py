@@ -23,43 +23,33 @@ def build_phases(ctx: InstallContext):
     hooks (limine-mkinitcpio-hook, in particular) and useradd happen at
     points where their prerequisites are guaranteed to be in place.
 
-    Two modes:
-      - full_disk: archinstall owns disk layout + bootloader.
-      - protected: Omarchy owns disk layout + bootloader; archinstall is
-        used for pacstrap + users + packages only.
+    Full-disk and protected installs use the same phase sequence. The
+    configurator only changes the JSON input: full-disk asks archinstall to
+    create/mount the layout, while protected provides an already-mounted target
+    and the partition details Omarchy needs for boot/fstab generation.
     """
     from .phases_impl import (
         prepare_live,
-        arch_install_full,
-        arch_install_base,
-        verify_protected_mounts,
-        configure_protected_boot,
+        prepare_install_target,
+        arch_install_system,
         configure_hibernation,
+        run_system_finalizer,
+        finalize_limine_boot,
         run_chroot_finalizer,
         configure_login,
-        validate_boot_full,
-        validate_boot_protected,
+        validate_boot,
     )
-
-    if ctx.is_protected:
-        return [
-            ("Preparing live environment",      prepare_live),
-            ("Verifying protected mounts",      verify_protected_mounts),
-            ("Installing base system",          arch_install_base),
-            ("Configuring protected boot",      configure_protected_boot),
-            ("Configuring hibernation",         configure_hibernation),
-            ("Finalizing in chroot",            run_chroot_finalizer),
-            ("Configuring login",               configure_login),
-            ("Validating protected boot setup", validate_boot_protected),
-        ]
 
     return [
         ("Preparing live environment", prepare_live),
-        ("Installing Arch + Omarchy",  arch_install_full),
+        ("Preparing install target",   prepare_install_target),
+        ("Installing Arch + Omarchy",  arch_install_system),
         ("Configuring hibernation",    configure_hibernation),
-        ("Finalizing in chroot",       run_chroot_finalizer),
+        ("Configuring system",         run_system_finalizer),
+        ("Finalizing Limine boot",     finalize_limine_boot),
+        ("Finalizing user",            run_chroot_finalizer),
         ("Configuring login",          configure_login),
-        ("Validating boot setup",      validate_boot_full),
+        ("Validating boot setup",      validate_boot),
     ]
 
 

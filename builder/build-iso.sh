@@ -5,7 +5,7 @@ set -e
 # Packages installed into the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+pacman --noconfirm -Sy archiso git sudo base-devel jq grub imagemagick neovim nodejs npm tree-sitter-cli
 
 # Pre-import the omarchy signing key (so pacman trusts our [omarchy] repo
 # during the build without keyserver lookups).
@@ -48,10 +48,10 @@ if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
     echo "debug=1"
     echo "built_at=$(date -Is)"
     echo "mirror=$OMARCHY_MIRROR"
-    if [[ -d /omarchy-installer ]]; then
-      echo "omarchy_installer_source=/omarchy-installer"
-      git -c safe.directory=/omarchy-installer -C /omarchy-installer rev-parse HEAD 2>/dev/null | sed 's/^/omarchy_installer_commit=/' || true
-      git -c safe.directory=/omarchy-installer -C /omarchy-installer status --short 2>/dev/null | sed 's/^/omarchy_installer_status=/' || true
+    if [[ -d /omarchy-source ]]; then
+      echo "omarchy_source=/omarchy-source"
+      git -c safe.directory=/omarchy-source -C /omarchy-source rev-parse HEAD 2>/dev/null | sed 's/^/omarchy_commit=/' || true
+      git -c safe.directory=/omarchy-source -C /omarchy-source status --short 2>/dev/null | sed 's/^/omarchy_status=/' || true
     fi
     if [[ -d /omarchy-pkgs ]]; then
       echo "omarchy_pkgs_source=/omarchy-pkgs"
@@ -64,7 +64,7 @@ fi
 # When --local-source is in effect, build omarchy* from the mounted source
 # trees and drop them in the offline mirror. Otherwise pacman -Syw below
 # downloads the published versions from the omarchy network mirror.
-if [[ -d /omarchy-installer && -d /omarchy-pkgs ]]; then
+if [[ -d /omarchy-source && -d /omarchy-pkgs ]]; then
   bash /builder/build-omarchy-packages.sh "$offline_mirror_dir"
   LOCAL_OMARCHY_BUILD=1
 fi
@@ -80,22 +80,17 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Packages installed into the live ISO environment itself (NOT the target system).
-# omarchy-installer + omarchy-settings need to be HERE so:
-#   1. /usr/share/omarchy/{install,default,bin} is available to the configurator
-#      and .automated_script.sh natively (no .pkg.tar.zst extraction hack)
-#   2. omarchy-settings's post_install hook drops omarchy's plymouthd.conf into
-#      /etc/plymouth so mkinitcpio's plymouth hook picks up the Omarchy theme
-#      when mkarchiso builds the live initramfs (otherwise plymouth shows
-#      the default theme on boot).
-arch_packages=(linux-t2 git gum jq openssl plymouth python-terminaltexteffects tzupdate omarchy-keyring omarchy-settings omarchy-installer lvm2 cryptsetup parted)
+# omarchy-settings is needed here so its post_install hook drops Omarchy's
+# plymouthd.conf into /etc/plymouth before mkarchiso builds the live initramfs.
+arch_packages=(linux-t2 git gum jq openssl plymouth python-terminaltexteffects tzupdate omarchy-keyring omarchy-settings lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target
 # install. With --local-source, the omarchy* packages we just built are
 # already in the mirror and we filter them out below. Without it, pacman -Syw
 # pulls the published omarchy* from the network mirror like any other package.
-if [[ -d /omarchy-installer ]]; then
-  base_pkg_lists=(/omarchy-installer/install/omarchy-base.packages /omarchy-installer/install/omarchy-other.packages)
+if [[ -d /omarchy-source ]]; then
+  base_pkg_lists=(/omarchy-source/install/omarchy-base.packages /omarchy-source/install/omarchy-other.packages)
 else
   # Pull the same package lists out of the freshly-downloaded omarchy package
   # so we don't need a local checkout in the non-local-source path.
@@ -106,6 +101,10 @@ else
   base_pkg_lists=(/tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-base.packages /tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-other.packages)
 fi
 
+mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
+cp "${base_pkg_lists[0]}" "$build_cache_dir/airootfs/usr/share/omarchy-iso/omarchy-base.packages"
+cp "${base_pkg_lists[1]}" "$build_cache_dir/airootfs/usr/share/omarchy-iso/omarchy-other.packages"
+
 # Collect every package we want available in the offline mirror.
 declare -a all_packages
 mapfile -t all_packages < <(
@@ -113,9 +112,9 @@ mapfile -t all_packages < <(
     cat "$build_cache_dir/packages.x86_64"
     grep -hv '^#\|^$' "${base_pkg_lists[@]}"
     grep -hv '^#\|^$' /builder/archinstall.packages
-    # Always include the omarchy packages so the target install can find
-    # omarchy-installer and companion packages in the offline mirror.
-    printf 'omarchy\nomarchy-settings\nomarchy-installer\nomarchy-limine\nomarchy-nvim\n'
+    # Always include the Omarchy packages so the target install can find
+    # the runtime and companion packages in the offline mirror.
+    printf 'omarchy\nomarchy-settings\nomarchy-limine\nomarchy-nvim\n'
   } | sort -u
 )
 
@@ -123,7 +122,7 @@ mapfile -t all_packages < <(
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
 # the published versions on top.
 if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
-  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-installer|omarchy-limine|omarchy-nvim)$'))
+  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-limine|omarchy-nvim)$'))
 fi
 
 mkdir -p /tmp/offlinedb

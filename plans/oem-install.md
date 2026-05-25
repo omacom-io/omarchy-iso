@@ -60,7 +60,7 @@ Create a second ISO flavor for OEM preloading that is installed to internal stor
   - `grub/loopback.cfg`: remove `archlinux-accessibility` menuentry.
   - `syslinux/archiso_sys-linux.cfg`: remove `arch64speech` label block.
 - When `OMARCHY_MODE=oem`, override `iso_application` in `profiledef.sh` to `"Omarchy OEM Installer"`.
-- Rename output ISO with `-oem` suffix (in addition to existing `-$OMARCHY_INSTALLER_REF` suffix).
+- Rename output ISO with `-oem` suffix (in addition to existing `-$OMARCHY_ISO_REF` suffix).
 
 ### Hardening
 - Add post-injection build assertion that fails build if any expected boot config does not contain `copytoram=y`.

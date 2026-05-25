@@ -65,7 +65,7 @@ logs=(
   "pacman-key: populating archlinux keyring"
   "mount: /mnt ready"
   "pacstrap: installing linux btrfs-progs limine"
-  "pacman: installing omarchy-installer"
+  "pacman: installing omarchy"
   "useradd: creating ryan with /etc/skel defaults"
   "limine-update: generating omarchy_linux.efi"
   "snapper: creating root config"

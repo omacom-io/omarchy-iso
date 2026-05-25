@@ -1,7 +1,54 @@
 #!/bin/bash
 
-# Rely on Omarchy for styling and error handling
-source "$OMARCHY_INSTALL/helpers/all.sh"
+# Minimal live-ISO presentation helpers. Keep these local to the ISO: the
+# installed Omarchy package owns target setup helpers, while the ISO owns the
+# installer UI that runs before any target packages exist.
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+LOGO_PATH="${LOGO_PATH:-$OMARCHY_PATH/logo.txt}"
+
+if [[ -e /dev/tty ]]; then
+  TERM_SIZE=$(stty size 2>/dev/null </dev/tty || true)
+fi
+if [[ -n ${TERM_SIZE:-} ]]; then
+  TERM_HEIGHT=${TERM_SIZE%% *}
+  TERM_WIDTH=${TERM_SIZE##* }
+else
+  TERM_HEIGHT=${LINES:-24}
+  TERM_WIDTH=${COLUMNS:-80}
+fi
+
+if [[ -f $LOGO_PATH ]]; then
+  LOGO_WIDTH=$(awk '{ if (length > max) max = length } END { print max+0 }' "$LOGO_PATH" 2>/dev/null || echo 0)
+else
+  LOGO_WIDTH=7
+fi
+(( LOGO_WIDTH > 0 )) || LOGO_WIDTH=7
+PADDING_LEFT=$(((TERM_WIDTH - LOGO_WIDTH) / 2))
+(( PADDING_LEFT < 0 )) && PADDING_LEFT=0
+PADDING_LEFT_SPACES=$(printf "%*s" "$PADDING_LEFT" "")
+PADDING="0 0 0 $PADDING_LEFT"
+
+export TERM_HEIGHT TERM_WIDTH LOGO_PATH PADDING_LEFT PADDING_LEFT_SPACES PADDING
+export GUM_CONFIRM_PROMPT_FOREGROUND="6"
+export GUM_CONFIRM_SELECTED_FOREGROUND="0"
+export GUM_CONFIRM_SELECTED_BACKGROUND="2"
+export GUM_CONFIRM_UNSELECTED_FOREGROUND="7"
+export GUM_CONFIRM_UNSELECTED_BACKGROUND="0"
+export GUM_CHOOSE_PADDING="$PADDING"
+export GUM_FILTER_PADDING="$PADDING"
+export GUM_INPUT_PADDING="$PADDING"
+export GUM_SPIN_PADDING="$PADDING"
+export GUM_TABLE_PADDING="$PADDING"
+export GUM_CONFIRM_PADDING="$PADDING"
+
+clear_logo() {
+  printf "\033[H\033[2J"
+  if [[ -f $LOGO_PATH ]]; then
+    gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
+  else
+    gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "Omarchy"
+  fi
+}
 
 # Ensure tzupdate is available for guessing timezone
 command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
@@ -16,8 +63,13 @@ abort() {
 step() {
   clear_logo
   echo
-  gum style "$1"
+  gum style --padding "0 0 0 $PADDING_LEFT" "$1"
   echo
+}
+
+# Padded body text to line up with the logo and gum widgets.
+say() {
+  gum style --padding "0 0 0 $PADDING_LEFT" "$@"
 }
 
 notice() {
@@ -26,6 +78,76 @@ notice() {
   gum spin --spinner "pulse" --title "$1" -- sleep "${2:-2}"
   echo
 }
+
+# Tools menu — recovery-style actions kept off the main install path.
+# Inlines its own disk picker so the launcher can run before disk_form is
+# defined further down in the script.
+tools_menu() {
+  while true; do
+    step "Tools"
+    local choice
+    choice=$(gum choose --header "Pick a tool" \
+      "Open partition tool" \
+      "Drop to shell" \
+      "Reboot" \
+      "Power off" \
+      "Back to installer") || return 0
+
+    case "$choice" in
+      "Open partition tool")
+        local d disks
+        disks=$(lsblk -dpno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}' | grep -E '/dev/(sd|hd|vd|nvme|mmcblk|xv)' || true)
+        if [[ -z "$disks" ]]; then
+          notice "No suitable disks found" 2
+          continue
+        fi
+        d=$(echo "$disks" | gum choose --header "Select disk") || continue
+        clear
+        cfdisk "$d" || true
+        partprobe "$d" 2>/dev/null || true
+        sync
+        sleep 1
+        ;;
+      "Drop to shell")
+        clear
+        echo "Type 'exit' to return to the tools menu."
+        bash --norc || true
+        ;;
+      "Reboot")
+        reboot
+        ;;
+      "Power off")
+        poweroff
+        ;;
+      "Back to installer")
+        return 0
+        ;;
+    esac
+  done
+}
+
+# Landing screen: Enter installs, Ctrl-T opens the tools menu.
+launcher_form() {
+  while true; do
+    step "Install Omarchy"
+    say "Press Enter to install Omarchy on this machine."
+    echo
+    say --foreground 8 "Ctrl-T  Tools"
+
+    local key
+    IFS= read -rsn1 key || true
+    case "$key" in
+      ""|$'\n'|$'\r')
+        return 0
+        ;;
+      $'\x14')
+        tools_menu
+        ;;
+    esac
+  done
+}
+
+launcher_form
 
 # STEP 1: KEYBOARD LAYOUT
 
@@ -280,6 +402,21 @@ to_gb() {
   awk -v bytes="$1" 'BEGIN {printf "%.1fGB", bytes/1024/1024/1024}'
 }
 
+# Shared error screen for every "can't fit Omarchy here" outcome of the
+# partition install. Offers the partition tool as the meaningful second
+# action so users have a way to actually fix the situation.
+not_enough_space() {
+  local available="${1:-0}"
+  step "Not enough free space on $disk"
+  say --foreground 1 "$disk has $(to_gb $available) of usable free space; Omarchy needs at least 32GB."
+  say "Open the partition tool to free at least 32GB on $disk, then try again."
+  echo
+  if ! gum confirm --affirmative "Back" --negative "Open partition tool" "Return to installation mode?"; then
+    open_partition_tool
+  fi
+  return 1
+}
+
 run_partition_install() {
   local dry=false
   [[ "${1:-}" == "dry" ]] && dry=true
@@ -288,8 +425,8 @@ run_partition_install() {
   local bl_part
   bl_part=$(detect_bitlocker || true)
   if [[ -n "$bl_part" ]]; then
-    gum style --foreground 1 "BitLocker signature detected on $bl_part."
-    gum style "Suspend or disable BitLocker in Windows before installing alongside it."
+    say --foreground 1 "BitLocker signature detected on $bl_part."
+    say "Suspend or disable BitLocker in Windows before installing alongside it."
     abort "Aborted: BitLocker is active on this disk."
   fi
 
@@ -298,7 +435,7 @@ run_partition_install() {
   shared_esp=$(detect_windows_esp || true)
 
   if [[ -n "$shared_esp" ]]; then
-    gum style "Found Windows ESP at $shared_esp — will install alongside."
+    say "Found Windows ESP at $shared_esp — will install alongside."
     local tmp_mp esp_free_mib
     tmp_mp=$(mktemp -d)
     mount -o ro "$shared_esp" "$tmp_mp"
@@ -307,39 +444,50 @@ run_partition_install() {
     if (( esp_free_mib < 100 )); then
       abort "Windows ESP $shared_esp has only ${esp_free_mib}MiB free — need at least 100MiB for Omarchy."
     fi
-    gum style "Windows ESP has ${esp_free_mib}MiB free."
+    say "Windows ESP has ${esp_free_mib}MiB free."
   else
-    gum style "No Windows ESP detected on $disk — a new EFI partition will be created in free space."
+    say "No Windows ESP detected on $disk — a new EFI partition will be created in free space."
   fi
 
   step "Analyzing free space on $disk"
   partprobe "$disk" 2>/dev/null || true
   sleep 1
-  parted --script "$disk" unit B print free 2>/dev/null || lsblk -b "$disk"
-  echo
 
-  local FREE_SPACE_INFO
-  FREE_SPACE_INFO=$(parted -m "$disk" unit B print free 2>/dev/null | \
-    awk -F: '
-      $NF ~ /free/ {
-        start=$2; end=$3; size=$4;
-        gsub(/B/, "", start);
-        gsub(/B/, "", end);
-        gsub(/B/, "", size);
-        if (size+0 > max_size+0) {
-          max_size=size; max_start=start; max_end=end;
+  # An unlabeled disk has no partition table for parted to scan, so we
+  # synthesize a whole-disk free region and mklabel gpt before mkpart.
+  local FREE_SPACE_INFO needs_mklabel=false pt_type disk_size_b
+  pt_type=$(lsblk -dno PTTYPE "$disk" 2>/dev/null)
+  if [[ -z "$pt_type" ]]; then
+    disk_size_b=$(lsblk -bdno SIZE "$disk" 2>/dev/null)
+    if [[ -n "$disk_size_b" && "$disk_size_b" -gt 0 ]]; then
+      local _mib=$((1024 * 1024))
+      local _start=$_mib
+      local _end=$(( (disk_size_b - _mib) / _mib * _mib ))
+      FREE_SPACE_INFO="$_start $_end $((_end - _start))"
+      needs_mklabel=true
+    fi
+  else
+    # -s (script mode) keeps parted from prompting on stderr for warnings
+    # like a stale GPT backup; without it the configurator hangs invisibly.
+    FREE_SPACE_INFO=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null | \
+      awk -F: '
+        $NF ~ /free/ {
+          start=$2; end=$3; size=$4;
+          gsub(/B/, "", start);
+          gsub(/B/, "", end);
+          gsub(/B/, "", size);
+          if (size+0 > max_size+0) {
+            max_size=size; max_start=start; max_end=end;
+          }
         }
-      }
-      END {
-        if (max_size+0 > 0) printf "%s %s %s\n", max_start, max_end, max_size;
-      }')
+        END {
+          if (max_size+0 > 0) printf "%s %s %s\n", max_start, max_end, max_size;
+        }')
+  fi
 
   if [[ -z "$FREE_SPACE_INFO" ]]; then
-    gum style --foreground 1 "No usable free space detected on $disk."
-    gum style "Partition install uses unallocated free space, not a pre-created partition."
-    gum style "Open the partition tool, delete/shrink partitions until the target area says Free space, then leave it unallocated."
-    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
-    return 1
+    not_enough_space 0
+    return $?
   fi
 
   local FREE_START_B FREE_END_B FREE_SIZE_B
@@ -363,9 +511,8 @@ run_partition_install() {
   ROOT_END_B=$((FREE_END_B / ALIGN * ALIGN))
 
   if (( ROOT_END_B <= ROOT_START_B )); then
-    gum style --foreground 1 "Not enough aligned free space for partitions after alignment."
-    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
-    return 1
+    not_enough_space "$FREE_SIZE_B"
+    return $?
   fi
 
   local INSTALL_START_B INSTALL_MAX_B INSTALL_MAX_GIB INSTALL_SIZE_GIB
@@ -377,22 +524,20 @@ run_partition_install() {
   INSTALL_MAX_B=$((ROOT_END_B - INSTALL_START_B))
 
   if (( INSTALL_MAX_B < MIN_INSTALL_B )); then
-    gum style --foreground 1 "Usable free space ($(to_gb $INSTALL_MAX_B)) is below the 32GB minimum for Omarchy."
-    gum style "Open the partition tool, delete/shrink partitions until the target area says Free space, then leave it unallocated."
-    gum confirm --affirmative "Back" --negative "Back" "Return to installation mode?" >/dev/null 2>&1 || true
-    return 1
+    not_enough_space "$INSTALL_MAX_B"
+    return $?
   fi
 
   INSTALL_MAX_GIB=$((INSTALL_MAX_B / gib))
   while true; do
     step "Choose Omarchy size"
-    gum style "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
+    say "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
     if [[ -z "$shared_esp" ]]; then
-      gum style "The size includes a new 2GiB EFI partition; the rest becomes root."
+      say "The size includes a new 2GiB EFI partition; the rest becomes root."
     else
-      gum style "Using existing ESP: $shared_esp"
+      say "Using existing ESP: $shared_esp"
     fi
-    gum style "Omarchy can use 32–${INSTALL_MAX_GIB}GiB total. Leave the default to use all available space."
+    say "Omarchy can use 32–${INSTALL_MAX_GIB}GiB total. Leave the default to use all available space."
     echo
 
     INSTALL_SIZE_GIB=$(gum input \
@@ -414,32 +559,61 @@ run_partition_install() {
     ROOT_END_B=$((ROOT_START_B + INSTALL_SIZE_GIB * gib))
   fi
 
-  step "Proposed layout on $disk"
-  gum style "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
-  if [[ -z "$shared_esp" ]]; then
-    gum style "  New EFI partition:  $(to_gb $EFI_START_B) — $(to_gb $EFI_END_B) (2GB FAT32)"
-  else
-    gum style "  Shared ESP:        $shared_esp (Windows, mounted at /efi)"
-  fi
-  gum style "  New root (Btrfs):  $(to_gb $ROOT_START_B) — $(to_gb $ROOT_END_B) ($(to_gb $((ROOT_END_B - ROOT_START_B))))"
-  echo
+  # Shared Windows ESP can't host our LUKS layout, so encryption isn't
+  # offered in that case. Otherwise default to encrypted and hide the
+  # unencrypted path behind Ctrl+C, matching the full-disk flow.
+  local mode="encrypted" affirmative confirm_status
+  [[ -n "$shared_esp" ]] && mode="forced_unencrypted"
 
-  gum confirm --affirmative "Yes, partition" --negative "Cancel" \
-    "Create Omarchy partitions in the free space on $disk?" || return 1
+  while true; do
+    step "Proposed layout on $disk"
+    say "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
+    if [[ -z "$shared_esp" ]]; then
+      say "  New EFI partition:  $(to_gb $EFI_START_B) — $(to_gb $EFI_END_B) (2GB FAT32)"
+    else
+      say "  Shared ESP:        $shared_esp (Windows, mounted at /efi)"
+    fi
+    say "  New root (Btrfs):  $(to_gb $ROOT_START_B) — $(to_gb $ROOT_END_B) ($(to_gb $((ROOT_END_B - ROOT_START_B))))"
+    echo
 
-  echo
-  if gum confirm \
-    --affirmative "Yes, encrypt" \
-    --negative "No, leave unencrypted" \
-    "Encrypt the Omarchy root partition with LUKS2?"; then
-    encrypt_installation=true
-  else
-    encrypt_installation=false
-  fi
+    case $mode in
+      encrypted)
+        say --foreground 8 "Press Ctrl+C for unencrypted install."
+        affirmative="Yes, install"
+        ;;
+      unencrypted)
+        affirmative="Yes, install without encryption"
+        ;;
+      forced_unencrypted)
+        say --foreground 8 "Shared Windows ESP cannot host encrypted Omarchy — installing unencrypted."
+        affirmative="Yes, install"
+        ;;
+    esac
+    echo
 
-  if [[ "$encrypt_installation" == "true" && -n "$shared_esp" ]]; then
-    abort "Encrypted install on a shared Windows ESP is not yet supported. Please choose unencrypted, or use Full Install."
-  fi
+    gum confirm --affirmative "$affirmative" --negative "Cancel" \
+      "Create Omarchy partitions in the free space on $disk?"
+    confirm_status=$?
+
+    case $confirm_status in
+      0)
+        [[ $mode == "encrypted" ]] && encrypt_installation=true || encrypt_installation=false
+        break
+        ;;
+      1)
+        return 1
+        ;;
+      130)
+        case $mode in
+          encrypted) mode="unencrypted" ;;
+          unencrypted) mode="encrypted" ;;
+        esac
+        ;;
+      *)
+        abort
+        ;;
+    esac
+  done
 
   local esp_mount_in_target
   if [[ "$encrypt_installation" == "true" ]]; then
@@ -465,20 +639,31 @@ run_partition_install() {
     root_part_num=$(( ${last_part:-0} + 1 ))
   fi
 
-  local efi_dev root_partition_device
+  local efi_dev root_partition_device root_mapper
   if [[ -n "$shared_esp" ]]; then
     efi_dev="$shared_esp"
   else
     efi_dev=$(partition_path "$disk" "$efi_part_num")
   fi
   root_partition_device=$(partition_path "$disk" "$root_part_num")
+  if [[ "$encrypt_installation" == "true" ]]; then
+    root_mapper="/dev/mapper/omarchy_root"
+  else
+    root_mapper="$root_partition_device"
+  fi
 
   if $dry; then
-    gum style "[dry] would create root partition at $root_partition_device"
-    [[ -z "$shared_esp" ]] && gum style "[dry] would create EFI partition at $efi_dev"
-    gum style "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
+    $needs_mklabel && say "[dry] would initialize GPT on $disk"
+    say "[dry] would create root partition at $root_partition_device"
+    [[ -z "$shared_esp" ]] && say "[dry] would create EFI partition at $efi_dev"
+    say "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
   else
     step "Creating partitions on $disk"
+    if $needs_mklabel; then
+      parted --script "$disk" mklabel gpt
+      partprobe "$disk" 2>/dev/null || true
+      sleep 1
+    fi
     if [[ -z "$shared_esp" ]]; then
       parted --script "$disk" mkpart primary fat32 "${EFI_START_B}B" "${EFI_END_B}B"
       parted --script "$disk" set "$efi_part_num" esp on
@@ -498,7 +683,6 @@ run_partition_install() {
       sleep 1
     done
 
-    local root_mapper
     if [[ "$encrypt_installation" == "true" ]]; then
       step "Setting up LUKS2 on $root_partition_device"
       printf "%s" "$password" | cryptsetup luksFormat --type luks2 --batch-mode "$root_partition_device" -
@@ -568,6 +752,16 @@ $credentials_encryption_line
 }
 _EOF_
 
+  local luks_uuid_json="null" luks_uuid
+  if [[ "$encrypt_installation" == "true" ]]; then
+    if $dry; then
+      luks_uuid="00000000-0000-0000-0000-000000000000"
+    else
+      luks_uuid=$(blkid -s UUID -o value "$root_partition_device")
+    fi
+    luks_uuid_json="\"$luks_uuid\""
+  fi
+
   cat <<-_EOF_ >user_configuration.json
 {
     "app_config": null,
@@ -576,6 +770,23 @@ _EOF_
     "audio_config": { "audio": "pipewire" },
     "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
     "custom_commands": [],
+    "omarchy_install": {
+        "mode": "protected",
+        "target_mount": "/mnt",
+        "boot": {
+            "esp_mount": "$esp_mount_in_target",
+            "esp_path": "/EFI/limine",
+            "efi_binary": "limine_x64.efi",
+            "enable_fallback": false
+        },
+        "storage": {
+            "esp_device": "$efi_dev",
+            "root_device": "$root_partition_device",
+            "root_mapper": "$root_mapper",
+            "luks_uuid": $luks_uuid_json,
+            "kernel": "$kernel_choice"
+        }
+    },
     "disk_config": {
         "config_type": "pre_mounted_config",
         "mountpoint": "/mnt"
@@ -608,8 +819,7 @@ _EOF_
         "base-devel",
         "git",
         "omarchy-keyring",
-        "omarchy",
-        "omarchy-installer"
+        "omarchy"
     ],
     "profile_config": {
         "gfx_driver": null,
@@ -619,27 +829,6 @@ _EOF_
     "version": "3.0.9"
 }
 _EOF_
-
-  local luks_uuid_json="null" luks_uuid
-  if [[ "$encrypt_installation" == "true" ]]; then
-    if $dry; then
-      luks_uuid="00000000-0000-0000-0000-000000000000"
-    else
-      luks_uuid=$(blkid -s UUID -o value "$root_partition_device")
-    fi
-    luks_uuid_json="\"$luks_uuid\""
-  fi
-
-  cat >/root/protected_install.json <<JSON
-{
-  "esp_device": "$efi_dev",
-  "esp_mount": "$esp_mount_in_target",
-  "esp_path": "/EFI/limine",
-  "luks_uuid": $luks_uuid_json,
-  "root_device": "$root_partition_device",
-  "kernel": "$kernel_choice"
-}
-JSON
 
   if $dry; then
     echo -e "User Configuration:"
@@ -652,9 +841,7 @@ JSON
     cat user_email_address.txt
     echo -e "\nDisk Encryption:"
     cat user_encrypt_installation.txt
-    echo -e "\nProtected Install Intent:"
-    cat /root/protected_install.json
-    rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt /root/protected_install.json
+    rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt
   fi
 }
 
@@ -709,11 +896,17 @@ open_partition_tool() {
 }
 
 install_mode_form() {
+  local choices=("Full disk install")
+
+  # The free-space/protected path registers an EFI boot entry and is UEFI-only.
+  # Full-disk installs still support BIOS through the orchestrator's BIOS branch.
+  if [[ -d /sys/firmware/efi ]]; then
+    choices+=("Free space install (alongside existing data)")
+  fi
+  choices+=("Choose a different disk")
+
   step "Installation mode"
-  install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" \
-    "Full disk install" \
-    "Free space install (alongside existing data)" \
-    "Open partition tool") || abort
+  install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" "${choices[@]}") || abort
 }
 
 while true; do
@@ -728,8 +921,8 @@ while true; do
         exit 0
       fi
       ;;
-    "Open partition tool")
-      open_partition_tool
+    "Choose a different disk")
+      disk_form
       ;;
   esac
 done
@@ -855,6 +1048,19 @@ cat <<-_EOF_ >user_configuration.json
     "audio_config": { "audio": "pipewire" },
     "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
     "custom_commands": [],
+    "omarchy_install": {
+        "mode": "full_disk",
+        "target_mount": "/mnt",
+        "boot": {
+            "esp_mount": "/boot",
+            "esp_path": "/EFI/limine",
+            "efi_binary": "limine_x64.efi",
+            "enable_fallback": true
+        },
+        "storage": {
+            "kernel": "$kernel_choice"
+        }
+    },
     "disk_config": {
         "btrfs_options": { 
           "snapshot_config": {
@@ -946,8 +1152,7 @@ cat <<-_EOF_ >user_configuration.json
         "base-devel",
         "git",
         "omarchy-keyring",
-        "omarchy",
-        "omarchy-installer"
+        "omarchy"
     ],
     "profile_config": {
         "gfx_driver": null,

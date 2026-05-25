@@ -66,7 +66,7 @@ def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
     import sys
     saved_argv = sys.argv
     sys.argv = [
-        saved_argv[0] if saved_argv else "omarchy-install",
+        saved_argv[0] if saved_argv else "omarchy-iso-install",
         "--config", str(config_path),
         "--creds", str(creds_path),
     ]

@@ -21,6 +21,8 @@ class InstallContext:
 
     user_configuration: dict
     user_credentials: dict
+    arch_config_path: Path
+    omarchy_install: dict[str, Any]
 
     target: Path = Path("/mnt")
     omarchy_path: Path = Path("/usr/share/omarchy")
@@ -42,6 +44,15 @@ class InstallContext:
         config_path = Path(config_str)
         creds_path = Path(creds_str)
         user_configuration = json.loads(config_path.read_text())
+        omarchy_install = user_configuration.get("omarchy_install") or _default_omarchy_install(user_configuration)
+
+        arch_configuration = dict(user_configuration)
+        arch_configuration.pop("omarchy_install", None)
+        state_dir = Path(os.environ.get("OMARCHY_INSTALL_STATE_DIR", "/run/omarchy-install"))
+        state_dir.mkdir(parents=True, exist_ok=True)
+        arch_config_path = state_dir / "archinstall-user_configuration.json"
+        arch_config_path.write_text(json.dumps(arch_configuration, indent=2) + "\n")
+
         ctx = cls(
             config_path=config_path,
             creds_path=creds_path,
@@ -50,13 +61,14 @@ class InstallContext:
             encrypt=_read_text(os.environ.get("OMARCHY_INSTALL_ENCRYPT_FILE")).lower() in ("true", "yes", "1"),
             user_configuration=user_configuration,
             user_credentials=json.loads(creds_path.read_text()),
+            arch_config_path=arch_config_path,
+            omarchy_install=omarchy_install,
+            state_dir=state_dir,
         )
         disk_config = user_configuration.get("disk_config", {})
-        if (
-            disk_config.get("config_type") == "pre_mounted_config"
-            and disk_config.get("mountpoint")
-        ):
-            ctx.target = Path(disk_config["mountpoint"])
+        target_mount = omarchy_install.get("target_mount") or disk_config.get("mountpoint")
+        if target_mount:
+            ctx.target = Path(target_mount)
         return ctx
 
     @property
@@ -65,12 +77,30 @@ class InstallContext:
 
     @property
     def mode(self) -> str:
+        if mode := self.omarchy_install.get("mode"):
+            return mode
         cfg_type = self.user_configuration.get("disk_config", {}).get("config_type")
         return "protected" if cfg_type == "pre_mounted_config" else "full_disk"
 
     @property
     def is_protected(self) -> bool:
         return self.mode == "protected"
+
+
+def _default_omarchy_install(user_configuration: dict) -> dict[str, Any]:
+    disk_config = user_configuration.get("disk_config", {})
+    mode = "protected" if disk_config.get("config_type") == "pre_mounted_config" else "full_disk"
+    return {
+        "mode": mode,
+        "target_mount": disk_config.get("mountpoint") or "/mnt",
+        "boot": {
+            "esp_mount": "/boot",
+            "esp_path": "/EFI/limine",
+            "efi_binary": "limine_x64.efi",
+            "enable_fallback": mode == "full_disk",
+        },
+        "storage": {},
+    }
 
 
 def _read_text(path: str | None) -> str:
