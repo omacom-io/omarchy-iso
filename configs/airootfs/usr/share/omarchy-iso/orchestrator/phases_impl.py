@@ -35,15 +35,16 @@ from .ui import info
 
 
 # Packages installed BEFORE useradd. omarchy-settings and omarchy-nvim populate
-# /etc/skel so the user's home gets seeded correctly. Target-side setup commands
-# are installed later by the omarchy runtime package and executed in chroot.
+# /etc/skel so the user's home gets seeded correctly, and omarchy-settings now
+# also ships the limine/snapper configs (previously omarchy-limine). Target-side
+# setup commands are installed later by the omarchy runtime package and executed
+# in chroot.
 EARLY_BOOTSTRAP_PACKAGES = [
     "base-devel",
     "git",
     "limine",
     "efibootmgr",
     "omarchy-keyring",
-    "omarchy-limine",
     "omarchy-settings",
 ]
 

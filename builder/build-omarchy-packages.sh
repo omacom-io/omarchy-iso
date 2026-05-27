@@ -33,7 +33,6 @@ chown builder:builder "$work_dir"
 pacman -Sy --noconfirm
 
 packages=(
-  omarchy-limine
   omarchy-settings
   omarchy
   omarchy-nvim

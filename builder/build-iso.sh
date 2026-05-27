@@ -114,7 +114,7 @@ mapfile -t all_packages < <(
     grep -hv '^#\|^$' /builder/archinstall.packages
     # Always include the Omarchy packages so the target install can find
     # the runtime and companion packages in the offline mirror.
-    printf 'omarchy\nomarchy-settings\nomarchy-limine\nomarchy-nvim\n'
+    printf 'omarchy\nomarchy-settings\nomarchy-nvim\n'
   } | sort -u
 )
 
@@ -122,7 +122,7 @@ mapfile -t all_packages < <(
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
 # the published versions on top.
 if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
-  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-limine|omarchy-nvim)$'))
+  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-nvim)$'))
 fi
 
 mkdir -p /tmp/offlinedb
