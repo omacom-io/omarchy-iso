@@ -13,7 +13,7 @@ Phase ordering (full-disk and protected/pre-mounted):
     configure_hibernation  → root-owned swap/resume drop-ins
     run_system_finalizer   → arch-chroot root omarchy-setup-system
     finalize_limine_boot   → final Limine config/UKI build after hardware drop-ins
-    run_chroot_finalizer   → arch-chroot -u user omarchy-setup-user
+    run_chroot_finalizer   → arch-chroot -u user omarchy-finalize-user
     configure_login        → sddm state + encrypted-install autologin
     validate_boot          → assert UKI / limine.conf / kernel cmdline are sane
 """
@@ -862,7 +862,7 @@ def _debug_run(ctx: InstallContext, cmd: list[str]) -> None:
 #  2. bind-mount the offline mirror + /opt/packages into /mnt for target pacman
 #     and bundled language runtimes
 #  3. arch-chroot as root → omarchy-setup-system --first-install
-#  4. arch-chroot as user → omarchy-setup-user --first-install
+#  4. arch-chroot as user → omarchy-finalize-user --first-install
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _prepare_target_setup(ctx: InstallContext) -> None:
@@ -1094,7 +1094,7 @@ def _limine_kernel_cmdline(config_text: str) -> str:
 def run_chroot_finalizer(ctx: InstallContext) -> None:
     _run_target_setup_command(
         ctx,
-        ["/usr/bin/omarchy-setup-user", "--force", "--first-install"],
+        ["/usr/bin/omarchy-finalize-user", "--force", "--first-install"],
         user=ctx.username,
     )
 
