@@ -678,23 +678,24 @@ run_partition_install() {
     abort "Aborted: BitLocker is active on this disk."
   fi
 
-  step "Looking for an existing Windows ESP on $disk"
-  local shared_esp
-  shared_esp=$(detect_windows_esp || true)
-
-  if [[ -n "$shared_esp" ]]; then
-    say "Found Windows ESP at $shared_esp — will install alongside."
-    local tmp_mp esp_free_mib
-    tmp_mp=$(mktemp -d)
-    mount -o ro "$shared_esp" "$tmp_mp"
-    esp_free_mib=$(df -BM --output=avail "$tmp_mp" | tail -1 | tr -dc '0-9')
-    umount "$tmp_mp"; rmdir "$tmp_mp"
-    if (( esp_free_mib < 100 )); then
-      abort "Windows ESP $shared_esp has only ${esp_free_mib}MiB free — need at least 100MiB for Omarchy."
-    fi
-    say "Windows ESP has ${esp_free_mib}MiB free."
+  # Omarchy always creates its own dedicated ESP in free space and never
+  # adopts an existing (Windows) ESP. Sharing the Windows ESP is fragile:
+  # Windows Update/repair can reclaim or reformat it, the typical 100-260MiB
+  # Windows ESP is far too small for our Unified Kernel Images, and a shared
+  # ESP forces the install unencrypted. A separate Linux ESP keeps Windows
+  # and Omarchy fully isolated and keeps LUKS on the table.
+  #
+  # shared_esp stays declared but is intentionally always empty so every
+  # downstream `[[ -z "$shared_esp" ]]` branch takes the dedicated-ESP path.
+  step "Checking existing EFI partitions on $disk"
+  local shared_esp=""
+  local detected_win_esp
+  detected_win_esp=$(detect_windows_esp || true)
+  if [[ -n "$detected_win_esp" ]]; then
+    say "Found a Windows ESP at $detected_win_esp — leaving it untouched."
+    say "Omarchy will create its own dedicated EFI partition in free space."
   else
-    say "No Windows ESP detected on $disk — a new EFI partition will be created in free space."
+    say "A new EFI partition will be created in free space."
   fi
 
   step "Analyzing free space on $disk"
@@ -807,11 +808,10 @@ run_partition_install() {
     ROOT_END_B=$((ROOT_START_B + INSTALL_SIZE_GIB * gib))
   fi
 
-  # Shared Windows ESP can't host our LUKS layout, so encryption isn't
-  # offered in that case. Otherwise default to encrypted and hide the
-  # unencrypted path behind Ctrl+C, matching the full-disk flow.
+  # Default to encrypted and hide the unencrypted path behind Ctrl+C,
+  # matching the full-disk flow. The dedicated Omarchy ESP always supports
+  # LUKS, so encryption is always on the table here.
   local mode="encrypted" affirmative confirm_status
-  [[ -n "$shared_esp" ]] && mode="forced_unencrypted"
 
   while true; do
     step "Proposed layout on $disk"
@@ -831,10 +831,6 @@ run_partition_install() {
         ;;
       unencrypted)
         affirmative="Yes, install without encryption"
-        ;;
-      forced_unencrypted)
-        say --foreground 8 "Shared Windows ESP cannot host encrypted Omarchy — installing unencrypted."
-        affirmative="Yes, install"
         ;;
     esac
     echo
