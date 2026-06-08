@@ -34,18 +34,95 @@ from .context import InstallContext
 from .ui import info
 
 
-# Packages installed BEFORE useradd. omarchy-settings and omarchy-nvim populate
-# /etc/skel so the user's home gets seeded correctly, and omarchy-settings now
-# also ships the limine/snapper configs (previously omarchy-limine). Target-side
-# setup commands are installed later by the omarchy runtime package and executed
-# in chroot.
-EARLY_BOOTSTRAP_PACKAGES = [
+# Package targets are written by builder/build-iso.sh. Stable ISOs use the
+# stable package names, while dev/local-source ISOs install the dev package
+# names explicitly instead of relying on provides=omarchy resolution.
+def _iso_ref() -> str:
+    if ref := os.environ.get("OMARCHY_ISO_REF"):
+        return ref.strip()
+
+    ref_file = Path("/root/omarchy_iso_ref")
+    if ref_file.exists():
+        try:
+            return ref_file.read_text().strip()
+        except OSError:
+            pass
+
+    return "stable"
+
+
+def _default_package_targets() -> dict[str, str]:
+    if _iso_ref() in {"dev", "local"}:
+        return {
+            "runtime": "omarchy-dev",
+            "settings": "omarchy-settings-dev",
+            "nvim": "omarchy-nvim",
+        }
+
+    return {
+        "runtime": "omarchy",
+        "settings": "omarchy-settings",
+        "nvim": "omarchy-nvim",
+    }
+
+
+def _package_targets() -> dict[str, str]:
+    targets = _default_package_targets()
+
+    targets_file = Path("/usr/share/omarchy-iso/package-targets")
+    if targets_file.exists():
+        try:
+            for raw in targets_file.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                value = value.strip().strip('"\'')
+                match key.strip():
+                    case "OMARCHY_RUNTIME_PACKAGE":
+                        targets["runtime"] = value
+                    case "OMARCHY_SETTINGS_PACKAGE":
+                        targets["settings"] = value
+                    case "OMARCHY_NVIM_PACKAGE":
+                        targets["nvim"] = value
+        except OSError:
+            pass
+
+    env_to_key = {
+        "OMARCHY_RUNTIME_PACKAGE": "runtime",
+        "OMARCHY_SETTINGS_PACKAGE": "settings",
+        "OMARCHY_NVIM_PACKAGE": "nvim",
+    }
+    for env_name, key in env_to_key.items():
+        if value := os.environ.get(env_name):
+            targets[key] = value
+
+    return targets
+
+
+def _omarchy_runtime_package() -> str:
+    return _package_targets()["runtime"]
+
+
+def _omarchy_settings_package() -> str:
+    return _package_targets()["settings"]
+
+
+def _omarchy_nvim_package() -> str:
+    return _package_targets()["nvim"]
+
+
+# Packages installed BEFORE useradd. The selected omarchy-settings package and
+# omarchy-nvim populate /etc/skel so the user's home gets seeded correctly, and
+# omarchy-settings also ships the limine/snapper configs. Target-side setup
+# commands are installed later by the selected Omarchy runtime package and
+# executed in chroot.
+EARLY_BOOTSTRAP_BASE_PACKAGES = [
     "base-devel",
     "git",
     "limine",
     "efibootmgr",
     "omarchy-keyring",
-    "omarchy-settings",
 ]
 
 # Install LuaRocks before omarchy-nvim pulls in lua51-lpeg. Arch's lua-luarocks
@@ -58,15 +135,21 @@ EARLY_LUAROCKS_PACKAGES = [
     "luarocks",
 ]
 
-EARLY_USER_SEED_PACKAGES = [
-    "omarchy-nvim",
-]
 
-EARLY_PACKAGES = [
-    *EARLY_BOOTSTRAP_PACKAGES,
-    *EARLY_LUAROCKS_PACKAGES,
-    *EARLY_USER_SEED_PACKAGES,
-]
+def _early_bootstrap_packages() -> list[str]:
+    return [*EARLY_BOOTSTRAP_BASE_PACKAGES, _omarchy_settings_package()]
+
+
+def _early_user_seed_packages() -> list[str]:
+    return [_omarchy_nvim_package()]
+
+
+def _early_packages() -> list[str]:
+    return [
+        *_early_bootstrap_packages(),
+        *EARLY_LUAROCKS_PACKAGES,
+        *_early_user_seed_packages(),
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -533,14 +616,17 @@ DEFERRED_BOOT_HOOKS = (
 
 
 def _install_early_packages(installer) -> None:
-    info(f"› installing early Omarchy packages: {', '.join(EARLY_BOOTSTRAP_PACKAGES)}")
-    installer.add_additional_packages(EARLY_BOOTSTRAP_PACKAGES)
+    bootstrap_packages = _early_bootstrap_packages()
+    user_seed_packages = _early_user_seed_packages()
+
+    info(f"› installing early Omarchy packages: {', '.join(bootstrap_packages)}")
+    installer.add_additional_packages(bootstrap_packages)
 
     info(f"› installing LuaRocks prerequisites: {', '.join(EARLY_LUAROCKS_PACKAGES)}")
     installer.add_additional_packages(EARLY_LUAROCKS_PACKAGES)
 
-    info(f"› installing user seed packages: {', '.join(EARLY_USER_SEED_PACKAGES)}")
-    installer.add_additional_packages(EARLY_USER_SEED_PACKAGES)
+    info(f"› installing user seed packages: {', '.join(user_seed_packages)}")
+    installer.add_additional_packages(user_seed_packages)
 
 
 def _is_devnull_symlink(path: Path) -> bool:
@@ -587,16 +673,23 @@ def _unmask_mkinitcpio_pacman_hooks(ctx: InstallContext) -> None:
 
 
 def _runtime_package_list(ctx: InstallContext) -> list[str]:
-    """omarchy + every package in the ISO-bundled base package list that
-    isn't already in EARLY_PACKAGES."""
+    """Selected Omarchy runtime package + every package in the ISO-bundled
+    base package list that isn't already installed early."""
     base_pkgs_file = Path("/usr/share/omarchy-iso/omarchy-base.packages")
-    pkgs = ["omarchy"]
-    early = set(EARLY_PACKAGES)
+    pkgs = [_omarchy_runtime_package()]
+    already_installed = set(_early_packages()) | {
+        _omarchy_runtime_package(),
+        _omarchy_settings_package(),
+        _omarchy_nvim_package(),
+        "omarchy",
+        "omarchy-settings",
+        "omarchy-nvim",
+    }
     for raw in base_pkgs_file.read_text().splitlines():
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
-        if s not in early and s not in pkgs:
+        if s not in already_installed and s not in pkgs:
             pkgs.append(s)
     return pkgs
 
@@ -956,6 +1049,10 @@ def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str 
         f"OMARCHY_USER_NAME={ctx.full_name}",
         f"OMARCHY_USER_EMAIL={ctx.email}",
         f"OMARCHY_MIRROR={mirror_channel}",
+        f"OMARCHY_ISO_REF={_iso_ref()}",
+        f"OMARCHY_RUNTIME_PACKAGE={_omarchy_runtime_package()}",
+        f"OMARCHY_SETTINGS_PACKAGE={_omarchy_settings_package()}",
+        f"OMARCHY_NVIM_PACKAGE={_omarchy_nvim_package()}",
         "OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log",
         "OMARCHY_LOG_TO_STDOUT=1",
     ]

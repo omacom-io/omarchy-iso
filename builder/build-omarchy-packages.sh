@@ -32,10 +32,14 @@ chown builder:builder "$work_dir"
 
 pacman -Sy --noconfirm
 
+: "${OMARCHY_RUNTIME_PACKAGE:=omarchy-dev}"
+: "${OMARCHY_SETTINGS_PACKAGE:=omarchy-settings-dev}"
+: "${OMARCHY_NVIM_PACKAGE:=omarchy-nvim}"
+
 packages=(
-  omarchy-settings
-  omarchy
-  omarchy-nvim
+  "$OMARCHY_SETTINGS_PACKAGE"
+  "$OMARCHY_RUNTIME_PACKAGE"
+  "$OMARCHY_NVIM_PACKAGE"
 )
 
 for pkg in "${packages[@]}"; do
@@ -43,6 +47,10 @@ for pkg in "${packages[@]}"; do
   echo "Building $pkg"
   echo "----------------------------------------"
   pkg_work="$work_dir/$pkg"
+  if [[ ! -d "/omarchy-pkgs/pkgbuilds/$pkg" ]]; then
+    echo "ERROR: package source not found: /omarchy-pkgs/pkgbuilds/$pkg" >&2
+    exit 1
+  fi
   cp -a "/omarchy-pkgs/pkgbuilds/$pkg" "$pkg_work"
   chown -R builder:builder "$pkg_work"
 

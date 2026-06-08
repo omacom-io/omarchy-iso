@@ -261,6 +261,13 @@ unset OMARCHY_CONFIGURATOR_PYTHON
 # installed Omarchy package owns target setup helpers, while the ISO owns the
 # installer UI that runs before any target packages exist.
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+if [[ -f /usr/share/omarchy-iso/package-targets ]]; then
+  # shellcheck disable=SC1091
+  source /usr/share/omarchy-iso/package-targets
+fi
+OMARCHY_RUNTIME_PACKAGE="${OMARCHY_RUNTIME_PACKAGE:-omarchy}"
+OMARCHY_SETTINGS_PACKAGE="${OMARCHY_SETTINGS_PACKAGE:-omarchy-settings}"
+OMARCHY_NVIM_PACKAGE="${OMARCHY_NVIM_PACKAGE:-omarchy-nvim}"
 LOGO_PATH="${LOGO_PATH:-$OMARCHY_PATH/logo.txt}"
 
 TERM_HEIGHT=${LINES:-24}
@@ -1063,7 +1070,8 @@ _EOF_
         "base-devel",
         "git",
         "omarchy-keyring",
-        "omarchy"
+        "$OMARCHY_SETTINGS_PACKAGE",
+        "$OMARCHY_RUNTIME_PACKAGE"
     ],
     "profile_config": {
         "gfx_driver": null,
@@ -1396,7 +1404,8 @@ cat <<-_EOF_ >user_configuration.json
         "base-devel",
         "git",
         "omarchy-keyring",
-        "omarchy"
+        "$OMARCHY_SETTINGS_PACKAGE",
+        "$OMARCHY_RUNTIME_PACKAGE"
     ],
     "profile_config": {
         "gfx_driver": null,

@@ -13,6 +13,14 @@ set -euo pipefail
 [[ $(tty) == /dev/tty1 ]] || exit 0
 
 export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
+if [[ -f /root/omarchy_iso_ref ]]; then
+  export OMARCHY_ISO_REF="$(cat /root/omarchy_iso_ref)"
+fi
+if [[ -f /usr/share/omarchy-iso/package-targets ]]; then
+  # shellcheck disable=SC1091
+  source /usr/share/omarchy-iso/package-targets
+  export OMARCHY_RUNTIME_PACKAGE OMARCHY_SETTINGS_PACKAGE OMARCHY_NVIM_PACKAGE
+fi
 export OMARCHY_PATH=/usr/share/omarchy
 export OMARCHY_INSTALL=$OMARCHY_PATH/install
 export OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log

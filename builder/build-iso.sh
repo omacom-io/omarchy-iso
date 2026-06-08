@@ -2,6 +2,26 @@
 
 set -e
 
+OMARCHY_ISO_REF="${OMARCHY_ISO_REF:-stable}"
+OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
+
+# Stable ISOs install the stable package names. Dev/local-source ISOs install
+# the dev packages explicitly rather than relying on pacman's provides=omarchy
+# resolution, so the offline mirror and target install show the real package
+# names being tested.
+case "$OMARCHY_ISO_REF" in
+  dev|local)
+    : "${OMARCHY_RUNTIME_PACKAGE:=omarchy-dev}"
+    : "${OMARCHY_SETTINGS_PACKAGE:=omarchy-settings-dev}"
+    ;;
+  *)
+    : "${OMARCHY_RUNTIME_PACKAGE:=omarchy}"
+    : "${OMARCHY_SETTINGS_PACKAGE:=omarchy-settings}"
+    ;;
+esac
+: "${OMARCHY_NVIM_PACKAGE:=omarchy-nvim}"
+export OMARCHY_RUNTIME_PACKAGE OMARCHY_SETTINGS_PACKAGE OMARCHY_NVIM_PACKAGE
+
 # Packages installed into the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
@@ -39,15 +59,25 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
+mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
+echo "$OMARCHY_ISO_REF" > "$build_cache_dir/airootfs/root/omarchy_iso_ref"
+cat > "$build_cache_dir/airootfs/usr/share/omarchy-iso/package-targets" <<EOF
+OMARCHY_RUNTIME_PACKAGE=$OMARCHY_RUNTIME_PACKAGE
+OMARCHY_SETTINGS_PACKAGE=$OMARCHY_SETTINGS_PACKAGE
+OMARCHY_NVIM_PACKAGE=$OMARCHY_NVIM_PACKAGE
+EOF
 
 if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
-  mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
   touch "$build_cache_dir/airootfs/usr/share/omarchy-iso/install-debug"
   {
     echo "debug=1"
     echo "built_at=$(date -Is)"
+    echo "ref=$OMARCHY_ISO_REF"
     echo "mirror=$OMARCHY_MIRROR"
+    echo "runtime_package=$OMARCHY_RUNTIME_PACKAGE"
+    echo "settings_package=$OMARCHY_SETTINGS_PACKAGE"
+    echo "nvim_package=$OMARCHY_NVIM_PACKAGE"
     if [[ -d /omarchy-source ]]; then
       echo "omarchy_source=/omarchy-source"
       git -c safe.directory=/omarchy-source -C /omarchy-source rev-parse HEAD 2>/dev/null | sed 's/^/omarchy_commit=/' || true
@@ -80,9 +110,10 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Packages installed into the live ISO environment itself (NOT the target system).
-# omarchy-settings is needed here so its post_install hook drops Omarchy's
-# plymouthd.conf into /etc/plymouth before mkarchiso builds the live initramfs.
-arch_packages=(linux-t2 git gum jq openssl plymouth python-terminaltexteffects tzupdate omarchy-keyring omarchy-settings lvm2 cryptsetup parted)
+# The selected omarchy-settings package is needed here so its post_install hook
+# drops Omarchy's plymouthd.conf into /etc/plymouth before mkarchiso builds the
+# live initramfs.
+arch_packages=(linux-t2 git gum jq openssl plymouth python-terminaltexteffects tzupdate omarchy-keyring "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target
@@ -92,10 +123,17 @@ printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 if [[ -d /omarchy-source ]]; then
   base_pkg_lists=(/omarchy-source/install/omarchy-base.packages /omarchy-source/install/omarchy-other.packages)
 else
-  # Pull the same package lists out of the freshly-downloaded omarchy package
-  # so we don't need a local checkout in the non-local-source path.
-  pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sw omarchy --cachedir /tmp --dbpath /tmp/offlinedb-bootstrap >/dev/null
-  omarchy_pkg=$(ls /tmp/omarchy-*.pkg.tar.zst | head -1)
+  # Pull the same package lists out of the freshly-downloaded Omarchy runtime
+  # package so we don't need a local checkout in the non-local-source path.
+  bootstrap_cache_dir=/tmp/omarchy-pkg-bootstrap
+  rm -rf "$bootstrap_cache_dir" /tmp/offlinedb-bootstrap /tmp/omarchy-pkglists
+  mkdir -p "$bootstrap_cache_dir"
+  pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sw "$OMARCHY_RUNTIME_PACKAGE" --cachedir "$bootstrap_cache_dir" --dbpath /tmp/offlinedb-bootstrap >/dev/null
+  omarchy_pkg=$(find "$bootstrap_cache_dir" -maxdepth 1 -type f -name "$OMARCHY_RUNTIME_PACKAGE-*.pkg.tar.zst" | sort | head -1)
+  if [[ -z $omarchy_pkg ]]; then
+    echo "ERROR: downloaded package for $OMARCHY_RUNTIME_PACKAGE not found in $bootstrap_cache_dir" >&2
+    exit 1
+  fi
   mkdir -p /tmp/omarchy-pkglists
   bsdtar -xf "$omarchy_pkg" -C /tmp/omarchy-pkglists usr/share/omarchy/install/omarchy-base.packages usr/share/omarchy/install/omarchy-other.packages
   base_pkg_lists=(/tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-base.packages /tmp/omarchy-pkglists/usr/share/omarchy/install/omarchy-other.packages)
@@ -112,9 +150,9 @@ mapfile -t all_packages < <(
     cat "$build_cache_dir/packages.x86_64"
     grep -hv '^#\|^$' "${base_pkg_lists[@]}"
     grep -hv '^#\|^$' /builder/archinstall.packages
-    # Always include the Omarchy packages so the target install can find
-    # the runtime and companion packages in the offline mirror.
-    printf 'omarchy\nomarchy-settings\nomarchy-nvim\n'
+    # Always include the selected Omarchy packages so the target install can
+    # find the runtime and companion packages in the offline mirror.
+    printf '%s\n' "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" "$OMARCHY_NVIM_PACKAGE"
   } | sort -u
 )
 
@@ -122,7 +160,13 @@ mapfile -t all_packages < <(
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
 # the published versions on top.
 if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
-  all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -vE '^(omarchy|omarchy-settings|omarchy-nvim)$'))
+  mapfile -t all_packages < <(
+    printf '%s\n' "${all_packages[@]}" |
+      grep -Fxv \
+        -e "$OMARCHY_RUNTIME_PACKAGE" \
+        -e "$OMARCHY_SETTINGS_PACKAGE" \
+        -e "$OMARCHY_NVIM_PACKAGE" || true
+  )
 fi
 
 mkdir -p /tmp/offlinedb
