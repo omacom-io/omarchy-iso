@@ -1381,11 +1381,11 @@
         "uid": 0,
         "user": "root"
       },
-      "/etc/systemd/system/timers.target.wants/snapper-timeline.timer": {
+      "/etc/systemd/system/timers.target.wants/snapper-cleanup.timer": {
         "gid": 0,
         "group": "root",
         "mode": "0o777",
-        "target": "/usr/lib/systemd/system/snapper-timeline.timer",
+        "target": "/usr/lib/systemd/system/snapper-cleanup.timer",
         "type": "symlink",
         "uid": 0,
         "user": "root"

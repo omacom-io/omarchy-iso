@@ -9,9 +9,9 @@ Phase ordering (full-disk and protected/pre-mounted):
                              pre_mounted_config; no-op for full-disk installs
     arch_install_system    → one archinstall flow for partition/mount-or-use,
                              base install, early Omarchy packages, Limine setup,
-                             useradd, runtime Omarchy packages, Snapper, fstab
+                             useradd, runtime Omarchy packages, fstab
     configure_hibernation  → root-owned swap/resume drop-ins
-    run_system_finalizer   → arch-chroot root omarchy-setup-system
+    run_system_finalizer   → arch-chroot root omarchy-setup-system, including Snapper
     finalize_limine_boot   → final Limine config/UKI build after hardware drop-ins
     run_chroot_finalizer   → arch-chroot -u user omarchy-finalize-user
     configure_login        → sddm state + encrypted-install autologin
@@ -275,9 +275,6 @@ def arch_install_system(ctx: InstallContext) -> None:
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
 
-        info("› configuring root Snapper snapshots")
-        _configure_snapper_root(ctx)
-
         # Standard arch finishers.
         if config.timezone:
             installer.set_timezone(config.timezone)
@@ -538,57 +535,6 @@ def _installer_esp_mount(installer) -> str:
         if efi_partition.mountpoint:
             return str(efi_partition.mountpoint)
     return "/boot"
-
-
-def _configure_snapper_root(ctx: InstallContext) -> None:
-    """Configure Omarchy's root-only Snapper setup during the archinstall
-    phase, not inside the finalizer chroot.
-
-    archinstall's own setup_btrfs_snapshot() uses `snapper --no-dbus` because
-    snapperd/DBus are not available in arch-chroot. We mirror that proven
-    chroot-safe call, but only create the root config: Omarchy intentionally
-    does not snapshot /home user data.
-    """
-    config_path = ctx.target / "etc" / "snapper" / "configs" / "root"
-    if not config_path.exists():
-        subprocess.run(
-            [
-                "arch-chroot",
-                "-S",
-                str(ctx.target),
-                "snapper",
-                "--no-dbus",
-                "-c",
-                "root",
-                "create-config",
-                "/",
-            ],
-            check=True,
-        )
-
-    template_candidates = [
-        ctx.target / "etc" / "snapper" / "config-templates" / "omarchy",
-        ctx.target / "usr" / "share" / "omarchy" / "default" / "snapper" / "root",
-    ]
-    template = next((path for path in template_candidates if path.exists()), None)
-    if template is None:
-        searched = "\n  ".join(str(path) for path in template_candidates)
-        raise RuntimeError(f"Snapper root template not found. Searched:\n  {searched}")
-
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(template, config_path)
-
-    conf_path = ctx.target / "etc" / "conf.d" / "snapper"
-    conf_path.parent.mkdir(parents=True, exist_ok=True)
-    if conf_path.exists():
-        text = conf_path.read_text()
-        if re.search(r"^SNAPPER_CONFIGS=", text, flags=re.MULTILINE):
-            text = re.sub(r'^SNAPPER_CONFIGS=.*$', 'SNAPPER_CONFIGS="root"', text, flags=re.MULTILINE)
-        else:
-            text = text.rstrip() + '\nSNAPPER_CONFIGS="root"\n'
-        conf_path.write_text(text)
-    else:
-        conf_path.write_text('SNAPPER_CONFIGS="root"\n')
 
 
 
@@ -1134,11 +1080,6 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
         check=False,
         capture_output=True,
     )
-    subprocess.run(
-        ["arch-chroot", str(ctx.target), "systemctl", "enable", "limine-snapper-sync.service"],
-        check=True,
-    )
-
     if "Omarchy" not in limine_conf.read_text():
         raise RuntimeError(f"{limine_conf} has no Omarchy entry")
     if "cryptdevice=" in cmdline and "cryptdevice=" not in limine_conf.read_text():
