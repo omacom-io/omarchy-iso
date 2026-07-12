@@ -33,7 +33,7 @@ install_arch() {
 
 install_omarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
-  chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
+  chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh"
 
   configure_login_for_unencrypted_install
 
@@ -158,6 +158,24 @@ install_base_system() {
     --skip-ntp \
     --skip-wkd \
     --skip-wifi-check
+
+  # Archinstall unmounts the ESP when it finishes. Omarchy's boot finalizer
+  # needs the generated Limine config and EFI artifacts available under /boot.
+  if ! mountpoint -q /mnt/boot; then
+    arch-chroot /mnt mount /boot
+  fi
+
+  # The installed fstab keeps the ESP root-only, but Omarchy finalization runs
+  # as the target user and must discover the Limine config before using sudo to
+  # replace it. Temporarily allow reads and directory traversal during install.
+  boot_device=$(findmnt -nro SOURCE --target /mnt/boot)
+  umount /mnt/boot
+  mount -t vfat -o rw,fmask=0022,dmask=0022 "$boot_device" /mnt/boot
+
+  if ! arch-chroot -u "$OMARCHY_USER" /mnt test -x /boot; then
+    echo "Target user cannot access the mounted ESP" >&2
+    return 1
+  fi
 
   # After archinstall sets up the base system but before our installer runs,
   # we need to ensure the offline pacman.conf is in place
