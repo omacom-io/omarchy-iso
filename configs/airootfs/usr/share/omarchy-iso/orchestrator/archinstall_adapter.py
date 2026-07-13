@@ -43,7 +43,6 @@ from typing import Iterator
 # orchestrator startup, not deep inside a phase.
 from archinstall.lib.args import ArchConfig, ArchConfigHandler
 from archinstall.lib.authentication.authentication_handler import AuthenticationHandler
-from archinstall.lib.configuration import ConfigurationOutput
 from archinstall.lib.disk.filesystem import FilesystemHandler
 from archinstall.lib.disk.utils import get_parent_device_path, get_unique_path_for_device
 from archinstall.lib.hardware import SysInfo
