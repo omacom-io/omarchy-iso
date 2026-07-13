@@ -240,16 +240,6 @@ current_whimsy() {
 render_static() {
   printf '%s' "$CLEAR"
   blank_line
-
-  if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
-    if timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch >"$TTY_PATH" 2>/dev/null; then
-      blank_line
-      return
-    fi
-    printf '%s' "$CLEAR"
-    blank_line
-  fi
-
   render_logo
   blank_line
 }
@@ -318,20 +308,34 @@ PY
 render_finish() {
   local duration message cols
   cols="$(term_cols)"
-  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH"
-  if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
-    timeout 8s tte -i "$LOGO_PATH" --canvas-width 0 --anchor-text c --frame-rate 920 laseretch >"$TTY_PATH" 2>/dev/null || true
-  else
-    render_logo >"$TTY_PATH"
-  fi
   duration="$(install_duration || true)"
   message="Finished installing"
   [[ -n $duration ]] && message="Installed in $duration"
+
   {
+    printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
+    render_logo
     blank_line
     center "$message" "$cols"
     blank_line
   } >"$TTY_PATH"
+
+  if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
+    printf '%s%d;1H' "$CSI" "$((LOGO_HEIGHT + 1))" >"$TTY_PATH"
+    timeout 8s tte -i "$LOGO_PATH" \
+      --canvas-width 0 \
+      --anchor-text c \
+      --frame-rate 60 \
+      --reuse-canvas \
+      highlight \
+      --highlight-direction diagonal_bottom_left_to_top_right \
+      --highlight-width 10 \
+      --highlight-brightness 1.5 \
+      --final-gradient-stops 9ece6a \
+      --final-gradient-steps 1 \
+      >"$TTY_PATH" 2>/dev/null || true
+    printf '%s%d;1H' "$CSI" "$((LOGO_HEIGHT + 5))" >"$TTY_PATH"
+  fi
 }
 
 reboot_prompt() {
