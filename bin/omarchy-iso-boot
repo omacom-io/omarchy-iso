@@ -20,6 +20,22 @@ fi
 
 omarchy-pkg-add qemu-full edk2-ovmf
 
+if [[ -z ${WAYLAND_DISPLAY:-} && -z ${DISPLAY:-} ]]; then
+  while IFS='=' read -r name value; do
+    case "$name" in
+      WAYLAND_DISPLAY|DISPLAY|XAUTHORITY|XDG_SESSION_TYPE)
+        export "$name=$value"
+        ;;
+    esac
+  done < <(systemctl --user show-environment 2>/dev/null || true)
+fi
+
+if [[ -z ${WAYLAND_DISPLAY:-} && -z ${DISPLAY:-} ]]; then
+  echo "Unable to find a graphical session for QEMU." >&2
+  echo "Run omarchy-iso-boot from the Omarchy desktop session." >&2
+  exit 1
+fi
+
 DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 40G
@@ -37,8 +53,8 @@ qemu-system-x86_64 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
-  -device virtio-vga-gl \
-  -display gtk,gl=on \
+  -device virtio-vga \
+  -display gtk \
   -usb -device usb-tablet \
   -netdev user,id=net0,hostfwd=tcp::2222-:22 \
   -device virtio-net-pci,netdev=net0 \
