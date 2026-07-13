@@ -1,14 +1,48 @@
 #!/bin/bash
 
-if [ $# -eq 0 ]; then
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
   echo "usage: omarchy-iso-sign [release/omarchy.iso]"
   exit 1
 fi
 
-if ! pacman -Q gnupg >/dev/null; then
-  sudo pacman -S --noconfirm --needed --quiet gnupg
-  echo "You'll need to import key with: gpg --import path/to/signing-key.asc"
+iso="$1"
+key_ref="op://Shared/Omarchy GPG Private Key/omarchy-private.asc"
+
+if [[ ! -f $iso ]]; then
+  echo "ISO not found: $iso" >&2
+  exit 1
 fi
 
-gnupg_user_key=$(gpg --list-secret-keys --keyid-format=long | awk '/^[[:space:]]/{print $1; exit}')
-gpg --local-user "$gnupg_user_key" --output $1.sig --detach-sig $1
+if ! command -v op >/dev/null; then
+  echo "1Password CLI is required to retrieve the signing key." >&2
+  exit 1
+fi
+
+if ! pacman -Q gnupg >/dev/null 2>&1; then
+  sudo pacman -S --noconfirm --needed --quiet gnupg
+fi
+
+gnupg_home="$(mktemp -d)"
+chmod 700 "$gnupg_home"
+trap 'rm -rf "$gnupg_home"' EXIT
+
+op read "$key_ref" --account Omarchy |
+  gpg --batch --homedir "$gnupg_home" --import >/dev/null
+
+signing_key="$(
+  gpg --batch --homedir "$gnupg_home" --with-colons --list-secret-keys |
+    awk -F: '$1 == "fpr" { print $10; exit }'
+)"
+
+if [[ -z $signing_key ]]; then
+  echo "No private signing key found in $key_ref" >&2
+  exit 1
+fi
+
+gpg --batch --yes \
+  --homedir "$gnupg_home" \
+  --local-user "$signing_key" \
+  --output "$iso.sig" \
+  --detach-sig "$iso"
