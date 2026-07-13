@@ -25,6 +25,11 @@ while [[ $# -gt 0 ]]; do
     OMARCHY_MIRROR=edge
     shift
     ;;
+  --quattro)
+    OMARCHY_INSTALLER_REF=quattro
+    OMARCHY_MIRROR=edge
+    shift
+    ;;
   --rc)
     OMARCHY_MIRROR=rc
     OMARCHY_INSTALLER_REF=rc
@@ -32,7 +37,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--rc]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--quattro] [--rc]"
     exit 1
     ;;
   esac
