@@ -1,346 +1,99 @@
 #!/usr/bin/env bash
-# Preview Omarchy installer UI concepts without building or booting the ISO.
-# Usage: bin/omarchy-install-ui-preview [dashboard|matrix|forge|logs]
+# Preview the shipped Omarchy installer dashboard without building an ISO.
 set -euo pipefail
 
-concept="${1:-dashboard}"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+simulate_install() {
+  local state_file="$1"
 
-LOGO_PATH="${OMARCHY_PREVIEW_LOGO:-}"
-if [[ -z $LOGO_PATH ]]; then
-  for candidate in \
-    "$SCRIPT_DIR/../../omarchy-installer/logo.txt" \
-    "$SCRIPT_DIR/../configs/airootfs/usr/share/omarchy/logo.txt" \
-    "/usr/share/omarchy/logo.txt"; do
-    if [[ -f $candidate ]]; then
-      LOGO_PATH="$candidate"
+  python - "$state_file" <<'PY'
+import json
+import os
+import sys
+import time
+
+state_file = sys.argv[1]
+started_at = time.time()
+phases = [
+    ("Starting installation", 0.5),
+    ("Preparing live environment", 0.8),
+    ("Installing Arch + Omarchy", 5.0),
+    ("Configuring system", 1.2),
+    ("Finalizing Limine boot", 1.0),
+    ("Finalizing user", 1.0),
+    ("Configuring login", 0.6),
+    ("Validating boot setup", 0.8),
+]
+
+
+def write_state(current_phase, phase_started_at, finished_at=None):
+    state = {
+        "started_at": started_at,
+        "phase_started_at": phase_started_at,
+        "current_phase": current_phase,
+    }
+    if finished_at is not None:
+        state["finished_at"] = finished_at
+
+    temporary = f"{state_file}.tmp"
+    with open(temporary, "w") as output:
+        json.dump(state, output)
+    os.replace(temporary, state_file)
+
+
+for phase, duration in phases:
+    phase_started_at = time.time()
+    write_state(phase, phase_started_at)
+    time.sleep(duration)
+
+finished_at = time.time()
+write_state("Installation complete", finished_at, finished_at)
+time.sleep(0.3)
+PY
+}
+
+if [[ ${1:-} == "--simulate-install" ]]; then
+  (( $# == 2 )) || exit 2
+  simulate_install "$2"
+  exit 0
+fi
+
+if (( $# > 0 )); then
+  echo "Usage: $0" >&2
+  exit 2
+fi
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+dashboard="$repo_root/configs/airootfs/usr/local/bin/omarchy-install-dashboard"
+
+if [[ ! -x $dashboard ]]; then
+  echo "Installer dashboard is not executable: $dashboard" >&2
+  exit 1
+fi
+
+if [[ -z ${OMARCHY_PATH:-} ]]; then
+  for candidate in "$repo_root/../omarchy" /usr/share/omarchy; do
+    if [[ -f $candidate/logo.txt ]]; then
+      export OMARCHY_PATH="$candidate"
       break
     fi
   done
 fi
 
-CSI=$'\033['
-RESET="${CSI}0m"
-BOLD="${CSI}1m"
-DIM="${CSI}2m"
-HIDE_CURSOR="${CSI}?25l"
-SHOW_CURSOR="${CSI}?25h"
-CLEAR="${CSI}2J${CSI}H"
-HOME="${CSI}H"
-CLEAR_LINE="${CSI}2K"
-CLEAR_TO_END="${CSI}J"
-GREEN="${CSI}38;5;150m"
-BLUE="${CSI}38;5;111m"
-PURPLE="${CSI}38;5;141m"
-YELLOW="${CSI}38;5;221m"
-RED="${CSI}38;5;203m"
-GRAY="${CSI}38;5;245m"
-DARK="${CSI}38;5;238m"
+if [[ -z ${OMARCHY_PATH:-} || ! -f $OMARCHY_PATH/logo.txt ]]; then
+  echo "Unable to find Omarchy logo.txt; set OMARCHY_PATH to an Omarchy checkout." >&2
+  exit 1
+fi
 
-logo_width() {
-  if [[ -n ${LOGO_PATH:-} && -f $LOGO_PATH ]]; then
-    awk '{ if (length > max) max = length } END { print max+0 }' "$LOGO_PATH"
-  else
-    printf '78\n'
-  fi
-}
-
-LOGO_WIDTH="$(logo_width)"
-(( LOGO_WIDTH > 0 )) || LOGO_WIDTH=78
-CONTENT_WIDTH="${OMARCHY_PREVIEW_WIDTH:-$LOGO_WIDTH}"
-(( CONTENT_WIDTH > 0 )) || CONTENT_WIDTH="$LOGO_WIDTH"
-
-phases=(
-  "Preparing live environment"
-  "Partitioning target disk"
-  "Installing base system"
-  "Installing Omarchy packages"
-  "Building Limine UKI"
-  "Configuring Snapper"
-  "Validating boot setup"
-  "Finishing"
-)
-
-logs=(
-  "pacman-key: populating archlinux keyring"
-  "mount: /mnt ready"
-  "pacstrap: installing linux btrfs-progs limine"
-  "pacman: installing omarchy"
-  "useradd: creating ryan with /etc/skel defaults"
-  "limine-update: generating omarchy_linux.efi"
-  "snapper: creating root config"
-  "efibootmgr: registered Limine"
-  "validation: UKI present, fstab present, boot entry present"
-)
-
-whimsy=(
-  "making Linux feel like home"
-  "installing the good defaults"
-  "putting the system in order"
-  "setting up a civilized desktop"
-  "clearing the path to Hyprland"
-  "preparing the command line sanctuary"
-  "teaching pacman the house rules"
-  "laying down the Tokyo Night carpet"
-  "arranging the sharp tools safely"
-  "keeping the boot path clean"
-  "giving Limine the keys"
-  "making snapshots worth having"
-  "saving future you a few hours"
-  "choosing boring where boring wins"
-  "leaving room for your dotfiles"
-  "tightening the last few screws"
-)
-
+preview_dir="$(mktemp -d)"
 cleanup() {
-  printf '%s%s' "$RESET" "$SHOW_CURSOR"
+  rm -rf "$preview_dir"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 
-term_cols() {
-  # Match install/helpers/presentation.sh: read the real tty dimensions even
-  # if stdout is redirected through a pipe/process substitution.
-  if [[ -e /dev/tty ]]; then
-    local size
-    size=$(stty size 2>/dev/null </dev/tty || true)
-    if [[ -n $size ]]; then
-      printf '%s\n' "${size#* }"
-      return
-    fi
-  fi
-  tput cols 2>/dev/null || echo 100
-}
+log_file="$preview_dir/install.log"
+state_file="$preview_dir/state.json"
+touch "$log_file"
 
-term_rows() {
-  if [[ -e /dev/tty ]]; then
-    local size
-    size=$(stty size 2>/dev/null </dev/tty || true)
-    if [[ -n $size ]]; then
-      printf '%s\n' "${size%% *}"
-      return
-    fi
-  fi
-  tput lines 2>/dev/null || echo 32
-}
-
-repeat() {
-  local char="$1" count="$2"
-  local out=""
-  for ((i=0; i<count; i++)); do out+="$char"; done
-  printf '%s' "$out"
-}
-
-left_padding() {
-  local width="${1:-$CONTENT_WIDTH}"
-  local cols
-  cols=$(term_cols)
-  local pad=$(( (cols - width) / 2 ))
-  (( pad < 0 )) && pad=0
-  printf '%*s' "$pad" ''
-}
-
-logo_padding() {
-  # Exact equivalent of the installer's:
-  #   PADDING_LEFT=$(((TERM_WIDTH - LOGO_WIDTH) / 2))
-  left_padding "$LOGO_WIDTH"
-}
-
-visible_len() {
-  # ANSI color/control codes should not affect centering.
-  local text="$1"
-  text="$(printf '%b' "$text" | sed -E $'s/\x1b\\[[0-9;?]*[A-Za-z]//g')"
-  printf '%s' "${#text}"
-}
-
-center() {
-  # Match the real installer's gum-style layout: fixed content width shifted by
-  # a computed left gutter, rather than trying to center against the full tty.
-  local text="$1" width="${2:-$CONTENT_WIDTH}"
-  local len
-  len="$(visible_len "$text")"
-  local inner_pad=$(( (width - len) / 2 ))
-  (( inner_pad < 0 )) && inner_pad=0
-  printf '\r%s%s%*s%b%s\n' "$CLEAR_LINE" "$(left_padding "$width")" "$inner_pad" '' "$text" "$RESET"
-}
-
-line_at() {
-  local width="${1:-$CONTENT_WIDTH}" indent="${2:-0}"
-  shift 2
-  printf '\r%s%s%*s' "$CLEAR_LINE" "$(left_padding "$width")" "$indent" ''
-  printf '%b' "$*"
-}
-
-blank_line() {
-  printf '\r%s\n' "$CLEAR_LINE"
-}
-
-progress_bar() {
-  local pct="$1" width="${2:-36}"
-  local filled=$(( pct * width / 100 ))
-  local empty=$(( width - filled ))
-  printf '%s%s%s%s%s %3d%%' "$GREEN" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET" "$pct"
-}
-
-logo() {
-  if [[ -n ${LOGO_PATH:-} && -f $LOGO_PATH ]]; then
-    cat "$LOGO_PATH"
-  else
-    printf 'Omarchy\n'
-  fi
-}
-
-render_logo() {
-  # Draw the logo like clear_logo does: one left gutter derived from the max
-  # logo width, then the logo text exactly as stored in logo.txt.
-  local pad
-  pad="$(logo_padding)"
-  while IFS= read -r line; do
-    printf '\r%s%s%b%s%b\n' "$CLEAR_LINE" "$pad" "$GREEN" "$line" "$RESET"
-  done < <(logo)
-}
-
-current_log() {
-  local i="$1"
-  printf '%s' "${logs[$(( i % ${#logs[@]} ))]}"
-}
-
-current_whimsy() {
-  local frame="$1" phase_idx="${2:-0}"
-  # Change slower than the spinner so it feels intentional, not jittery.
-  printf '%s' "${whimsy[$(( (phase_idx * 3 + frame / 16) % ${#whimsy[@]} ))]}"
-}
-
-render_dashboard() {
-  local frame="$1" phase_idx=$(( frame / 12 ))
-  (( phase_idx >= ${#phases[@]} )) && phase_idx=$((${#phases[@]} - 1))
-  local pct=$(( frame * 100 / 95 ))
-  (( pct > 100 )) && pct=100
-
-  printf '%s' "$HOME"
-  blank_line
-  render_logo
-  blank_line
-  center "Phase $((phase_idx + 1))/${#phases[@]}  ${phases[$phase_idx]}" "$CONTENT_WIDTH"
-  blank_line
-  line_at "$CONTENT_WIDTH" $(( (CONTENT_WIDTH - 40) / 2 )) ""
-  progress_bar "$pct" 34
-  printf '\n'
-  blank_line
-  center "Now: $(current_log "$frame")" "$CONTENT_WIDTH"
-  blank_line
-  local spin=("◐" "◓" "◑" "◒")
-  center "${GREEN}${spin[$((frame % 4))]} $(current_whimsy "$frame" "$phase_idx") ${RESET}" "$CONTENT_WIDTH"
-  blank_line
-  center "${DIM}Press Ctrl-C to quit${RESET}" "$CONTENT_WIDTH"
-}
-
-render_matrix() {
-  local frame="$1" rows cols
-  rows=$(term_rows); cols=$(term_cols)
-  (( rows > 34 )) && rows=34
-  (( cols > 110 )) && cols=110
-  local words=(pacstrap limine btrfs snapper uki kernel hyprland omarchy archlinux)
-
-  printf '%s' "$HOME"
-  printf '%s%s' "$DIM" "$PURPLE"
-  center "TOKYO NIGHT PACKAGE RAIN" "$cols"
-  printf '%s' "$RESET"
-  echo
-
-  for ((r=2; r<rows-7; r++)); do
-    line=""
-    for ((c=0; c<cols; c+=10)); do
-      if (( (r + c + frame) % 7 == 0 )); then
-        word="${words[$(((r + c + frame) % ${#words[@]}))]}"
-        line+="${GREEN}${word:0:9}${RESET}"
-      elif (( (r * c + frame) % 19 == 0 )); then
-        line+="${BLUE}│${RESET}         "
-      else
-        line+="          "
-      fi
-    done
-    printf '%b\n' "${line:0:cols}"
-  done
-
-  local phase_idx=$(( frame / 10 ))
-  (( phase_idx >= ${#phases[@]} )) && phase_idx=$((${#phases[@]} - 1))
-  echo
-  center "${BOLD}${GREEN}${phases[$phase_idx]}${RESET}" "$cols"
-  center "${GRAY}$(current_log "$frame")${RESET}" "$cols"
-}
-
-render_forge() {
-  local frame="$1" phase_idx=$(( frame / 12 ))
-  (( phase_idx >= ${#phases[@]} )) && phase_idx=$((${#phases[@]} - 1))
-  local sparks=("·" "∙" "*" "✦" "✧" "⋆")
-  local hammer=("⚒" " " "⚒" " ")
-  local pct=$(( frame * 100 / 95 ))
-  (( pct > 100 )) && pct=100
-
-  printf '%s' "$HOME"
-  printf '%s' "$YELLOW"
-  center "THE OMARCHY FORGE" 80
-  printf '%s\n\n' "$RESET"
-
-  center "        ${sparks[$((frame % 6))]}        ${sparks[$(((frame+2) % 6))]}       ${sparks[$(((frame+4) % 6))]}" 80
-  center "                 ${YELLOW}${hammer[$((frame % 4))]}${RESET}" 80
-  center "              _____________" 80
-  center "             /             \\" 80
-  center "        ____/  ARCH ROOTFS  \____" 80
-  center "       /    \_______________/    \\" 80
-  center "      /  BTRFS  │  LIMINE  │ UKI  \\" 80
-  center "      \_________│__________│______/" 80
-  echo
-  center "${GREEN}${phases[$phase_idx]}${RESET}" 80
-  echo
-  line_at 80 22 ""
-  progress_bar "$pct" 36
-  echo -e "\n"
-  center "${GRAY}$(current_log "$frame")${RESET}" 80
-}
-
-render_logs() {
-  local frame="$1" phase_idx=$(( frame / 12 ))
-  (( phase_idx >= ${#phases[@]} )) && phase_idx=$((${#phases[@]} - 1))
-  local pct=$(( frame * 100 / 95 ))
-  (( pct > 100 )) && pct=100
-
-  printf '%s' "$HOME"
-  render_logo
-  blank_line
-  line_at "$CONTENT_WIDTH" 0 "${BOLD}Omarchy Install${RESET}\n"
-  line_at "$CONTENT_WIDTH" 0 ""
-  progress_bar "$pct" 50
-  printf '\n'
-  blank_line
-  line_at "$CONTENT_WIDTH" 0 "${GREEN}${phases[$phase_idx]}${RESET}\n"
-  blank_line
-
-  local start=$(( frame - 12 ))
-  (( start < 0 )) && start=0
-  for ((i=start; i<=frame; i++)); do
-    line_at "$CONTENT_WIDTH" 2 "${GRAY}→${RESET} [$(printf '%02d:%02d' "$((i / 3))" "$(((i * 7) % 60))")] $(current_log "$i")\n"
-  done
-  blank_line
-  line_at "$CONTENT_WIDTH" 0 "${DIM}This is the boring/debuggable mode: curated progress plus log tail.${RESET}\n"
-}
-
-case "$concept" in
-  dashboard|matrix|forge|logs) ;;
-  -h|--help|help)
-    echo "Usage: $0 [dashboard|matrix|forge|logs]"
-    exit 0
-    ;;
-  *)
-    echo "Unknown concept: $concept" >&2
-    echo "Usage: $0 [dashboard|matrix|forge|logs]" >&2
-    exit 2
-    ;;
-esac
-
-printf '%s%s' "$HIDE_CURSOR" "$CLEAR"
-for ((frame=0; frame<=96; frame++)); do
-  "render_$concept" "$frame"
-  printf '%s' "$CLEAR_TO_END"
-  sleep 0.08
-done
+OMARCHY_UI_AUTO_REBOOT=no \
+  "$dashboard" "$log_file" "$state_file" -- \
+  "$0" --simulate-install "$state_file"
