@@ -8,7 +8,7 @@ See the ISO link on [omarchy.org](https://omarchy.org).
 
 ## Creating the ISO
 
-Run `./bin/omarchy-iso-make`; output goes into `./release`.
+Run `./bin/omarchy-iso-make`; output goes into `./release`. By default the ISO uses the Omarchy packages and tracks the `quattro` branch, from the stable mirror. Pass `--edge` to use `omarchy-dev` and `omarchy-settings-dev` from the edge mirror.
 
 For local development, build the ISO from sibling checkouts:
 
@@ -18,7 +18,7 @@ For local development, build the ISO from sibling checkouts:
 
 Despite the local folder name, the first argument is the Omarchy source checkout (runtime commands, configs, setup scripts, themes, shell, migrations). The installer itself lives in this ISO repo.
 
-Use `--dev` or `--rc` to build against those package channels.
+Use `--dev` or `--rc` to build against those package channels. Both `--dev` and `--edge` select the dev packages from the edge mirror.
 
 ## Testing the ISO
 

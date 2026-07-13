@@ -19,6 +19,11 @@ while [[ $# -gt 0 ]]; do
     OMARCHY_INSTALL_DEBUG=1
     shift
     ;;
+  --edge)
+    OMARCHY_ISO_REF=edge
+    OMARCHY_MIRROR=edge
+    shift
+    ;;
   --local-source)
     LOCAL_OMARCHY_PATH="${2:-}"
     LOCAL_PKGS_PATH="${3:-}"
@@ -42,7 +47,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--debug] [--dev|--rc] [--local-source <omarchy-checkout> <pkgs-checkout>]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--debug] [--edge] [--dev|--rc] [--local-source <omarchy-checkout> <pkgs-checkout>]"
     exit 1
     ;;
   esac
@@ -98,7 +103,7 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
-OMARCHY_ISO_REF="${OMARCHY_ISO_REF:-stable}"
+OMARCHY_ISO_REF="${OMARCHY_ISO_REF:-quattro}"
 OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
 DOCKER_ARGS=(
