@@ -79,11 +79,10 @@ if [ -d "/var/cache/pacman/pkg" ]; then
   DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
 fi
 
-# Mount the build cache directory where packages are downloaded
+# Mount the build cache directory where packages are downloaded. Channels use
+# different package snapshots and must never share an offline mirror cache.
 if [[ -z "$NO_CACHE" ]]; then
-  # using a dated dir on the host to refresh daily if building multiple times
-  BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy"
+  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${OMARCHY_MIRROR}/airootfs/var/cache/omarchy"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/omarchy since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/omarchy")
