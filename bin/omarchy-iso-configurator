@@ -12,4 +12,5 @@ if [[ -z "${OMARCHY_PATH:-}" ]]; then
   done
 fi
 
+# Do a dry-run of the configurator to show the flow without having to do a real installation
 exec bash "$repo_root/configs/airootfs/root/configurator" dry "$@"
