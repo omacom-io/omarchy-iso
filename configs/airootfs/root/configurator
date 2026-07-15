@@ -828,6 +828,30 @@ open_partition_tool() {
   sleep 1
 }
 
+# If the disk has no partition table or no unallocated free space, the only
+# viable path is a full-disk install. Skip the install-mode picker and go
+# straight to confirmation.
+requires_full_disk_install() {
+  local pt_type free_space_b
+  pt_type=$(lsblk -dno PTTYPE "$disk" 2>/dev/null)
+
+  # a) No partition table: disk is empty
+  [[ -z "$pt_type" ]] && return 0
+
+  # b) No usable free space
+  free_space_b=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null | \
+    awk -F: '
+      $NF ~ /free/ {
+        size=$4;
+        gsub(/B/, "", size);
+        if (size+0 > max+0) max=size;
+      }
+      END {
+        print max+0;
+      }')
+  [[ -z "$free_space_b" || "$free_space_b" -eq 0 ]]
+}
+
 install_mode_form() {
   local choices=("Full disk install")
 
@@ -842,23 +866,27 @@ install_mode_form() {
   install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" "${choices[@]}") || abort
 }
 
-while true; do
-  install_mode_form
+if requires_full_disk_install; then
+  install_mode="Full disk install"
+else
+  while true; do
+    install_mode_form
 
-  case "$install_mode" in
-    "Full disk install")
-      break
-      ;;
-    "Free space install (alongside existing data)")
-      if run_partition_install "$@"; then
-        exit 0
-      fi
-      ;;
-    "Choose a different disk")
-      disk_form
-      ;;
-  esac
-done
+    case "$install_mode" in
+      "Full disk install")
+        break
+        ;;
+      "Free space install (alongside existing data)")
+        if run_partition_install "$@"; then
+          exit 0
+        fi
+        ;;
+      "Choose a different disk")
+        disk_form
+        ;;
+    esac
+  done
+fi
 
 confirm_disk_overwrite() {
   local mode="encrypted"
