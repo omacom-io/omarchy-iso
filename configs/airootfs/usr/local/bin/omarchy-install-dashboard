@@ -32,6 +32,7 @@ CLEAR="${CSI}2J${CSI}H"
 CLEAR_LINE="${CSI}2K"
 CLEAR_TO_END="${CSI}J"
 GREEN="${CSI}32m"
+WHITE="${CSI}37m"
 RED="${CSI}31m"
 DARK="${CSI}90m"
 
@@ -185,7 +186,7 @@ progress_bar() {
   (( pct > 100 )) && pct=100
   filled=$(( pct * width / 100 ))
   empty=$(( width - filled ))
-  printf '%s%s%s%s%s' "$GREEN" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET"
+  printf '%s%s%s%s%s' "$WHITE" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET"
 }
 
 install_progress() {
@@ -314,13 +315,8 @@ render_finish() {
     blank_line
     render_logo
     blank_line
-    center "Installed Omarchy" "$CONTENT_WIDTH"
+    center "Installed Omarchy in ${duration}" "$CONTENT_WIDTH"
     blank_line
-    line_at "$CONTENT_WIDTH" $(( (CONTENT_WIDTH - 34) / 2 )) ""
-    progress_bar 100 34
-    printf '\n'
-    blank_line
-    center "${GREEN}${duration}${RESET}" "$CONTENT_WIDTH"
   } >"$TTY_PATH"
 
   if command -v tte >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 && [[ -f $LOGO_PATH ]]; then
@@ -330,14 +326,9 @@ render_finish() {
     timeout 8s tte -i "$LOGO_PATH" \
       --canvas-width "$effect_canvas_width" \
       --anchor-text c \
-      --frame-rate 60 \
+      --frame-rate 260 \
       --reuse-canvas \
-      highlight \
-      --highlight-direction diagonal_bottom_left_to_top_right \
-      --highlight-width 10 \
-      --highlight-brightness 1.5 \
-      --final-gradient-stops 9ece6a \
-      --final-gradient-steps 1 \
+      laseretch \
       >"$TTY_PATH" 2>/dev/null || true
     printf '%s%d;1H' "$CSI" "$((LOGO_HEIGHT + 8))" >"$TTY_PATH"
   fi
@@ -345,6 +336,10 @@ render_finish() {
 
 reboot_prompt() {
   local prompt_pad
+
+  # Position the cursor one blank line below the title so the button sits right there.
+  printf '%s%d;1H%s' "$CSI" "$((LOGO_HEIGHT + 5))" "$CLEAR_LINE" >"$TTY_PATH"
+
   prompt_pad=$(( ( $(term_cols) - 18 ) / 2 ))
   (( prompt_pad < 0 )) && prompt_pad=0
   gum confirm \
@@ -602,11 +597,10 @@ if (( finish_render_status != 0 )); then
   } >"$TTY_PATH" 2>/dev/null || true
 fi
 
-if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
-  exit 0
-fi
-
 if reboot_prompt; then
+  if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
+    exit 0
+  fi
   printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
   reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
 fi
