@@ -26,7 +26,7 @@ Run `./bin/omarchy-iso-boot [release/omarchy.iso]`.
 
 ## Signing the ISO
 
-Run `./bin/omarchy-iso-sign [gpg-user] [release/omarchy.iso]`.
+Run `./bin/omarchy-iso-sign [release/omarchy.iso]`. The signing key is retrieved from the shared Omarchy vault with the 1Password CLI.
 
 ## Uploading the ISO
 
