@@ -452,7 +452,7 @@ run_partition_install() {
     return $?
   fi
 
-  local INSTALL_START_B INSTALL_MAX_B INSTALL_MAX_GIB INSTALL_SIZE_GIB
+  local INSTALL_START_B INSTALL_MAX_B
   if [[ -z "$shared_esp" ]]; then
     INSTALL_START_B=$EFI_START_B
   else
@@ -465,56 +465,19 @@ run_partition_install() {
     return $?
   fi
 
-  INSTALL_MAX_GIB=$((INSTALL_MAX_B / gib))
-  while true; do
-    step "Choose Omarchy size"
-    say "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
-    if [[ -z "$shared_esp" ]]; then
-      say "The size includes a new 2GiB EFI partition; the rest becomes root."
-    else
-      say "Using existing ESP: $shared_esp"
-    fi
-    say "Omarchy can use 32–${INSTALL_MAX_GIB}GiB total. Leave the default to use all available space."
-    echo
-
-    INSTALL_SIZE_GIB=$(gum input \
-      --value "$INSTALL_MAX_GIB" \
-      --placeholder "32-${INSTALL_MAX_GIB}" \
-      --prompt.foreground="#845DF9" \
-      --prompt "Omarchy size in GiB> ") || return 1
-
-    if [[ $INSTALL_SIZE_GIB =~ ^[0-9]+$ ]] && (( INSTALL_SIZE_GIB >= 32 && INSTALL_SIZE_GIB <= INSTALL_MAX_GIB )); then
-      break
-    fi
-
-    notice "Enter a whole number from 32 to ${INSTALL_MAX_GIB}" 1
-  done
-
-  if [[ -z "$shared_esp" ]]; then
-    ROOT_END_B=$((EFI_START_B + INSTALL_SIZE_GIB * gib))
-  else
-    ROOT_END_B=$((ROOT_START_B + INSTALL_SIZE_GIB * gib))
-  fi
-
   # Default to encrypted and hide the unencrypted path behind Ctrl+C,
   # matching the full-disk flow. The dedicated Omarchy ESP always supports
   # LUKS, so encryption is always on the table here.
   local mode="encrypted" affirmative confirm_status
 
   while true; do
-    step "Proposed layout on $disk"
-    say "Free region: $(to_gb $FREE_START_B) — $(to_gb $FREE_END_B)  ($(to_gb $FREE_SIZE_B))"
-    if [[ -z "$shared_esp" ]]; then
-      say "  New EFI partition:  $(to_gb $EFI_START_B) — $(to_gb $EFI_END_B) (2GB FAT32)"
-    else
-      say "  Shared ESP:        $shared_esp (Windows, mounted at /efi)"
-    fi
-    say "  New root (Btrfs):  $(to_gb $ROOT_START_B) — $(to_gb $ROOT_END_B) ($(to_gb $((ROOT_END_B - ROOT_START_B))))"
+    clear_logo
     echo
+    gum style "Install Omarchy in the $(to_gb $INSTALL_MAX_B) of free space."
 
     case $mode in
       encrypted)
-        say --foreground 8 "Press Ctrl+C for unencrypted install."
+        gum style --foreground 8 "Press Ctrl+C for unencrypted install."
         affirmative="Yes, install"
         ;;
       unencrypted)
@@ -523,8 +486,8 @@ run_partition_install() {
     esac
     echo
 
-    gum confirm --affirmative "$affirmative" --negative "Cancel" \
-      "Create Omarchy partitions in the free space on $disk?"
+    gum confirm --affirmative "$affirmative" --negative "No, change it" \
+      "Confirm installing on $disk"
     confirm_status=$?
 
     case $confirm_status in
@@ -809,8 +772,6 @@ disk_form() {
   disk=$(echo "$selected_display" | awk '{print $1}')
 }
 
-disk_form
-
 # STEP 4: INSTALL MODE
 
 open_partition_tool() {
@@ -862,31 +823,9 @@ install_mode_form() {
   fi
   choices+=("Choose a different disk")
 
-  step "Installation mode"
-  install_mode=$(gum choose --header "How should Omarchy be installed on $disk?" "${choices[@]}") || abort
+  step "Let's select how to install Omarchy..."
+  install_mode=$(gum choose --header "Select installation mode on $disk" "${choices[@]}") || abort
 }
-
-if requires_full_disk_install; then
-  install_mode="Full disk install"
-else
-  while true; do
-    install_mode_form
-
-    case "$install_mode" in
-      "Full disk install")
-        break
-        ;;
-      "Free space install (alongside existing data)")
-        if run_partition_install "$@"; then
-          exit 0
-        fi
-        ;;
-      "Choose a different disk")
-        disk_form
-        ;;
-    esac
-  done
-fi
 
 confirm_disk_overwrite() {
   local mode="encrypted"
@@ -926,9 +865,41 @@ confirm_disk_overwrite() {
   done
 }
 
-while ! confirm_disk_overwrite; do
-  disk_form
-done
+select_installation() {
+  local full_disk_only
+
+  while true; do
+    if requires_full_disk_install; then
+      full_disk_only=true
+      install_mode="Full disk install"
+    else
+      full_disk_only=false
+      install_mode_form
+    fi
+
+    case "$install_mode" in
+      "Full disk install")
+        if confirm_disk_overwrite; then
+          return 0
+        fi
+        if $full_disk_only; then
+          disk_form
+        fi
+        ;;
+      "Free space install (alongside existing data)")
+        if run_partition_install "$@"; then
+          exit 0
+        fi
+        ;;
+      "Choose a different disk")
+        disk_form
+        ;;
+    esac
+  done
+}
+
+disk_form
+select_installation "$@"
 
 clear
 
