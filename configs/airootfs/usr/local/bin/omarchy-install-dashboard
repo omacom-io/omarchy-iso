@@ -50,11 +50,11 @@ child_pgid=""
 whimsy=(
   "installing a complete system"
   "delivering delightful defaults"
-  "saving you from setup sit-ups"
-  "picking the best of linux"
+  "saving setup sit-ups"
+  "showcasing the best of linux"
   "curating beatiful themes"
   "preparing an omakase composition"
-  "letting hyprland shine"
+  "hyping hyprland up"
   "integrating quickshell panels"
 )
 
