@@ -161,8 +161,8 @@ qemu-system-x86_64 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
-  -device virtio-vga \
-  -display gtk \
+  -device virtio-vga-gl \
+  -display gtk,gl=on \
   -usb -device usb-tablet \
   "${NET_ARGS[@]}" \
   -boot menu=on \
