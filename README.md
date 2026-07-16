@@ -24,6 +24,12 @@ Use `--dev` or `--rc` to build against those package channels. Both `--dev` and 
 
 Run `./bin/omarchy-iso-boot [release/omarchy.iso]`.
 
+To exercise installation alongside existing Windows-style partitions, run
+`./bin/omarchy-iso-test-windows-disk [release/omarchy.iso]`. It creates a
+synthetic disk in `/tmp` with an existing ESP and data partition plus ample
+unallocated space, then offers to start an interactive installation on it. The
+fixture exercises Windows partition preservation but does not contain Windows.
+
 ## Signing the ISO
 
 Run `./bin/omarchy-iso-sign [release/omarchy.iso]`. The signing key is retrieved from the shared Omarchy vault with the 1Password CLI.

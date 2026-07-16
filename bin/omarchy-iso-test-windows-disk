@@ -1,0 +1,295 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+TEST_DISK="${OMARCHY_ISO_TEST_WINDOWS_DISK:-/tmp/omarchy-iso-test-windows.qcow2}"
+TEST_OVMF_VARS="${OMARCHY_ISO_TEST_WINDOWS_OVMF_VARS:-/tmp/OVMF_VARS.omarchy-iso-test-windows.fd}"
+DISK_SIZE_GIB=96
+MIN_FREE_GIB=64
+RECREATE=0
+ISO=""
+
+ACTIVE_NBD=""
+MOUNT_DIR=""
+MOUNTED=0
+TEMPORARY_DISK=""
+
+usage() {
+  cat <<USAGE
+Usage: omarchy-iso-test-windows-disk [--recreate] [release/omarchy.iso]
+
+Creates or validates a synthetic Windows-style test disk with:
+  - a 512MiB EFI partition containing EFI/Microsoft
+  - an existing ext4 data partition with a preservation marker
+  - more than 64GiB of contiguous unallocated space for Omarchy
+
+This exercises Windows partition detection and preservation; it is not a
+bootable Windows installation.
+
+Options:
+  --recreate  Replace the existing test fixture
+  -h, --help  Show this help
+
+Paths can be overridden with:
+  OMARCHY_ISO_TEST_WINDOWS_DISK
+  OMARCHY_ISO_TEST_WINDOWS_OVMF_VARS
+USAGE
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --recreate)
+      RECREATE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n $ISO ]]; then
+        echo "Only one ISO may be specified." >&2
+        usage >&2
+        exit 2
+      fi
+      ISO="$1"
+      shift
+      ;;
+  esac
+done
+
+cleanup_mount() {
+  if (( MOUNTED )); then
+    sudo umount "$MOUNT_DIR" >/dev/null 2>&1 || true
+    MOUNTED=0
+  fi
+  if [[ -n $MOUNT_DIR ]]; then
+    rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+    MOUNT_DIR=""
+  fi
+}
+
+disconnect_disk() {
+  cleanup_mount
+  if [[ -n $ACTIVE_NBD ]]; then
+    sudo qemu-nbd --disconnect "$ACTIVE_NBD" >/dev/null 2>&1 || true
+    ACTIVE_NBD=""
+  fi
+}
+
+cleanup() {
+  disconnect_disk
+  [[ -z $TEMPORARY_DISK ]] || rm -f "$TEMPORARY_DISK"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+find_free_nbd() {
+  local device
+  for device in /sys/class/block/nbd*; do
+    [[ -e $device ]] || continue
+    [[ ! -e $device/pid ]] || continue
+    printf '/dev/%s\n' "${device##*/}"
+    return 0
+  done
+  return 1
+}
+
+connect_disk() {
+  local disk="$1" mode="${2:-read-write}"
+  local -a options=(--format=qcow2)
+
+  ACTIVE_NBD="$(find_free_nbd)" || {
+    echo "No unused NBD device is available." >&2
+    return 1
+  }
+  [[ $mode == read-only ]] && options+=(--read-only)
+
+  if ! sudo qemu-nbd "${options[@]}" --connect="$ACTIVE_NBD" "$disk"; then
+    ACTIVE_NBD=""
+    return 1
+  fi
+  if ! sudo udevadm settle; then
+    disconnect_disk
+    return 1
+  fi
+}
+
+mount_partition() {
+  local partition="$1"
+  MOUNT_DIR="$(mktemp -d)" || return 1
+  if ! sudo mount -o "${2:-defaults}" "$partition" "$MOUNT_DIR"; then
+    rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+    MOUNT_DIR=""
+    return 1
+  fi
+  MOUNTED=1
+}
+
+largest_free_region() {
+  sudo parted -ms "$1" unit B print free </dev/null 2>/dev/null |
+    awk -F: '
+      $NF ~ /free/ {
+        size=$4
+        gsub(/B/, "", size)
+        if (size+0 > max+0) max=size
+      }
+      END { print max+0 }
+    '
+}
+
+validate_test_disk() {
+  local part_count pttype free_space_b min_free_b
+  local esp data valid=1
+
+  [[ -f $TEST_DISK ]] || return 1
+  qemu-img check -q "$TEST_DISK" >/dev/null 2>&1 || return 1
+  connect_disk "$TEST_DISK" read-only || return 1
+
+  esp="${ACTIVE_NBD}p1"
+  data="${ACTIVE_NBD}p2"
+  part_count=$(lsblk -nro TYPE "$ACTIVE_NBD" | awk '$1 == "part" { count++ } END { print count+0 }')
+  pttype=$(lsblk -dnro PTTYPE "$ACTIVE_NBD" 2>/dev/null || true)
+  free_space_b=$(largest_free_region "$ACTIVE_NBD")
+  min_free_b=$((MIN_FREE_GIB * 1024 * 1024 * 1024))
+
+  [[ $pttype == gpt ]] || valid=0
+  (( part_count == 2 )) || valid=0
+  (( free_space_b >= min_free_b )) || valid=0
+  [[ $(sudo blkid -s TYPE -o value "$esp" 2>/dev/null || true) == vfat ]] || valid=0
+  [[ $(sudo blkid -s LABEL -o value "$esp" 2>/dev/null || true) == WINDOWS_ESP ]] || valid=0
+  [[ $(sudo blkid -s TYPE -o value "$data" 2>/dev/null || true) == ext4 ]] || valid=0
+  [[ $(sudo blkid -s LABEL -o value "$data" 2>/dev/null || true) == WINDOWS_DATA ]] || valid=0
+
+  if (( valid )); then
+    mount_partition "$esp" ro || valid=0
+    if (( valid )); then
+      sudo test -d "$MOUNT_DIR/EFI/Microsoft" || valid=0
+    fi
+    cleanup_mount
+  fi
+
+  if (( valid )); then
+    mount_partition "$data" ro || valid=0
+    if (( valid )); then
+      sudo test -f "$MOUNT_DIR/OMARCHY-MUST-NOT-TOUCH.txt" || valid=0
+    fi
+    cleanup_mount
+  fi
+
+  disconnect_disk
+  (( valid ))
+}
+
+create_test_disk() {
+  local esp data
+
+  mkdir -p "$(dirname "$TEST_DISK")"
+  TEMPORARY_DISK="${TEST_DISK}.creating.$$"
+  rm -f "$TEMPORARY_DISK"
+
+  gum style --foreground 6 "Creating synthetic Windows test disk at $TEST_DISK"
+  qemu-img create -f qcow2 "$TEMPORARY_DISK" "${DISK_SIZE_GIB}G"
+  connect_disk "$TEMPORARY_DISK"
+
+  sudo parted --script "$ACTIVE_NBD" mklabel gpt
+  sudo parted --script "$ACTIVE_NBD" mkpart WINDOWS_ESP fat32 1MiB 513MiB
+  sudo parted --script "$ACTIVE_NBD" set 1 esp on
+  sudo parted --script "$ACTIVE_NBD" mkpart WINDOWS_DATA ext4 513MiB 20GiB
+  sudo partprobe "$ACTIVE_NBD"
+  sudo udevadm settle
+
+  esp="${ACTIVE_NBD}p1"
+  data="${ACTIVE_NBD}p2"
+  sudo mkfs.fat -F32 -n WINDOWS_ESP "$esp" >/dev/null
+  sudo mkfs.ext4 -F -L WINDOWS_DATA "$data" >/dev/null 2>&1
+
+  mount_partition "$esp"
+  sudo mkdir -p "$MOUNT_DIR/EFI/Microsoft/Boot"
+  printf '%s\n' 'Synthetic Windows ESP for Omarchy ISO testing.' |
+    sudo tee "$MOUNT_DIR/EFI/Microsoft/README.txt" >/dev/null
+  cleanup_mount
+
+  mount_partition "$data"
+  printf '%s\n' 'This existing partition must survive the Omarchy installation.' |
+    sudo tee "$MOUNT_DIR/OMARCHY-MUST-NOT-TOUCH.txt" >/dev/null
+  cleanup_mount
+
+  sync
+  disconnect_disk
+  mv -f "$TEMPORARY_DISK" "$TEST_DISK"
+  TEMPORARY_DISK=""
+}
+
+select_iso() {
+  local -a isos=()
+
+  if [[ -n $ISO ]]; then
+    [[ -f $ISO ]] || {
+      echo "ISO not found: $ISO" >&2
+      return 1
+    }
+    realpath "$ISO"
+    return 0
+  fi
+
+  mapfile -t isos < <(
+    find "$REPO_ROOT/release" -maxdepth 1 -type f -name '*.iso' -printf '%T@ %p\n' 2>/dev/null |
+      sort -nr |
+      cut -d' ' -f2-
+  )
+  (( ${#isos[@]} > 0 )) || {
+    echo "No ISO found under $REPO_ROOT/release." >&2
+    return 1
+  }
+
+  printf '%s\n' "${isos[@]}" | gum choose --header "Select ISO to install"
+}
+
+omarchy-pkg-add qemu-full edk2-ovmf parted dosfstools e2fsprogs
+sudo modprobe nbd max_part=16
+
+if [[ -f $TEST_DISK ]] && (( ! RECREATE )); then
+  gum style --foreground 6 "Verifying existing test disk at $TEST_DISK"
+  if validate_test_disk; then
+    gum style --foreground 2 "✓ Synthetic Windows test disk is ready"
+  elif gum confirm --default=false "The existing test disk is not a pristine fixture. Recreate it?"; then
+    create_test_disk
+  else
+    gum style "Left the existing disk untouched."
+    exit 0
+  fi
+else
+  create_test_disk
+fi
+
+# The synthetic fixture has no real Windows bootloader, so reset OVMF state for
+# every run. The ISO still sees EFI/Microsoft and must leave that ESP untouched.
+mkdir -p "$(dirname "$TEST_OVMF_VARS")"
+cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$TEST_OVMF_VARS"
+
+gum style --border rounded --padding "0 1" --border-foreground 6 \
+  "Synthetic Windows disk ready" \
+  "Disk: $TEST_DISK" \
+  "Layout: 512MiB Windows ESP + existing data + 64GiB+ free"
+
+if gum confirm "Start installation on this disk?"; then
+  ISO="$(select_iso)"
+  trap - EXIT INT TERM
+  exec "$SCRIPT_DIR/omarchy-iso-boot" \
+    --reuse \
+    --disk "$TEST_DISK" \
+    --ovmf-vars "$TEST_OVMF_VARS" \
+    "$ISO" \
+    -- -boot once=d,menu=on
+fi

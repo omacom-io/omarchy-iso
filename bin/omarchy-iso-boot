@@ -130,7 +130,6 @@ if [[ -z ${WAYLAND_DISPLAY:-} && -z ${DISPLAY:-} ]]; then
   exit 1
 fi
 
-DISK="/tmp/omarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 40G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$OVMF_VARS"
