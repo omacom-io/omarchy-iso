@@ -182,47 +182,56 @@ progress_bar() {
 }
 
 install_progress() {
+  local phase finished phase_started elapsed span active pct
+  local start=1 end=99 expected=90
+  local -a state
+
   [[ -f $STATE_FILE ]] || { printf '1'; return; }
-  python - "$STATE_FILE" <<'PY' 2>/dev/null || printf '1'
-import json, sys, time
-path = sys.argv[1]
-try:
-    state = json.load(open(path))
-except Exception:
-    print(1, end='')
-    raise SystemExit
-phase = state.get('current_phase') or 'Starting installation'
-if state.get('finished_at') or phase == 'Installation complete':
-    print(100, end='')
-    raise SystemExit
-weights = [
-    ('Starting installation', 1, 2, 2),
-    ('Preparing live environment', 2, 6, 5),
-    ('Verifying protected mounts', 6, 8, 3),
-    ('Installing Arch + Omarchy', 8, 86, 95),
-    ('Installing base system', 8, 84, 85),
-    ('Configuring protected boot', 84, 86, 8),
-    ('Configuring hibernation', 86, 88, 5),
-    ('Configuring system', 88, 93, 10),
-    ('Finalizing Limine boot', 93, 96, 8),
-    ('Finalizing user', 96, 98, 10),
-    ('Finalizing in chroot', 88, 98, 10),
-    ('Configuring login', 98, 99, 3),
-    ('Configuring DNS resolver', 99, 100, 2),
-    ('Validating protected boot setup', 99, 100, 5),
-    ('Validating boot setup', 99, 100, 5),
-]
-start, end, expected = 1, 99, 90
-for name, s, e, seconds in weights:
-    if phase == name:
-        start, end, expected = s, e, seconds
-        break
-phase_started = state.get('phase_started_at') or state.get('started_at') or time.time()
-elapsed = max(0, time.time() - float(phase_started))
-span = max(0, end - start)
-active = min(max(span - 1, 0), int((elapsed / max(expected, 1)) * span))
-print(min(100, start + active), end='')
-PY
+
+  mapfile -t state < <(jq -r '
+    (.current_phase // "Starting installation"),
+    ((.finished_at // 0) | tonumber? // 0 | floor),
+    ((.phase_started_at // .started_at // 0) | tonumber? // 0 | floor)
+  ' "$STATE_FILE" 2>/dev/null)
+  (( ${#state[@]} == 3 )) || { printf '1'; return; }
+  phase="${state[0]}" finished="${state[1]}" phase_started="${state[2]}"
+
+  if (( finished > 0 )) || [[ $phase == "Installation complete" ]]; then
+    printf '100'
+    return
+  fi
+
+  # Phase weights: start%, end%, expected seconds in phase.
+  case "$phase" in
+    "Starting installation")           start=1  end=2   expected=2 ;;
+    "Preparing live environment")      start=2  end=6   expected=5 ;;
+    "Verifying protected mounts")      start=6  end=8   expected=3 ;;
+    "Installing Arch + Omarchy")       start=8  end=86  expected=95 ;;
+    "Installing base system")          start=8  end=84  expected=85 ;;
+    "Configuring protected boot")      start=84 end=86  expected=8 ;;
+    "Configuring hibernation")         start=86 end=88  expected=5 ;;
+    "Configuring system")              start=88 end=93  expected=10 ;;
+    "Finalizing Limine boot")          start=93 end=96  expected=8 ;;
+    "Finalizing user")                 start=96 end=98  expected=10 ;;
+    "Finalizing in chroot")            start=88 end=98  expected=10 ;;
+    "Configuring login")               start=98 end=99  expected=3 ;;
+    "Configuring DNS resolver")        start=99 end=100 expected=2 ;;
+    "Validating protected boot setup") start=99 end=100 expected=5 ;;
+    "Validating boot setup")           start=99 end=100 expected=5 ;;
+  esac
+
+  (( phase_started > 0 )) || phase_started=$EPOCHSECONDS
+  elapsed=$(( EPOCHSECONDS - phase_started ))
+  (( elapsed < 0 )) && elapsed=0
+  span=$(( end - start ))
+  (( span < 0 )) && span=0
+  (( expected < 1 )) && expected=1
+  active=$(( elapsed * span / expected ))
+  (( active > span - 1 )) && active=$(( span - 1 ))
+  (( active < 0 )) && active=0
+  pct=$(( start + active ))
+  (( pct > 100 )) && pct=100
+  printf '%s' "$pct"
 }
 
 current_whimsy() {
@@ -260,25 +269,16 @@ install_duration() {
   local path line duration
 
   if [[ -f $STATE_FILE ]]; then
-    duration="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
-import json, sys
-try:
-    state = json.load(open(sys.argv[1]))
-    started = float(state.get("started_at") or 0)
-    finished = float(state.get("finished_at") or 0)
-except Exception:
-    raise SystemExit(0)
-if started <= 0 or finished <= 0 or finished < started:
-    raise SystemExit(0)
-seconds = int(round(finished - started))
-hours, remainder = divmod(seconds, 3600)
-minutes, seconds = divmod(remainder, 60)
-if hours:
-    print(f"{hours}h {minutes}m {seconds}s", end="")
-else:
-    print(f"{minutes}m {seconds}s", end="")
-PY
-)"
+    duration="$(jq -r '
+      ((.started_at // 0) | tonumber? // 0) as $started
+      | ((.finished_at // 0) | tonumber? // 0) as $finished
+      | if $started <= 0 or $finished <= 0 or $finished < $started then empty
+        else (($finished - $started) | round) as $secs
+          | if $secs >= 3600 then "\($secs / 3600 | floor)h \($secs % 3600 / 60 | floor)m \($secs % 60)s"
+            else "\($secs / 60 | floor)m \($secs % 60)s"
+            end
+        end
+    ' "$STATE_FILE" 2>/dev/null || true)"
     [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
   fi
 
@@ -551,21 +551,11 @@ if (( status != 0 )); then
   failure_status="$status"
   failure_summary=""
   if [[ -f $STATE_FILE ]]; then
-    failure_summary="$(python - "$STATE_FILE" <<'PY' 2>/dev/null || true
-import json, sys
-try:
-    state = json.load(open(sys.argv[1]))
-except Exception:
-    raise SystemExit(0)
-phase = state.get("current_phase")
-if phase:
-    print(f"last installer phase: {phase}")
-for item in reversed(state.get("phases", [])):
-    if item.get("status") == "failed":
-        print(f"failed phase: {item.get('name')}: {item.get('error')}")
-        break
-PY
-)"
+    failure_summary="$(jq -r '
+      (.current_phase // empty | "last installer phase: \(.)"),
+      ((.phases // []) | map(select(.status == "failed")) | last // empty
+        | "failed phase: \(.name): \(.error)")
+    ' "$STATE_FILE" 2>/dev/null || true)"
     if [[ -n $failure_summary ]]; then
       while IFS= read -r line; do
         [[ -n $line ]] && dashboard_log "$line"
