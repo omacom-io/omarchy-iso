@@ -153,7 +153,7 @@ fi
 # Boot from ISO before we've installed, then boot from drive after
 qemu-system-x86_64 \
   -cpu host -enable-kvm -machine q35,accel=kvm \
-  -smp "$(nproc)" \
+  -smp "$(($(nproc) < 8 ? $(nproc) : 8))" \
   -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
