@@ -472,9 +472,7 @@ run_partition_install() {
   fi
 
   local FREE_START_B FREE_END_B FREE_SIZE_B
-  FREE_START_B=$(echo "$FREE_SPACE_INFO" | awk '{print $1}')
-  FREE_END_B=$(echo "$FREE_SPACE_INFO"   | awk '{print $2}')
-  FREE_SIZE_B=$(echo "$FREE_SPACE_INFO"  | awk '{print $3}')
+  read -r FREE_START_B FREE_END_B FREE_SIZE_B <<<"$FREE_SPACE_INFO"
 
   local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
   local ALIGN=$mib
