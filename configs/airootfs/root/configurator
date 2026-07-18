@@ -349,11 +349,7 @@ run_partition_install() {
   # Windows ESP is far too small for our Unified Kernel Images, and a shared
   # ESP forces the install unencrypted. A separate Linux ESP keeps Windows
   # and Omarchy fully isolated and keeps LUKS on the table.
-  #
-  # shared_esp stays declared but is intentionally always empty so every
-  # downstream `[[ -z "$shared_esp" ]]` branch takes the dedicated-ESP path.
   step "Checking existing EFI partitions on $disk"
-  local shared_esp=""
   local detected_win_esp
   detected_win_esp=$(detect_windows_esp || true)
   if [[ -n "$detected_win_esp" ]]; then
@@ -414,14 +410,10 @@ run_partition_install() {
   local EFI_SIZE_B=$((2 * gib))
   local MIN_INSTALL_B=$((32 * gib))    # Minimum total Omarchy allocation
 
-  local EFI_START_B=0 EFI_END_B=0 ROOT_START_B ROOT_END_B
-  if [[ -z "$shared_esp" ]]; then
-    EFI_START_B=$(( (FREE_START_B + ALIGN - 1) / ALIGN * ALIGN ))
-    EFI_END_B=$((EFI_START_B + EFI_SIZE_B))
-    ROOT_START_B=$(( (EFI_END_B + 1 + ALIGN - 1) / ALIGN * ALIGN ))
-  else
-    ROOT_START_B=$(( (FREE_START_B + ALIGN - 1) / ALIGN * ALIGN ))
-  fi
+  local EFI_START_B EFI_END_B ROOT_START_B ROOT_END_B
+  EFI_START_B=$(( (FREE_START_B + ALIGN - 1) / ALIGN * ALIGN ))
+  EFI_END_B=$((EFI_START_B + EFI_SIZE_B))
+  ROOT_START_B=$(( (EFI_END_B + 1 + ALIGN - 1) / ALIGN * ALIGN ))
   ROOT_END_B=$((FREE_END_B / ALIGN * ALIGN))
 
   if (( ROOT_END_B <= ROOT_START_B )); then
@@ -429,13 +421,7 @@ run_partition_install() {
     return $?
   fi
 
-  local INSTALL_START_B INSTALL_MAX_B
-  if [[ -z "$shared_esp" ]]; then
-    INSTALL_START_B=$EFI_START_B
-  else
-    INSTALL_START_B=$ROOT_START_B
-  fi
-  INSTALL_MAX_B=$((ROOT_END_B - INSTALL_START_B))
+  local INSTALL_MAX_B=$((ROOT_END_B - EFI_START_B))
 
   if (( INSTALL_MAX_B < MIN_INSTALL_B )); then
     not_enough_space "$INSTALL_MAX_B"
@@ -503,20 +489,11 @@ run_partition_install() {
 
   local last_part efi_part_num root_part_num
   last_part=$(lsblk -n -o PARTN "$disk" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1)
-  if [[ -z "$shared_esp" ]]; then
-    efi_part_num=$(( ${last_part:-0} + 1 ))
-    root_part_num=$(( efi_part_num + 1 ))
-  else
-    efi_part_num=0   # not created by us
-    root_part_num=$(( ${last_part:-0} + 1 ))
-  fi
+  efi_part_num=$(( ${last_part:-0} + 1 ))
+  root_part_num=$(( efi_part_num + 1 ))
 
   local efi_dev root_partition_device root_mapper
-  if [[ -n "$shared_esp" ]]; then
-    efi_dev="$shared_esp"
-  else
-    efi_dev=$(partition_path "$disk" "$efi_part_num")
-  fi
+  efi_dev=$(partition_path "$disk" "$efi_part_num")
   root_partition_device=$(partition_path "$disk" "$root_part_num")
   if [[ "$encrypt_installation" == "true" ]]; then
     root_mapper="/dev/mapper/omarchy_root"
@@ -527,7 +504,7 @@ run_partition_install() {
   if $dry; then
     $needs_mklabel && say "[dry] would initialize GPT on $disk"
     say "[dry] would create root partition at $root_partition_device"
-    [[ -z "$shared_esp" ]] && say "[dry] would create EFI partition at $efi_dev"
+    say "[dry] would create EFI partition at $efi_dev"
     say "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
   else
     step "Creating partitions on $disk"
@@ -536,11 +513,9 @@ run_partition_install() {
       partprobe "$disk" 2>/dev/null || true
       sleep 1
     fi
-    if [[ -z "$shared_esp" ]]; then
-      parted --script "$disk" mkpart primary fat32 "${EFI_START_B}B" "${EFI_END_B}B"
-      parted --script "$disk" set "$efi_part_num" esp on
-      parted --script "$disk" name "$efi_part_num" "OMARCHY_EFI"
-    fi
+    parted --script "$disk" mkpart primary fat32 "${EFI_START_B}B" "${EFI_END_B}B"
+    parted --script "$disk" set "$efi_part_num" esp on
+    parted --script "$disk" name "$efi_part_num" "OMARCHY_EFI"
     parted --script "$disk" mkpart primary btrfs "${ROOT_START_B}B" "${ROOT_END_B}B"
     parted --script "$disk" name "$root_part_num" "OMARCHY_ROOT"
     partprobe "$disk"
@@ -549,7 +524,7 @@ run_partition_install() {
 
     local i
     for i in 1 2 3 4 5; do
-      if [[ -b "$root_partition_device" ]] && { [[ -n "$shared_esp" ]] || [[ -b "$efi_dev" ]]; }; then
+      if [[ -b "$root_partition_device" && -b "$efi_dev" ]]; then
         break
       fi
       sleep 1
@@ -587,9 +562,7 @@ run_partition_install() {
     mount -o noatime,compress=zstd,subvol=@log  "$root_mapper" /mnt/var/log
     mount -o noatime,compress=zstd,subvol=@pkg  "$root_mapper" /mnt/var/cache/pacman/pkg
 
-    if [[ -z "$shared_esp" ]]; then
-      mkfs.fat -F32 -n OMARCHY_EFI "$efi_dev"
-    fi
+    mkfs.fat -F32 -n OMARCHY_EFI "$efi_dev"
     mount "$efi_dev" /mnt"$esp_mount_in_target"
   fi
 
