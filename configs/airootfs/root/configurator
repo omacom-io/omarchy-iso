@@ -36,9 +36,6 @@ clear_logo() {
   gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
 }
 
-# Ensure tzupdate is available for guessing timezone
-command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
-
 abort() {
   gum style "${1:-Aborted installation}"
   echo
