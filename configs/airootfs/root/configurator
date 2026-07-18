@@ -1,40 +1,24 @@
 #!/bin/bash
 
-# Minimal live-ISO presentation helpers. Keep these local to the ISO: the
-# installed Omarchy package owns target setup helpers, while the ISO owns the
-# installer UI that runs before any target packages exist.
+# On the live ISO, .automated_script.sh exports OMARCHY_PATH and the package
+# targets before running us. The defaults keep bin/omarchy-iso-configurator
+# dry runs working outside the ISO.
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
-if [[ -f /usr/share/omarchy-iso/package-targets ]]; then
-  # shellcheck disable=SC1091
-  source /usr/share/omarchy-iso/package-targets
-fi
 OMARCHY_RUNTIME_PACKAGE="${OMARCHY_RUNTIME_PACKAGE:-omarchy}"
 OMARCHY_SETTINGS_PACKAGE="${OMARCHY_SETTINGS_PACKAGE:-omarchy-settings}"
-OMARCHY_NVIM_PACKAGE="${OMARCHY_NVIM_PACKAGE:-omarchy-nvim}"
-LOGO_PATH="${LOGO_PATH:-$OMARCHY_PATH/logo.txt}"
 
-TERM_HEIGHT=${LINES:-24}
-TERM_WIDTH=${COLUMNS:-80}
-if [[ -e /dev/tty ]]; then
-  TERM_SIZE=$(stty size 2>/dev/null </dev/tty || true)
-  if [[ $TERM_SIZE =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]] && (( BASH_REMATCH[1] > 0 && BASH_REMATCH[2] > 0 )); then
-    TERM_HEIGHT=${BASH_REMATCH[1]}
-    TERM_WIDTH=${BASH_REMATCH[2]}
-  fi
-fi
+LOGO_PATH="$OMARCHY_PATH/logo.txt"
 
-if [[ -f $LOGO_PATH ]]; then
-  LOGO_WIDTH=$(awk '{ if (length > max) max = length } END { print max+0 }' "$LOGO_PATH" 2>/dev/null || echo 0)
-else
-  LOGO_WIDTH=7
-fi
-(( LOGO_WIDTH > 0 )) || LOGO_WIDTH=7
+# gum draws on /dev/tty, so measure that rather than trusting inherited COLUMNS
+TERM_WIDTH=$(stty size 2>/dev/null </dev/tty | awk '{print $2}')
+(( TERM_WIDTH > 0 )) || TERM_WIDTH=${COLUMNS:-80}
+
+LOGO_WIDTH=$(awk '{ if (length > max) max = length } END { print max+0 }' "$LOGO_PATH")
 PADDING_LEFT=$(((TERM_WIDTH - LOGO_WIDTH) / 2))
 (( PADDING_LEFT < 0 )) && PADDING_LEFT=0
 PADDING_LEFT_SPACES=$(printf "%*s" "$PADDING_LEFT" "")
 PADDING="0 0 0 $PADDING_LEFT"
 
-export TERM_HEIGHT TERM_WIDTH LOGO_PATH PADDING_LEFT PADDING_LEFT_SPACES PADDING
 export GUM_CONFIRM_PROMPT_FOREGROUND="6"
 export GUM_CONFIRM_SELECTED_FOREGROUND="0"
 export GUM_CONFIRM_SELECTED_BACKGROUND="2"
@@ -49,11 +33,7 @@ export GUM_CONFIRM_PADDING="$PADDING"
 
 clear_logo() {
   printf "\033[H\033[2J"
-  if [[ -f $LOGO_PATH ]]; then
-    gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
-  else
-    gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "Omarchy"
-  fi
+  gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
 }
 
 # Ensure tzupdate is available for guessing timezone
