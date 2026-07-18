@@ -161,7 +161,7 @@ qemu-system-x86_64 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
   -device virtio-vga-gl \
-  -display gtk,gl=on \
+  -display sdl,gl=on \
   -usb -device usb-tablet \
   "${NET_ARGS[@]}" \
   -boot menu=on \
