@@ -48,7 +48,6 @@ child_pid=""
 child_pgid=""
 
 whimsy=(
-  "installing a complete system"
   "delivering delightful defaults"
   "saving setup sit-ups"
   "showcasing the best of linux"
