@@ -53,8 +53,8 @@ qemu-system-x86_64 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
   -device ide-cd,drive=cdrom0,bootindex=2 \
-  -device virtio-vga \
-  -display gtk \
+  -device virtio-vga-gl \
+  -display sdl,gl=on \
   -usb -device usb-tablet \
   -netdev user,id=net0,hostfwd=tcp::2222-:22 \
   -device virtio-net-pci,netdev=net0 \
