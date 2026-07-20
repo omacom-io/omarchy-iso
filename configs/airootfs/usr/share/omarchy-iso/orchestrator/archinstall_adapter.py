@@ -3,7 +3,7 @@
 ONLY this module imports from archinstall. Everything else uses these helpers.
 If archinstall's API churns, the blast radius is contained here.
 
-Tested against archinstall 4.3 (Python 3.14).
+Tested against archinstall 4.4 (Python 3.14).
 
 The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
 
@@ -44,13 +44,15 @@ from typing import Iterator
 from archinstall.lib.args import ArchConfig, ArchConfigHandler
 from archinstall.lib.authentication.authentication_handler import AuthenticationHandler
 from archinstall.lib.disk.filesystem import FilesystemHandler
-from archinstall.lib.disk.utils import get_parent_device_path, get_unique_path_for_device
+from archinstall.lib.disk.utils import get_parent_device_path, get_unique_path_for_device, udev_sync
 from archinstall.lib.hardware import SysInfo
 from archinstall.lib.installer import Installer
 from archinstall.lib.mirror.mirror_handler import MirrorListHandler
 from archinstall.lib.models import Bootloader
 from archinstall.lib.models.device import DiskLayoutType, EncryptionType
 from archinstall.lib.models.users import User
+
+from .ui import info
 
 
 def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
@@ -83,10 +85,30 @@ def make_mirror_handler(offline: bool = True) -> MirrorListHandler:
 def perform_filesystem_operations(arch_config: ArchConfig) -> None:
     """Partition, format, encrypt. archinstall's FilesystemHandler is its own
     object (separate from Installer) so we run it before opening the
-    Installer context manager."""
+    Installer context manager.
+
+    parted's partition-table commit races udev: the disk wipe and the first
+    BLKPG partition registration trigger probes that briefly hold the disk
+    open, and the kernel then refuses to register the remaining partitions
+    (_ped.IOException: "Partition(s) ... have been written, but we have been
+    unable to inform the kernel"). The table is written correctly when that
+    happens — only the kernel's view is stale — so settle udev and redo the
+    operations. The wipe/partition/format sequence is idempotent."""
     if not arch_config.disk_config:
         raise RuntimeError("disk_config missing from arch config")
-    FilesystemHandler(arch_config.disk_config).perform_filesystem_operations()
+
+    handler = FilesystemHandler(arch_config.disk_config)
+
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        udev_sync()
+        try:
+            handler.perform_filesystem_operations()
+            return
+        except Exception as exc:
+            if attempt == attempts or "unable to inform the kernel" not in str(exc):
+                raise
+            info(f"› partition commit lost a udev race (attempt {attempt}/{attempts}); retrying")
 
 
 @contextmanager
