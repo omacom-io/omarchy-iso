@@ -50,11 +50,11 @@ child_pgid=""
 whimsy=(
   "delivering delightful defaults"
   "saving setup sit-ups"
-  "showcasing the best of linux"
+  "picking the best of linux"
   "curating beatiful themes"
-  "preparing an omakase composition"
+  "preparing the omakase way"
   "hyping hyprland up"
-  "integrating quickshell panels"
+  "integrating quickshell shells"
 )
 
 cleanup() {
