@@ -61,11 +61,12 @@ while (($#)); do
   shift
 done
 
-if [[ -z $ISO ]]; then
-  ISO=$(ls -t "$REPO_DIR"/release/*.iso 2>/dev/null | head -1) || true
+if [[ -z $ISO && -t 0 ]]; then
+  ISO=$(ls -t "$REPO_DIR"/release/*.iso 2>/dev/null | gum choose --header "Select ISO to test")
 fi
 
 if [[ ! -f ${ISO:-} ]]; then
+  echo "No ISO to test. Pass one explicitly or put it in release/." >&2
   echo "Usage: omarchy-iso-test [release/omarchy.iso] [options]" >&2
   exit 1
 fi
