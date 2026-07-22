@@ -17,11 +17,13 @@
 #   --reuse-base       Skip the install phase if a base image already exists
 #   --install-only     Stop after producing the installed base image
 #   --sync-omarchy DIR Push DIR's test/acceptance into the guest before running
+#                      (defaults to OMARCHY_PATH when the suite is present)
 #   --sync-all DIR     Push all of DIR (bin/config/shell/test) into the guest
 #   --port PORT        Host port forwarded to guest SSH (default 2222)
 #   --memory MB        VM memory (default 8192)
 #   --timeout SECS     Install timeout (default 2400)
 #   --keep-running     Leave the acceptance VM running after the suite finishes
+#   --no-preview       Do not open the collected screenshots in imv
 
 set -euo pipefail
 
@@ -37,6 +39,7 @@ ENCRYPT=false
 REUSE_BASE=false
 INSTALL_ONLY=false
 KEEP_RUNNING=false
+NO_PREVIEW=false
 SYNC_DIR=""
 SYNC_ALL=false
 
@@ -50,6 +53,7 @@ while (($#)); do
     --reuse-base) REUSE_BASE=true ;;
     --install-only) INSTALL_ONLY=true ;;
     --keep-running) KEEP_RUNNING=true ;;
+    --no-preview) NO_PREVIEW=true ;;
     --sync-omarchy) SYNC_DIR="$2"; shift ;;
     --sync-all) SYNC_DIR="$2"; SYNC_ALL=true; shift ;;
     --port) SSH_PORT="$2"; shift ;;
@@ -60,6 +64,10 @@ while (($#)); do
   esac
   shift
 done
+
+if [[ -z $SYNC_DIR && -f ${OMARCHY_PATH:-}/test/acceptance ]]; then
+  SYNC_DIR="$OMARCHY_PATH"
+fi
 
 if [[ -z $ISO && -t 0 ]]; then
   ISO=$(ls -t "$REPO_DIR"/release/*.iso 2>/dev/null | gum choose --header "Select ISO to test")
@@ -110,29 +118,75 @@ screendump() {
   qmp "\"screendump\", \"arguments\": {\"filename\": \"$1\"}" >/dev/null
 }
 
+capture_console() {
+  local name="$1" shot="$RUN_DIR/.capture.ppm"
+
+  sleep 1
+  screendump "$shot"
+  [[ -s $shot ]] || return 0
+  magick "$shot" "$RUN_DIR/$name.png" 2>/dev/null || true
+  rm -f "$shot"
+}
+
 stop_vm() {
   vm_running || return 0
 
-  qmp '"system_powerdown"' >/dev/null
+  if ! ssh_guest "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1; then
+    qmp '"system_powerdown"' >/dev/null
+  fi
 
   local waited=0
-  while vm_running && ((waited < 60)); do
-    sleep 2
-    ((waited += 2))
+  while vm_running && ((waited < 15)); do
+    sleep 1
+    ((waited += 1))
   done
 
   if vm_running; then
+    qmp '"quit"' >/dev/null
+    sleep 1
+  fi
+
+  if vm_running; then
     kill "$(cat "$PIDFILE")" 2>/dev/null || true
-    sleep 2
+    sleep 1
+  fi
+}
+
+open_screenshots() {
+  local entry
+  local -a screenshots=()
+
+  while IFS= read -r -d '' entry; do
+    screenshots+=("${entry#* }")
+  done < <(
+    find "$RUN_DIR" -type f \( -name "success-*.png" -o -name "failure-*.png" \) -printf '%T@ %p\0' |
+      sort -zn
+  )
+
+  (( ${#screenshots[@]} > 0 )) || return 0
+
+  log "Visual review: ${#screenshots[@]} screenshots in $RUN_DIR"
+  $NO_PREVIEW && return 0
+
+  if command -v imv >/dev/null && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+    setsid -f imv "${screenshots[@]}" >/dev/null 2>&1
   fi
 }
 
 cleanup() {
+  local status=$?
+
   [[ -n $HTTP_PID ]] && kill "$HTTP_PID" 2>/dev/null || true
 
   if ! $KEEP_RUNNING; then
+    vm_running && log "Stopping test VM"
     stop_vm
   fi
+
+  rm -f "$RUN_DIR/.screen.ppm" "$RUN_DIR/.screen.png"
+  open_screenshots
+
+  return $status
 }
 trap cleanup EXIT
 
@@ -178,7 +232,7 @@ ocr_screen() {
 # Wait until the console shows the given text. Saves the offending screen as
 # an artifact on timeout.
 wait_for_screen() {
-  local text="$1" timeout="$2" waited=0
+  local text="$1" timeout="$2" waited=0 slug
 
   until ocr_screen | grep -qi "$text"; do
     if ! vm_running; then
@@ -187,7 +241,10 @@ wait_for_screen() {
     fi
 
     if ((waited >= timeout)); then
-      screendump "$RUN_DIR/timeout-${text// /-}.ppm"
+      slug=${text,,}
+      slug=${slug// /-}
+      slug=${slug//[^a-z0-9-]/}
+      capture_console "failure-installer-waiting-for-$slug"
       echo "Timed out after ${timeout}s waiting for screen: $text" >&2
       return 1
     fi
@@ -239,6 +296,7 @@ type_text() {
 
 ssh_guest() {
   ssh -i "$SSH_KEY" -p "$SSH_PORT" \
+    -o BatchMode=yes \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=5 \
@@ -247,7 +305,7 @@ ssh_guest() {
 }
 
 wait_for_ssh() {
-  local timeout="$1" waited=0
+  local timeout="$1" failure_name="${2:-failure-session-ssh-timeout}" waited=0
 
   while ! ssh_guest true 2>/dev/null; do
     if ! vm_running; then
@@ -256,7 +314,7 @@ wait_for_ssh() {
     fi
 
     if ((waited >= timeout)); then
-      screendump "$RUN_DIR/ssh-timeout.ppm"
+      capture_console "$failure_name"
       echo "Timed out after ${timeout}s waiting for SSH" >&2
       return 1
     fi
@@ -270,74 +328,330 @@ session_started() {
   ssh_guest "ls /run/user/1000/hypr 2>/dev/null | grep -q ." 2>/dev/null
 }
 
+ssh_session() {
+  local command="$1"
+
+  ssh_guest "export XDG_RUNTIME_DIR=/run/user/\$(id -u); \
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus; \
+    export LANG=\$(systemctl --user show-environment | sed -n 's/^LANG=//p' | head -1); \
+    export LANG=\${LANG:-C.UTF-8}; \
+    export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1); \
+    export WAYLAND_DISPLAY=\$(find \$XDG_RUNTIME_DIR -maxdepth 1 -name 'wayland-*' ! -name '*.lock' -printf '%f\\n' | head -1); \
+    export OMARCHY_PATH=/usr/share/omarchy; \
+    export PATH=\$OMARCHY_PATH/bin:\$PATH; \
+    $command" </dev/null
+}
+
+wait_for_guest_state() {
+  local description="$1" timeout="$2"
+  shift 2
+  local deadline=$((SECONDS + timeout))
+
+  until "$@" >/dev/null 2>&1; do
+    if ((SECONDS >= deadline)); then
+      printf 'not ok - %s\n' "$description" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  printf 'ok - %s\n' "$description"
+}
+
+guest_layer_present() {
+  local namespace="$1"
+
+  ssh_session "hyprctl -j layers | jq -e --arg namespace '$namespace' \
+    '[.. | objects | select(.namespace? == \$namespace)] | length > 0'"
+}
+
+guest_layer_absent() {
+  ! guest_layer_present "$1"
+}
+
+cleanup_shortcut_state() {
+  ssh_session 'for plugin in omarchy.launcher omarchy.menu omarchy.emojis omarchy.clipboard omarchy.audio; do
+    omarchy-shell shell hide "$plugin" >/dev/null 2>&1 || true
+  done
+  while read -r address; do
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null 2>&1 ||
+      hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
+  done < <(hyprctl -j clients | jq -r '\''.[] | select(.class == "foot") | .address'\'')
+  hyprctl dispatch workspace 1 >/dev/null 2>&1 || true' >/dev/null 2>&1 || true
+}
+
+verify_surface_shortcut() {
+  local name="$1" chord="$2" namespace="$3" plugin="$4"
+
+  press "$chord"
+  if ! wait_for_guest_state "$name shortcut opens" 15 guest_layer_present "$namespace"; then
+    capture_console "failure-shortcut-$name-open"
+    ssh_session "omarchy-shell shell hide '$plugin' >/dev/null 2>&1 || true" || true
+    return 1
+  fi
+  capture_console "success-shortcut-$name"
+
+  press esc
+  if ! wait_for_guest_state "$name shortcut surface closes" 15 guest_layer_absent "$namespace"; then
+    capture_console "failure-shortcut-$name-close"
+    ssh_session "omarchy-shell shell hide '$plugin' >/dev/null 2>&1 || true" || true
+    return 1
+  fi
+}
+
+verify_desktop_shortcuts() {
+  cleanup_shortcut_state
+
+  press meta_l-ret
+  if ! wait_for_guest_state "terminal shortcut opens a window" 30 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
+    capture_console "failure-shortcut-terminal-open"
+    return 1
+  fi
+
+  press meta_l-ret
+  if ! wait_for_guest_state "terminal shortcut opens a second window" 30 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 2'"; then
+    capture_console "failure-shortcut-terminal-second-window"
+    return 1
+  fi
+  capture_console "success-shortcut-desktop-01-two-tiled-terminals"
+
+  press meta_l-t
+  if ! wait_for_guest_state "floating shortcut floats the active window" 15 \
+    ssh_session "hyprctl -j activewindow | jq -e '.class == \"foot\" and .floating == true'"; then
+    capture_console "failure-shortcut-window-float"
+    return 1
+  fi
+  capture_console "success-shortcut-desktop-02-floating-terminal"
+
+  press meta_l-t
+  if ! wait_for_guest_state "floating shortcut returns the window to tiling" 15 \
+    ssh_session "hyprctl -j activewindow | jq -e '.class == \"foot\" and .floating == false'"; then
+    capture_console "failure-shortcut-window-retile"
+    return 1
+  fi
+
+  press meta_l-shift-2
+  if ! wait_for_guest_state "move shortcut follows the window to workspace 2" 15 \
+    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 2' && \
+      hyprctl -j activewindow | jq -e '.class == \"foot\" and .workspace.id == 2'"; then
+    capture_console "failure-shortcut-window-workspace-2"
+    return 1
+  fi
+  capture_console "success-shortcut-desktop-03-terminal-on-workspace-2"
+
+  press meta_l-1
+  if ! wait_for_guest_state "workspace shortcut returns to workspace 1" 15 \
+    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 1'"; then
+    capture_console "failure-shortcut-workspace-1"
+    return 1
+  fi
+  capture_console "success-shortcut-desktop-04-workspace-1"
+
+  press meta_l-w
+  if ! wait_for_guest_state "close shortcut closes the workspace 1 terminal" 15 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
+    capture_console "failure-shortcut-close-workspace-1"
+    return 1
+  fi
+
+  press meta_l-2
+  if ! wait_for_guest_state "workspace shortcut visits workspace 2" 15 \
+    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 2'"; then
+    capture_console "failure-shortcut-visit-workspace-2"
+    return 1
+  fi
+  press meta_l-w
+  if ! wait_for_guest_state "close shortcut closes the workspace 2 terminal" 15 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 0'"; then
+    capture_console "failure-shortcut-close-workspace-2"
+    return 1
+  fi
+}
+
+verify_universal_clipboard_shortcuts() {
+  local copy_token="OmarchyUniversalCopy$(date +%s)"
+  local paste_token="OmarchyUniversalPaste$(date +%s)"
+  local terminal_token="OmarchyTerminalPaste$(date +%s)"
+  local terminal_result="/tmp/omarchy-universal-terminal-paste"
+
+  cleanup_shortcut_state
+  ssh_session "setsid -f chromium --new-window about:blank >/dev/null 2>&1"
+  if ! wait_for_guest_state "universal clipboard test opens Chromium" 45 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class | test(\"(?i)chromium\"))] | length == 1'"; then
+    capture_console "failure-shortcut-universal-clipboard-browser"
+    return 1
+  fi
+
+  press ctrl-l
+  type_text "$copy_token"
+  press ctrl-a
+  press meta_l-c
+  if ! wait_for_guest_state "universal copy uses the active GUI application" 15 \
+    ssh_session "[[ \$(wl-paste --no-newline) == '$copy_token' ]]"; then
+    capture_console "failure-shortcut-universal-copy"
+    return 1
+  fi
+
+  ssh_session "setsid -f bash -c 'printf \"%s\" \"$paste_token\" | wl-copy' >/dev/null 2>&1"
+  if ! wait_for_guest_state "universal paste clipboard is seeded" 15 \
+    ssh_session "[[ \$(wl-paste --no-newline) == '$paste_token' ]]"; then
+    capture_console "failure-shortcut-universal-paste-seed"
+    return 1
+  fi
+  press ctrl-l
+  press meta_l-v
+  sleep 1
+  press ctrl-a
+  press ctrl-c
+  if ! wait_for_guest_state "universal paste uses the active GUI application" 15 \
+    ssh_session "[[ \$(wl-paste --no-newline) == '$paste_token' ]]"; then
+    capture_console "failure-shortcut-universal-paste-gui"
+    return 1
+  fi
+  capture_console "success-shortcut-universal-copy-paste-gui"
+  ssh_session 'while read -r address; do
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null 2>&1 ||
+      hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
+  done < <(hyprctl -j clients | jq -r '\''.[] | select(.class | test("(?i)chromium")) | .address'\'')' || true
+
+  ssh_session "rm -f '$terminal_result'; \
+    setsid -f bash -c 'printf \"%s\" \"$terminal_token\" | wl-copy' >/dev/null 2>&1; \
+    setsid -f foot --app-id=foot -e bash -c 'read -r value; printf \"%s\" \"\$value\" > \"$terminal_result\"; sleep 30' >/dev/null 2>&1"
+  if ! wait_for_guest_state "terminal paste clipboard is seeded" 15 \
+    ssh_session "[[ \$(wl-paste --no-newline) == '$terminal_token' ]]"; then
+    capture_console "failure-shortcut-universal-paste-terminal-seed"
+    return 1
+  fi
+  if ! wait_for_guest_state "universal clipboard test opens a terminal" 30 \
+    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
+    capture_console "failure-shortcut-universal-clipboard-terminal"
+    return 1
+  fi
+
+  press meta_l-v
+  sleep 1
+  press ret
+  if ! wait_for_guest_state "universal paste uses the terminal-safe shortcut" 15 \
+    ssh_session "[[ \$(cat '$terminal_result' 2>/dev/null) == '$terminal_token' ]]"; then
+    capture_console "failure-shortcut-universal-paste-terminal"
+    return 1
+  fi
+  capture_console "success-shortcut-universal-paste-terminal"
+  cleanup_shortcut_state
+}
+
+shortcut_smoke_phase() {
+  log "Exercising primary desktop shortcuts through the VM keyboard"
+
+  local status=0
+  local name chord namespace plugin
+  local shortcuts='launcher|meta_l-spc|omarchy-launcher|omarchy.launcher
+menu|meta_l-alt-spc|omarchy-menu|omarchy.menu
+emojis|meta_l-ctrl-e|omarchy-emojis|omarchy.emojis
+clipboard|meta_l-ctrl-v|omarchy-clipboard|omarchy.clipboard
+audio-panel|meta_l-ctrl-a|omarchy-keyboard-panel|omarchy.audio'
+
+  cleanup_shortcut_state
+  while IFS='|' read -r name chord namespace plugin; do
+    if ! verify_surface_shortcut "$name" "$chord" "$namespace" "$plugin"; then
+      status=1
+    fi
+  done <<<"$shortcuts"
+
+  if ! verify_desktop_shortcuts; then
+    status=1
+  fi
+  if ! verify_universal_clipboard_shortcuts; then
+    status=1
+  fi
+  cleanup_shortcut_state
+
+  return $status
+}
+
 # ----------------------------------------------------- driving the installer
 
 drive_configurator() {
   log "Driving the installer wizard"
 
   wait_for_screen "keyboard layout" 300
+  capture_console "success-installer-01-keyboard-layout"
   press ret # English (US) is preselected
 
   wait_for_screen "Username" 120
   type_text "$GUEST_USER"
+  capture_console "success-installer-02-username"
   press ret
 
   wait_for_screen "Password" 60
   type_text "$GUEST_PASSWORD"
+  capture_console "success-installer-03-password"
   press ret
 
   wait_for_screen "Must match" 60
   type_text "$GUEST_PASSWORD"
+  capture_console "success-installer-04-password-confirmation"
   press ret
 
   wait_for_screen "Full name" 60
   type_text "Omarchy Test"
+  capture_console "success-installer-05-full-name"
   press ret
 
   wait_for_screen "Email address" 60
   type_text "test@omarchy.org"
+  capture_console "success-installer-06-email"
   press ret
 
   wait_for_screen "Hostname" 60
   type_text "$GUEST_HOSTNAME"
+  capture_console "success-installer-07-hostname"
   press ret
 
   wait_for_screen "Timezone" 180 # tzupdate geo-guess can take a moment
+  capture_console "success-installer-08-timezone"
   press ret
 
   wait_for_screen "look right" 60
+  capture_console "success-installer-09-review"
   press ret
 
   wait_for_screen "install disk" 60
+  capture_console "success-installer-10-install-disk"
   press ret # the single virtio disk
 
-  wait_for_screen "overwritten" 60
+  wait_for_screen "recovery possible" 60
+  capture_console "success-installer-11-disk-warning-encrypted"
   if ! $ENCRYPT; then
     press ctrl-c # toggles the confirm to the unencrypted flow
     wait_for_screen "without encryption" 30
+    capture_console "success-installer-12-disk-warning-unencrypted"
   fi
   press ret
 
-  screendump "$RUN_DIR/install-started.ppm"
+  sleep 2
+  capture_console "success-installer-13-install-started"
 }
 
 wait_for_install() {
   log "Waiting for the install to finish (timeout ${INSTALL_TIMEOUT}s)"
 
-  local waited=0 text
+  local waited=0 text progress_name
   while true; do
     text=$(ocr_screen)
 
     if grep -qi "Reboot Now" <<<"$text"; then
       log "Install finished. Confirming the reboot prompt."
-      screendump "$RUN_DIR/install-finished.ppm"
+      capture_console "success-installer-15-reboot"
       press ret
       return 0
     fi
 
     if grep -qi "installation stopped" <<<"$text"; then
-      screendump "$RUN_DIR/install-failed.ppm"
-      echo "Install failed — screen saved to $RUN_DIR/install-failed.ppm" >&2
+      capture_console "failure-installer-installation-stopped"
+      echo "Install failed — screenshot saved to $RUN_DIR" >&2
       return 1
     fi
 
@@ -347,13 +661,14 @@ wait_for_install() {
     fi
 
     if ((waited >= INSTALL_TIMEOUT)); then
-      screendump "$RUN_DIR/install-timeout.ppm"
+      capture_console "failure-installer-install-timeout"
       echo "Timed out after ${INSTALL_TIMEOUT}s waiting for install" >&2
       return 1
     fi
 
     if ((waited % 60 == 0)); then
-      screendump "$RUN_DIR/progress.ppm"
+      printf -v progress_name 'success-installer-14-install-progress-%04ds' "$waited"
+      capture_console "$progress_name"
       echo "    ... installing (${waited}s)"
     fi
 
@@ -370,9 +685,13 @@ unlock_luks() {
 
   local waited=0
   sleep 10
+  capture_console "success-first-boot-01-luks-prompt"
 
   while true; do
     type_text "$GUEST_PASSWORD"
+    if ((waited == 0)); then
+      capture_console "success-first-boot-02-luks-passphrase"
+    fi
     press ret
     sleep 20
     ((waited += 30))
@@ -384,7 +703,7 @@ unlock_luks() {
     fi
 
     if ((waited >= 300)); then
-      screendump "$RUN_DIR/luks-timeout.ppm"
+      capture_console "failure-first-boot-luks-timeout"
       echo "Timed out waiting for LUKS unlock" >&2
       return 1
     fi
@@ -401,6 +720,7 @@ bootstrap_ssh() {
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 echo "$(cat "$SSH_KEY.pub")" >>~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
+echo "$GUEST_PASSWORD" | sudo -S ufw allow from 10.0.2.2 to any port 22 proto tcp
 echo "$GUEST_PASSWORD" | sudo -S systemctl enable --now sshd.service
 EOF
 
@@ -415,7 +735,7 @@ EOF
     ((waited += 8))
 
     if ((waited >= 300)); then
-      screendump "$RUN_DIR/console-timeout.ppm"
+      capture_console "failure-first-boot-console-timeout"
       echo "Timed out waiting for a console login prompt" >&2
       return 1
     fi
@@ -423,16 +743,20 @@ EOF
   done
 
   type_text "$GUEST_USER"
+  capture_console "success-first-boot-03-console-username"
   press ret
   wait_for_screen "Password" 60
   type_text "$GUEST_PASSWORD"
+  capture_console "success-first-boot-04-console-password"
   press ret
   sleep 3
 
   type_text "curl -fsS http://10.0.2.2:$HTTP_PORT/bootstrap | bash"
+  capture_console "success-first-boot-05-bootstrap-command"
   press ret
 
-  wait_for_ssh 180
+  wait_for_ssh 180 "failure-first-boot-ssh-timeout"
+  capture_console "success-first-boot-06-bootstrap-complete"
 
   kill "$HTTP_PID" 2>/dev/null || true
   HTTP_PID=""
@@ -445,21 +769,25 @@ establish_session() {
   if $ENCRYPT; then
     local waited=0
     sleep 10
+    capture_console "success-session-01-luks-prompt"
     until ssh_guest true 2>/dev/null; do
       type_text "$GUEST_PASSWORD"
+      if ((waited == 0)); then
+        capture_console "success-session-02-luks-passphrase"
+      fi
       press ret
       sleep 15
       ((waited += 16))
 
       if ((waited >= BOOT_TIMEOUT)); then
-        screendump "$RUN_DIR/luks-timeout.ppm"
+        capture_console "failure-session-luks-timeout"
         echo "Timed out unlocking LUKS" >&2
         return 1
       fi
     done
     # Encrypted installs autologin once the disk is unlocked
   else
-    wait_for_ssh "$BOOT_TIMEOUT"
+    wait_for_ssh "$BOOT_TIMEOUT" "failure-session-ssh-timeout"
     sleep 5
   fi
 
@@ -467,18 +795,26 @@ establish_session() {
   until session_started; do
     if ! $ENCRYPT; then
       # SDDM remembers the user and focuses the password field
+      if ((waited == 0)); then
+        capture_console "success-session-01-login"
+      fi
       type_text "$GUEST_PASSWORD"
+      if ((waited == 0)); then
+        capture_console "success-session-02-password"
+      fi
       press ret
     fi
     sleep 10
     ((waited += 11))
 
     if ((waited >= 300)); then
-      screendump "$RUN_DIR/session-timeout.ppm"
+      capture_console "failure-session-start-timeout"
       echo "Timed out waiting for the Hyprland session" >&2
       return 1
     fi
   done
+
+  capture_console "success-session-03-desktop"
 }
 
 # -------------------------------------------------------------------- phases
@@ -525,20 +861,29 @@ sync_omarchy() {
 acceptance_phase() {
   log "Booting acceptance VM from base image overlay"
 
+  local guest_omarchy_path="/usr/share/omarchy"
+  $SYNC_ALL && guest_omarchy_path=".local/share/omarchy"
+
   qemu-img create -f qcow2 -b "$BASE_DISK" -F qcow2 "$RUN_DIR/run.qcow2" >/dev/null
   start_vm "$RUN_DIR/run.qcow2" "$RUN_DIR/serial.log"
 
   establish_session
   sync_omarchy
 
-  log "Running acceptance suite"
   local status=0
-  ssh_guest "OMARCHY_ACCEPTANCE_DIR=/tmp/omarchy-acceptance bash .local/share/omarchy/test/acceptance" || status=$?
+  shortcut_smoke_phase || status=1
+
+  log "Running acceptance suite"
+  ssh_guest "OMARCHY_PATH=$guest_omarchy_path OMARCHY_ACCEPTANCE_DIR=/tmp/omarchy-acceptance bash .local/share/omarchy/test/acceptance" || status=$?
 
   log "Collecting artifacts into $RUN_DIR"
   ssh_guest "tar -C /tmp -cf - omarchy-acceptance 2>/dev/null" | tar -C "$RUN_DIR" -xf - || true
   ssh_guest "echo $GUEST_PASSWORD | sudo -S cat /var/log/omarchy-install.log 2>/dev/null" >"$RUN_DIR/omarchy-install.log" 2>/dev/null || true
-  screendump "$RUN_DIR/final.ppm"
+  if ((status == 0)); then
+    capture_console "success-acceptance-final"
+  else
+    capture_console "failure-acceptance-final"
+  fi
 
   return $status
 }

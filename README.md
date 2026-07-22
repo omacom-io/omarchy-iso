@@ -32,17 +32,19 @@ fixture exercises Windows partition preservation but does not contain Windows.
 
 ## Acceptance testing the ISO
 
-Run `./bin/omarchy-iso-test [release/omarchy.iso]` to install the ISO into a headless VM by driving the real interactive install flow — the harness reads each screen via QMP screendumps + OCR and answers with virtual keystrokes, so the configurator wizard, install dashboard, reboot prompt, and SDDM login are all exercised exactly as a user would. It then boots the installed system and runs the in-guest acceptance suite (`test/acceptance` in the omarchy repo): session health, application launches, and shell surfaces like the launcher and emoji picker. Screenshots, serial logs, and the install log land in `test-runs/<iso>/runs/<timestamp>/`.
+Run `./bin/omarchy-iso-test [release/omarchy.iso]` to install the ISO into a headless VM by driving the real interactive install flow — the harness reads each screen via QMP screendumps + OCR and answers with virtual keystrokes, so the configurator wizard, install dashboard, reboot prompt, and SDDM login are all exercised exactly as a user would. It then boots the installed system, sends real VM keyboard shortcuts for the primary shell and window-management actions, and runs the in-guest acceptance suite (`test/acceptance` in the omarchy repo). The suite checks session and service health, the complete core-package manifest, user defaults, representative applications, menus, panels, live weather, launchers, visual selectors, notifications, clipboard, and other interactive shell behavior.
 
-The install phase produces a reusable base image, so iterating on the suite is fast:
+Visual checkpoints are saved as `success-<step>.png` or `failure-<step>.png` alongside the serial and install logs in `test-runs/<iso>/runs/<timestamp>/`. Independent test files and applications continue after a failure so one broken surface does not hide the rest of the report. The harness then stops the VM and opens the ordered screenshots in `imv` for quick visual review.
+
+The harness syncs the acceptance suite from `$OMARCHY_PATH` when it is available. The install phase produces a reusable base image, so iterating against another checkout is fast:
 
 ```bash
 ./bin/omarchy-iso-test release/omarchy.iso --install-only        # once per ISO
 ./bin/omarchy-iso-test release/omarchy.iso --reuse-base \
-  --sync-omarchy ../omarchy-installer                            # fast loop against local tests
+  --sync-omarchy ../omarchy                                      # fast loop against local tests
 ```
 
-Pass `--encrypt` to drive the encrypted install flow (including typing the LUKS passphrase at boot) instead of the unencrypted one.
+Pass `--encrypt` to drive the encrypted install flow (including typing the LUKS passphrase at boot) instead of the unencrypted one. Pass `--no-preview` to collect the same visual artifacts without opening them in `imv` when the run finishes.
 
 ## Signing the ISO
 
