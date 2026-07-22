@@ -63,7 +63,15 @@ for pkg in "${packages[@]}"; do
 done
 
 mkdir -p "$offline_mirror_dir"
-mv "$work_dir"/*.pkg.tar.zst "$offline_mirror_dir/"
+for package_file in "$work_dir"/*.pkg.tar.zst; do
+  destination="$offline_mirror_dir/$(basename "$package_file")"
+
+  # A cached signature belongs to the previously downloaded or locally built
+  # package. Keeping it beside a newly built package makes pacman reject the
+  # otherwise valid local-source build.
+  rm -f "$destination" "$destination.sig"
+  mv "$package_file" "$destination"
+done
 
 echo
 echo "Built Omarchy packages, placed in $offline_mirror_dir:"
