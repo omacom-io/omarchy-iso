@@ -30,6 +30,20 @@ synthetic disk in `/tmp` with an existing ESP and data partition plus ample
 unallocated space, then offers to start an interactive installation on it. The
 fixture exercises Windows partition preservation but does not contain Windows.
 
+## Acceptance testing the ISO
+
+Run `./bin/omarchy-iso-test [release/omarchy.iso]` to install the ISO into a headless VM by driving the real interactive install flow — the harness reads each screen via QMP screendumps + OCR and answers with virtual keystrokes, so the configurator wizard, install dashboard, reboot prompt, and SDDM login are all exercised exactly as a user would. It then boots the installed system and runs the in-guest acceptance suite (`test/acceptance` in the omarchy repo): session health, application launches, and shell surfaces like the launcher and emoji picker. Screenshots, serial logs, and the install log land in `test-runs/<iso>/runs/<timestamp>/`.
+
+The install phase produces a reusable base image, so iterating on the suite is fast:
+
+```bash
+./bin/omarchy-iso-test release/omarchy.iso --install-only        # once per ISO
+./bin/omarchy-iso-test release/omarchy.iso --reuse-base \
+  --sync-omarchy ../omarchy-installer                            # fast loop against local tests
+```
+
+Pass `--encrypt` to drive the encrypted install flow (including typing the LUKS passphrase at boot) instead of the unencrypted one.
+
 ## Signing the ISO
 
 Run `./bin/omarchy-iso-sign [release/omarchy.iso]`. The signing key is retrieved from the shared Omarchy vault with the 1Password CLI.
