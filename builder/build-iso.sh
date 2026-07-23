@@ -170,8 +170,19 @@ if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
 fi
 
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw \
-  "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
+download_offline_packages() {
+  pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw \
+    "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
+}
+
+# A repository may occasionally republish a package without changing its
+# filename. Pacman detects that the persistent cached copy no longer matches
+# the refreshed repository checksum and deletes it, but still fails the
+# transaction. Retry once so the now-missing package is downloaded.
+if ! download_offline_packages; then
+  echo "Offline package download failed; retrying after pacman cleaned invalid cached files..." >&2
+  download_offline_packages
+fi
 
 prune_stale_package_versions() {
   local dir="$1"
