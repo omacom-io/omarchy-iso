@@ -42,6 +42,13 @@ packages=(
   "$OMARCHY_NVIM_PACKAGE"
 )
 
+# Local-source packages must replace every cached build of the same package,
+# even when the checkout's generated pkgver sorts below a published build.
+# Otherwise the later generic cache pruning can silently keep edge instead.
+for pkg in "${packages[@]}"; do
+  rm -f "$offline_mirror_dir/$pkg-"*.pkg.tar.*
+done
+
 for pkg in "${packages[@]}"; do
   echo "----------------------------------------"
   echo "Building $pkg"
