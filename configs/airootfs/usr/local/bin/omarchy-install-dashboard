@@ -47,20 +47,24 @@ export GUM_CONFIRM_UNSELECTED_BACKGROUND="${GUM_CONFIRM_UNSELECTED_BACKGROUND:-0
 child_pid=""
 child_pgid=""
 
-whimsy=(
-  "delivering delightful defaults"
-  "saving setup struggles"
-  "picking polished packages"
-  "curating cohesive colors"
-  "preparing pleasant pixels"
-  "hyping happy hyprland"
-  "integrating intuitive interfaces"
-  "bootstrapping beautiful boxes"
-  "crafting cozy commands"
-  "making machines marvelous"
-  "polishing pretty pixels"
-  "tuning tasteful terminals"
-  "weaving wonderful workflows"
+tips=(
+  "Super + Space opens the Omarchy menu for apps, settings, and more"
+  "Super + K shows all the key bindings"
+  "Use Xournal++ to sign PDFs"
+  "Share files with phones and laptops using LocalSend"
+  "Turn any website into an app with Install > Web App in the menu"
+  "Super + Return opens a terminal, Super + Shift + Return the browser"
+  "Edit images with Pinta, videos with Kdenlive, docs with LibreOffice"
+  "Super + Ctrl + Print grabs text off the screen with OCR"
+  "Print takes a screenshot, Alt + Print records the screen"
+  "Set a reminder with Super + Ctrl + R"
+  "Switch themes from Style > Theme in the Omarchy menu"
+  "Double-click the menu bar to make it transparent"
+  "Run a full Windows VM via Install > Windows in the menu"
+  "Super + Ctrl + V opens the clipboard manager"
+  "Super + 1 through 0 switches workspaces, add Shift to bring the window"
+  "Super + Print picks a color from anywhere on screen"
+  "Keep the system fresh with Update in the Omarchy menu"
 )
 
 cleanup() {
@@ -239,9 +243,11 @@ install_progress() {
   printf '%s' "$pct"
 }
 
-current_whimsy() {
-  local frame="$1" pct="$2"
-  printf '%s' "${whimsy[$(( (pct / 8 + frame / 8) % ${#whimsy[@]} ))]}"
+# One tip per ~8 seconds (frames tick every 0.5s), in order, so each stays
+# readable and none are skipped when progress jumps.
+current_tip() {
+  local frame="$1"
+  printf '%s' "${tips[$(( frame / 16 % ${#tips[@]} ))]}"
 }
 
 render_static() {
@@ -266,7 +272,7 @@ render_dynamic() {
   progress_bar "$pct" 34
   printf '\n'
   blank_line
-  center "${GREEN}$(current_whimsy "$frame" "$pct")${RESET}" "$CONTENT_WIDTH"
+  center "${DIM}Tip:${RESET} ${GREEN}$(current_tip "$frame")${RESET}" "$CONTENT_WIDTH"
   printf '%s' "$CLEAR_TO_END"
 }
 
