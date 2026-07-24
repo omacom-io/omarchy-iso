@@ -50,6 +50,7 @@ child_pgid=""
 tips=(
   "Super + Space opens the Omarchy menu for apps, settings, and more"
   "Super + K shows all the key bindings"
+  "Super is the Windows or command key on your keyboard"
   "Use Xournal++ to sign PDFs"
   "Share files with phones and laptops using LocalSend"
   "Turn any website into an app with Install > Web App in the menu"
