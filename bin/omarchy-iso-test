@@ -840,6 +840,11 @@ install_phase() {
   fi
   bootstrap_ssh
 
+  ssh_guest "echo $GUEST_PASSWORD | sudo -S cat /var/log/omarchy-install-timing.json 2>/dev/null" \
+    >"$RUN_DIR/omarchy-install-timing.json" 2>/dev/null || true
+  ssh_guest "echo $GUEST_PASSWORD | sudo -S cat /var/log/pacman.log 2>/dev/null" \
+    >"$RUN_DIR/pacman.log" 2>/dev/null || true
+
   log "Installed system is up. Saving base image."
   stop_vm
 }

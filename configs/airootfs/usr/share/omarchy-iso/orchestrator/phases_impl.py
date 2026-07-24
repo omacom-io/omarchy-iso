@@ -162,11 +162,13 @@ def _early_packages() -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
-    info("› initializing pacman keyrings")
-    subprocess.run(["pacman-key", "--init"], check=True)
-    subprocess.run(["pacman-key", "--populate", "archlinux"], check=True)
-    subprocess.run(["pacman-key", "--populate", "omarchy"], check=True)
-    subprocess.run(["pacman", "-Sy", "--noconfirm"], check=True)
+    # archiso's pacman-init.service initializes and populates every installed
+    # keyring before the live environment reaches multi-user.target. Pacstrap
+    # then initializes the target's independent keyring, and archinstall does
+    # its own repository sync before the first package transaction. Repeating
+    # both operations here only rebuilds trust databases and syncs twice.
+    info("› verifying live pacman initialization")
+    subprocess.run(["systemctl", "start", "pacman-init.service"], check=True)
 
     if ctx.is_protected:
         info("› protected mode: skipping whole-disk cleanup")
@@ -239,6 +241,7 @@ def arch_install_system(ctx: InstallContext) -> None:
         if config.mirror_config:
             installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
 
+        _mount_offline_package_cache(ctx)
         _mask_mkinitcpio_pacman_hooks(ctx)
         try:
             info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
@@ -274,6 +277,7 @@ def arch_install_system(ctx: InstallContext) -> None:
             installer.add_additional_packages(_runtime_package_list(ctx))
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
+            _unmount_offline_package_cache(ctx)
 
         # Standard arch finishers.
         if config.timezone:
@@ -573,6 +577,35 @@ def _install_early_packages(installer) -> None:
 
     info(f"› installing user seed packages: {', '.join(user_seed_packages)}")
     installer.add_additional_packages(user_seed_packages)
+
+
+def _mount_offline_package_cache(ctx: InstallContext) -> None:
+    """Let pacstrap consume bundled packages without copying them first.
+
+    Pacstrap always points pacman's CacheDir inside the target. Without this
+    bind mount, pacman copies every package from the ISO's file:// repository
+    into that cache and then extracts it, duplicating several GiB of I/O.
+    Mount the already-populated offline repository at the target cache for the
+    duration of package installation. It is unmounted before genfstab so the
+    live-only bind can never leak into the installed system's fstab.
+    """
+    source = Path("/var/cache/omarchy/mirror/offline")
+    target = ctx.target / "var" / "cache" / "pacman" / "pkg"
+    if not source.is_dir():
+        raise RuntimeError(f"offline package cache missing: {source}")
+
+    target.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["mount", "--bind", str(source), str(target)], check=True)
+    ctx.state.setdefault("bind_mounts", []).append(str(target))
+
+
+def _unmount_offline_package_cache(ctx: InstallContext) -> None:
+    target = str(ctx.target / "var" / "cache" / "pacman" / "pkg")
+    subprocess.run(["umount", target], check=True)
+    try:
+        ctx.state.get("bind_mounts", []).remove(target)
+    except ValueError:
+        pass
 
 
 def _is_devnull_symlink(path: Path) -> bool:

@@ -65,6 +65,10 @@ def run(ctx: InstallContext, phases: list[tuple[str, PhaseFn]]) -> None:
     state["finished_at"] = time.time()
     _write_state(state_path, state)
 
+    timing_path = ctx.target / "var" / "log" / "omarchy-install-timing.json"
+    timing_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_state(timing_path, state)
+
 
 def _write_state(path: Path, state: dict) -> None:
     # Dashboard polls this file while phases update it. Write atomically so the
