@@ -30,7 +30,9 @@ pacman --noconfirm -Sy archlinux-keyring
 # so this container can be months behind the mirror it installs from. A plain
 # -Sy install is then a partial upgrade — new packages linked against a glibc
 # the container doesn't have yet.
-pacman --noconfirm -Syu archiso git sudo base-devel jq grub imagemagick neovim nodejs npm tree-sitter-cli
+# go is for the packages built from source below, which makepkg will not
+# install itself: build-omarchy-packages.sh runs it with --nodeps.
+pacman --noconfirm -Syu archiso git sudo base-devel go jq grub imagemagick neovim nodejs npm tree-sitter-cli
 
 # Pre-import the omarchy signing key (so pacman trusts our [omarchy] repo
 # during the build without keyserver lookups).
@@ -99,9 +101,17 @@ fi
 # When --local-source is in effect, build omarchy* from the mounted source
 # trees and drop them in the offline mirror. Otherwise pacman -Syw below
 # downloads the published versions from the omarchy network mirror.
+: "${OMARCHY_LOCAL_EXTRA_PACKAGES:=lazyjournal}"
+export OMARCHY_LOCAL_EXTRA_PACKAGES
+
 if [[ -d /omarchy-source && -d /omarchy-pkgs ]]; then
   bash /builder/build-omarchy-packages.sh "$offline_mirror_dir"
   LOCAL_OMARCHY_BUILD=1
+  read -r -a local_built_packages <<<"$OMARCHY_LOCAL_EXTRA_PACKAGES"
+  local_built_packages=(
+    "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" "$OMARCHY_NVIM_PACKAGE"
+    "${local_built_packages[@]}"
+  )
 fi
 
 # Node.js binary for offline mise install.
@@ -233,12 +243,12 @@ mapfile -t all_packages < <(
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
 # the published versions on top.
 if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
+  exclude_args=()
+  for local_package_name in "${local_built_packages[@]}"; do
+    exclude_args+=(-e "$local_package_name")
+  done
   mapfile -t all_packages < <(
-    printf '%s\n' "${all_packages[@]}" |
-      grep -Fxv \
-        -e "$OMARCHY_RUNTIME_PACKAGE" \
-        -e "$OMARCHY_SETTINGS_PACKAGE" \
-        -e "$OMARCHY_NVIM_PACKAGE" || true
+    printf '%s\n' "${all_packages[@]}" | grep -Fxv "${exclude_args[@]}" || true
   )
 fi
 
@@ -274,8 +284,7 @@ mapfile -t required_package_files <<< "$resolved_package_files"
 # checkouts. Add those exact artifacts back to the keep-set after verifying
 # that the local build left exactly one file for each selected package name.
 if [[ -n ${LOCAL_OMARCHY_BUILD:-} ]]; then
-  for local_package_name in \
-    "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" "$OMARCHY_NVIM_PACKAGE"; do
+  for local_package_name in "${local_built_packages[@]}"; do
     local_package_file=""
     for candidate in "$offline_mirror_dir/$local_package_name-"*.pkg.tar.*; do
       [[ -f $candidate && $candidate != *.sig ]] || continue
