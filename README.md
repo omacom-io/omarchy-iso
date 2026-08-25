@@ -26,6 +26,8 @@ For local development, build the ISO from sibling checkouts:
 
 Despite the local folder name, the first argument is the Omarchy source checkout (runtime commands, configs, setup scripts, themes, shell, migrations). The installer itself lives in this ISO repo.
 
+Pass `--label <name>` to tag the filename, which is how you tell two builds of the same channel apart. The label lands after the channel suffix, so `--label server` on a `--local-source` build produces `omarchy-<date>-x86_64-local-server.iso`. It names the build rather than the medium, since one ISO carries both editions and the Configurator asks which to install.
+
 Use `--dev` or `--rc` to build against those package channels. Both `--dev` and `--edge` select the dev packages from the edge mirror.
 
 ## Autoinstall
