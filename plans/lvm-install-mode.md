@@ -92,6 +92,23 @@ The discovery helpers against fixture output, following `partition-numbering-tes
 
 ## Adversarial review
 
+Two rounds, each by a reviewer with no access to the author's reasoning, bound to `2673c61...HEAD`.
+
+### Round 2
+
+- **The in-use check was inert in the actual deployment scenario.** Booted from the ISO, nothing on the target disk is mounted, so `device_is_busy` proved only "not in use by the installer" — the sibling's root volume was offered as a format target on exactly the same footing as the spare. The guard closed the generator's "in use by" half and left "needed by a system the owner intends to keep" wide open. A volume that already carries a filesystem now takes a separate confirmation naming that filesystem and its label.
+- **The check could not see a device-mapper stack.** An LV holding an unlocked LUKS container is not itself mounted — its child mapping is, under a different dm node — so `findmnt` never named the LV and `mkfs` would have run underneath a live filesystem. `device_and_holders` now walks `holders/` transitively.
+- **The adopted-`/home` refusal tested "the type is not empty",** which `crypto_LUKS` and `LVM2_member` both pass. Both name a container, not a filesystem, so the mount failed in `run_lvm_execute` — after the root volume was already erased. Replaced with an allow-list of mountable filesystems.
+- **`vgchange -ay` ran through `disk_step`,** which aborts through `disk_abort_hook` and exits, contradicting `run_lvm_decide`'s documented contract of returning 1 to the install-mode picker. A group that will not activate is a reason to choose another, not to end the installer.
+
+Still open from round 2, not fixed:
+
+- **The encrypted default mounts the adopted ESP at `/boot`,** where the kernel package writes `vmlinuz-linux` and its initramfs to the ESP root. An Arch-family sibling whose own boot entry points at those same paths would boot Omarchy's kernel instead. The author's ESP assumption covers only what `limine-install` writes; pacman's kernel files are outside it. Unencrypted installs mount at `/efi` and do not have this. Needs settling with the ESP question above.
+- **No runtime check that the sibling's NVRAM entry survived.** `_install_pre_mounted_limine` already verifies a *Windows* entry survives and has no equivalent for the sibling Linux entry this mode exists to protect.
+- **`create_users` against an adopted `/home` that already holds that user's directory** is unread — specifically whether archinstall's path chowns an existing home to a newly allocated UID. On a shared `/home` with a different UID on each system, that would rewrite ownership of every file. This must be answered before anyone points the mode at a home they care about.
+
+### Round 1
+
 Reviewed against `2673c61...HEAD` by a reviewer with no access to the author's reasoning. Findings acted on:
 
 - **The ESP was the one runtime-chosen device with no in-use check.** Every logical volume went through `choose_lv`, which refuses a busy selection; the ESP picker did not. This was the site missing from the mode's own stated invariant.

@@ -30,6 +30,14 @@ lvm_fs_report() {
   lsblk -nro FSTYPE,LABEL "$1" 2>/dev/null | head -1 | tr ' ' '|'
 }
 
+# Where the kernel publishes block devices. Overridable so tests can point it
+# at a fixture tree instead of the running machine's.
+LVM_SYSFS_BLOCK="${LVM_SYSFS_BLOCK:-/sys/class/block}"
+
+# Where those devices appear as nodes. Holders are reported by kernel name, so
+# they have to be rejoined to a directory to be comparable with a mount source.
+LVM_DEV_DIR="${LVM_DEV_DIR:-/dev}"
+
 # Every device the live system currently has mounted, one per line, plus
 # anything it is using as swap. findmnt covers mounts; /proc/swaps covers the
 # swap volume, which is in use just as surely but appears in no mount table.
@@ -90,15 +98,59 @@ disk_has_lvm() {
 # every role: formatting the live root destroys the installer mid-run, and
 # mounting a device twice corrupts the filesystem on it. Takes any block
 # device, not only a logical volume — the ESP is checked through here too.
+# A device and everything stacked on top of it, as canonical paths.
+#
+# Comparing mount sources against the device alone is not enough: a logical
+# volume with a LUKS mapping opened on it is not itself mounted — its child is.
+# findmnt reports /dev/mapper/data while the volume is /dev/pool/data, two
+# different dm nodes, so a check that stops at the volume clears it and mkfs
+# runs underneath a live filesystem. Holders are how the kernel records that
+# relationship, and they nest: LUKS on LV, LVM on LUKS, bcache, raid.
+device_and_holders() {
+  local device="$1" resolved name queue current holder
+  resolved=$(readlink -f "$device" 2>/dev/null || printf '%s' "$device")
+  printf '%s\n' "$resolved"
+
+  name="${resolved##*/}"
+  [[ -n $name && -d "$LVM_SYSFS_BLOCK/$name" ]] || return 0
+
+  queue=("$name")
+  while ((${#queue[@]} > 0)); do
+    current="${queue[0]}"
+    queue=("${queue[@]:1}")
+    for holder in "$LVM_SYSFS_BLOCK/$current"/holders/*; do
+      [[ -e $holder ]] || continue
+      holder="${holder##*/}"
+      printf '%s/%s\n' "$LVM_DEV_DIR" "$holder"
+      queue+=("$holder")
+    done
+  done
+}
+
 device_is_busy() {
-  local lv="$1" resolved busy
-  resolved=$(readlink -f "$lv" 2>/dev/null || printf '%s' "$lv")
+  local candidates busy_list candidate busy
+  candidates=$(device_and_holders "$1")
+  busy_list=$(lvm_busy_devices)
+
   while IFS= read -r busy; do
     [[ -n $busy ]] || continue
     busy=$(readlink -f "$busy" 2>/dev/null || printf '%s' "$busy")
-    [[ $busy == "$resolved" ]] && return 0
-  done < <(lvm_busy_devices)
+    while IFS= read -r candidate; do
+      [[ -n $candidate ]] || continue
+      [[ $busy == "$candidate" ]] && return 0
+    done <<<"$candidates"
+  done <<<"$busy_list"
   return 1
+}
+
+# Filesystems an adopted volume can actually be mounted from. An allow-list
+# rather than "the type is not empty": crypto_LUKS and LVM2_member are
+# non-empty types naming a container, not a filesystem, and mounting either
+# fails — after run_lvm_execute has already formatted the root volume.
+LVM_MOUNTABLE_FSTYPES="ext2 ext3 ext4 btrfs xfs f2fs"
+
+fstype_is_mountable() {
+  [[ -n $1 ]] && [[ " $LVM_MOUNTABLE_FSTYPES " == *" $1 "* ]]
 }
 
 # Logical volumes in a group, one record per line:

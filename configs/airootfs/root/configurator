@@ -929,6 +929,10 @@ lv_fstype() {
   awk -F'|' -v p="$1" '$1 == p { print $4 }' <<<"$lvm_records"
 }
 
+lv_label() {
+  awk -F'|' -v p="$1" '$1 == p { print $5 }' <<<"$lvm_records"
+}
+
 # Decide half of the LVM install: pick the group and its volumes, confirm, and
 # set the globals run_lvm_execute reads. Returns 1 to fall back to the
 # install-mode picker. Nothing is written to disk here.
@@ -951,7 +955,10 @@ run_lvm_decide() {
   # The volume group may be known to LVM but not activated, in which case none
   # of its /dev paths exist yet and every later mount would fail. Activating is
   # reversible and touches no data.
-  disk_step "activating volume group $lvm_vg" vgchange -ay "$lvm_vg"
+  if ! vgchange -ay "$lvm_vg" >/dev/null 2>&1; then
+    say --foreground 1 "Could not activate volume group $lvm_vg."
+    return 1
+  fi
 
   lvm_records=$(logical_volumes "$lvm_vg")
   if [[ -z $lvm_records ]]; then
@@ -964,13 +971,28 @@ run_lvm_decide() {
   root_partition_device=$(choose_lv "Root volume (will be erased)" false) || return 1
   [[ -n $root_partition_device ]] || return 1
 
+  local root_fstype root_label
+  root_fstype=$(lv_fstype "$root_partition_device")
+  root_label=$(lv_label "$root_partition_device")
+  if [[ -n $root_fstype ]]; then
+    clear_logo
+    echo
+    say --foreground 1 "$root_partition_device already holds a $root_fstype filesystem${root_label:+ labelled \"$root_label\"}."
+    say "Nothing on this disk is mounted right now, so the installer cannot tell"
+    say "whether another system needs it. Installing here erases it."
+    echo
+    gum confirm --affirmative "Erase it" --negative "Pick another volume" \
+      "Erase the $root_fstype filesystem on $root_partition_device?" || return 1
+  fi
+
   step "Select the volume for /home"
   say "Choose an existing home to keep it. None puts /home inside the Omarchy volume."
   lvm_home_device=$(choose_lv "Home volume (kept as it is)" true) || return 1
 
-  if [[ -n $lvm_home_device && -z $(lv_fstype "$lvm_home_device") ]]; then
-    say --foreground 1 "$lvm_home_device has no filesystem on it."
-    say "This mode mounts an existing /home; it does not create one."
+  if [[ -n $lvm_home_device ]] && ! fstype_is_mountable "$(lv_fstype "$lvm_home_device")"; then
+    say --foreground 1 "$lvm_home_device holds no filesystem this mode can mount."
+    say "It reports \"$(lv_fstype "$lvm_home_device")\"; a container such as crypto_LUKS or"
+    say "LVM2_member is not a filesystem. This mode mounts an existing /home; it does not create one."
     return 1
   fi
 

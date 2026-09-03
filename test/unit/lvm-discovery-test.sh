@@ -147,7 +147,7 @@ printf '==> in-use detection across device aliases\n'
 # that code, and a volume the live system is using would be offered as a
 # format target. Real symlinks to a real file are the only way to reach it.
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK" "${STACK:-}"' EXIT
 mkdir -p "$WORK/dev/pool" "$WORK/dev/mapper"
 : >"$WORK/dev/dm-0"
 : >"$WORK/dev/dm-1"
@@ -187,6 +187,76 @@ lvm_busy_devices() {
 /dev/pool/swap
 EOF
 }
+
+printf '==> in-use detection through a device-mapper stack\n'
+
+# The case that loses 1.7TB. An LV holding a LUKS container is NOT itself
+# mounted when that container is unlocked and mounted — its child mapping is.
+# findmnt names the child, so a check that stops at the volume reports it free
+# and mkfs runs underneath a live filesystem. The kernel records the link in
+# holders/, which is the only place the relationship is visible.
+STACK=$(mktemp -d)
+trap 'rm -rf "$WORK" "$STACK"' EXIT
+mkdir -p "$STACK/sys/dm-2/holders" "$STACK/sys/dm-3/holders" "$STACK/sys/dm-9/holders"
+mkdir -p "$STACK/dev"
+: >"$STACK/dev/dm-2"
+: >"$STACK/dev/dm-3"
+: >"$STACK/dev/dm-9"
+# dm-3 (the opened LUKS mapping) is stacked on dm-2 (the logical volume).
+ln -s "$STACK/sys/dm-3" "$STACK/sys/dm-2/holders/dm-3"
+ln -s "$STACK/dev/dm-2" "$STACK/dev/pool-data"
+ln -s "$STACK/dev/dm-3" "$STACK/dev/mapper-data"
+
+LVM_SYSFS_BLOCK="$STACK/sys"
+LVM_DEV_DIR="$STACK/dev"
+lvm_busy_devices() { printf '%s\n' "$STACK/dev/mapper-data"; }
+
+if device_is_busy "$STACK/dev/pool-data"; then
+  printf '  ok   a volume is busy when a mapping stacked on it is mounted\n'
+else
+  printf '  FAIL a volume is busy when a mapping stacked on it is mounted\n'
+  failures=$((failures + 1))
+fi
+
+if device_is_busy "$STACK/dev/dm-9"; then
+  printf '  FAIL an unrelated volume with no holders stays selectable\n'
+  failures=$((failures + 1))
+else
+  printf '  ok   an unrelated volume with no holders stays selectable\n'
+fi
+
+LVM_SYSFS_BLOCK=/sys/class/block
+LVM_DEV_DIR=/dev
+lvm_busy_devices() {
+  cat <<'EOF'
+/dev/pool/kde
+/dev/pool/data
+/dev/pool/swap
+EOF
+}
+
+printf '==> adopted volumes must carry a mountable filesystem\n'
+
+for mountable in ext4 btrfs xfs; do
+  if fstype_is_mountable "$mountable"; then
+    printf '  ok   %s is mountable\n' "$mountable"
+  else
+    printf '  FAIL %s is mountable\n' "$mountable"
+    failures=$((failures + 1))
+  fi
+done
+
+# The refusal used to be "the type is not empty", which these two pass. Both
+# name a container rather than a filesystem, so the mount fails — and it fails
+# in run_lvm_execute, after the root volume has already been erased.
+for container in crypto_LUKS LVM2_member swap ""; do
+  if fstype_is_mountable "$container"; then
+    printf '  FAIL %s is refused as an adopted filesystem\n' "${container:-<empty>}"
+    failures=$((failures + 1))
+  else
+    printf '  ok   %s is refused as an adopted filesystem\n' "${container:-<empty>}"
+  fi
+done
 
 printf '==> volume records\n'
 
