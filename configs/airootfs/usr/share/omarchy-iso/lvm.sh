@@ -57,7 +57,7 @@ _lvm_on_disk() {
 # Volume groups with at least one physical volume on this disk, deduplicated
 # and sorted. A group spanning several disks is reported for each of them.
 volume_groups_on_disk() {
-  local disk="$1" line pv vg
+  local disk="$1" pv vg
   while IFS='|' read -r pv vg; do
     pv=$(_lvm_trim "$pv")
     vg=$(_lvm_trim "$vg")
