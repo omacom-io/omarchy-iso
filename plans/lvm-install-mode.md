@@ -40,6 +40,12 @@ When the owner nominates an existing `/home` volume, the `@home` subvolume is no
 
 The ESP is the sharpest edge. The free-space path always creates its own ESP and deliberately refuses to adopt the Windows one; that reasoning is about Windows reclaiming the partition, and does not carry over to an ESP that a sibling Linux owns. Limine installs under `/EFI/limine` with its own `efibootmgr` entry, so it coexists with `systemd-boot` under `/EFI/systemd` rather than displacing it. The mode therefore adopts an existing ESP and never runs `mkfs.fat` on it. **This needs verifying against limine's installer before the PR is opened** — it is the one step that can cost the owner their working system.
 
+Measured afterwards on a completed encrypted install: the UKI is 43MB and
+Omarchy's whole footprint on the adopted ESP is about 46MB. A 512MB ESP sized
+for a bootloader rather than for kernel images is therefore not the constraint
+it appears to be; the 2GB figure elsewhere is what the free-space mode
+*creates*, not what an install needs.
+
 ### The initramfs needs the lvm2 hook
 
 Without it the target cannot find its own root. Two parts:
@@ -127,7 +133,17 @@ Checked and found closed, recorded so the next reader does not re-derive them:
 ## Testing status
 
 The mode has been installed end to end in QEMU against the fixture disk and
-audited afterwards: 27 screenshots, exit 0, all markers intact. It booted from
+audited afterwards, three times, each exiting 0 with every marker intact:
+
+| Run | What it exercises that the others do not |
+| --- | --- |
+| unencrypted | the ESP adopted at `/efi` |
+| encrypted | LUKS on the logical volume, the ESP adopted at `/boot`, and `lvm2` ahead of `encrypt` in the hook order |
+| `--nvme` | nvme device naming, so the disk matcher takes its `p`-separator branch in a real install rather than only in unit tests |
+
+The NVMe run matters more than it sounds: device naming is logic, not
+cosmetics, and every earlier run presented the disk as virtio-blk — the one
+shape no target machine uses. It booted from
 LVM — the guest's serial console shows the initramfs assembled the volume group
 and the adopted swap volume in use by the running system — and the generated
 fstab mounts `/home` from the adopted ext4 volume with no `@home` subvolume
@@ -166,12 +182,17 @@ to what the target installs, mounts or boots need layer 4.
 
 ### Still unproven
 
-- The **encrypted** flow. The end-to-end run was unencrypted, which mounts the
-  ESP at `/efi`. The encrypted flow mounts it at `/boot`, where pacman writes
-  `vmlinuz-linux` — the open ESP question above. The fixture already carries the
-  marker that would catch it; `--lvm --encrypt` is the run that settles it.
+- **That the sibling still boots.** The oracle reads the sibling's files back
+  and finds them byte-identical; it has never started the sibling system. This
+  is the largest remaining gap, and closing it means booting the fixture's
+  sibling root after an install rather than inspecting it.
+- **That the sibling's NVRAM entry survived.** No runtime check exists;
+  `_install_pre_mounted_limine` verifies a *Windows* entry survives and has no
+  equivalent for the sibling Linux entry this mode exists to protect. QEMU's
+  OVMF variables are also not a real firmware's NVRAM.
 - **Multiple volume groups** on one disk, and a group spanning several disks.
   The picker handles both by construction and neither has been exercised.
-- **SSH bootstrap timed out** in the end-to-end run while console login and the
-  bootstrap command succeeded and the system shut down cleanly. Unexplained, and
-  not known to relate to this mode.
+- **SSH bootstrap timed out** in all three runs, while console login, the
+  bootstrap command and a clean shutdown succeeded every time. Consistent across
+  unencrypted, encrypted and NVMe, which points at the harness rather than this
+  mode. Unexplained; it does not affect the audit.
