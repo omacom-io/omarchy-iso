@@ -126,28 +126,52 @@ Checked and found closed, recorded so the next reader does not re-derive them:
 
 ## Testing status
 
-Nothing in this mode has ever executed. That is the honest state, and no number of unit tests changes it.
+The mode has been installed end to end in QEMU against the fixture disk and
+audited afterwards: 27 screenshots, exit 0, all markers intact. It booted from
+LVM — the guest's serial console shows the initramfs assembled the volume group
+and the adopted swap volume in use by the running system — and the generated
+fstab mounts `/home` from the adopted ext4 volume with no `@home` subvolume
+line, while the sibling root's UUID appears nowhere in it.
 
-- `run_lvm_decide` and `run_lvm_execute` have **no test coverage at all**. They are interactive `gum` prompts wrapped around `mkfs`, `cryptsetup` and `mount`, and not one line of either has run.
-- Every passing check exercises a pure helper against a fixture. The orchestrator tests drive a `FakeContext` with `blkid` mocked, so they prove the fstab *text*, never that the fstab describes a real disk.
-- No run against a real volume group. No ISO built from this branch, which means the only merge gate — the ISO build — has never seen it.
-- The limine/ESP assumption remains unverified, and it is the one that can cost the owner a working system.
+Four layers now exist, and they are not equally strong:
 
-The gate this needs is `./bin/omarchy-iso-make` followed by a QEMU run against a disk shaped like the target. Half of that now exists.
+1. **Unit tests**, 77 checks under `./test/all`. Three guards are
+   mutation-verified: the device-alias canonicalization, the transitive
+   `holders/` walk, and the partition-suffix anchoring each fail their test when
+   the guard is removed.
+2. **Two adversarial review rounds**, each by a reviewer with no access to the
+   author's reasoning. 13 findings.
+3. **The fixture disk and its damage oracle**, `test/lvm-fixture-disk`, proven
+   in both directions before being trusted — see the table above.
+4. **The end-to-end install**, `omarchy-iso-test --lvm`.
 
-`test/lvm-fixture-disk create` builds that disk — a volume group holding a populated sibling root, a populated `/home` labelled DATA, a swap volume and one empty spare, plus an ESP already carrying a sibling bootloader and a `vmlinuz-linux` at its root. libguestfs builds the LVM stack in its own appliance, so it needs no root and cannot reach the developer's disks.
+### What the first three layers missed
 
-`test/lvm-fixture-disk verify` is the half that matters. Every volume the install must leave alone carries marker files, and verify reads them back afterwards. A test that only checks Omarchy booted would pass while the sibling's root was being erased.
+Recorded because it calibrates how much the green numbers are worth.
 
-The oracle is proven in both directions, which is the only reason to trust it:
+`lvm2` was listed in the `packages` array of the emitted
+`user_configuration.json`, which nothing reads: the orchestrator builds its
+package set from its own constants. The target came up without `lvm2`,
+mkinitcpio could not resolve the `lvm2` hook, and the install died in its last
+phase reporting a missing UKI — a symptom naming a kernel image and saying
+nothing about LVM.
 
-| Simulated install | verify |
-| --- | --- |
-| nothing touched | passes |
-| formats the spare only — the one allowed write | passes |
-| formats the adopted `/home` | fails, 4 checks |
-| writes `vmlinuz-linux` onto the shared ESP | fails |
+All 77 unit tests passed throughout, because they covered the fstab and the
+drop-in and never the package set. Both adversarial rounds read the diff and saw
+a plausible config key. Only running a real install found it.
 
-That last row matters beyond regression: it is round 2's open ESP finding, and the fixture can now settle it by observation instead of argument. Run the install with the encrypted default, then `verify`; if the sibling's kernel changed, the `/boot` mount point is wrong for this mode.
+The lesson for whoever extends this mode: the unit tests cover the pure helpers
+and the generated text, and they cannot see whether the install works. Changes
+to what the target installs, mounts or boots need layer 4.
 
-Still missing: the ISO build itself, which needs Docker, and the QEMU run that drives the configurator through the LVM mode. Until an install has actually run against this fixture and `verify` has passed afterwards, the mode remains unproven.
+### Still unproven
+
+- The **encrypted** flow. The end-to-end run was unencrypted, which mounts the
+  ESP at `/efi`. The encrypted flow mounts it at `/boot`, where pacman writes
+  `vmlinuz-linux` — the open ESP question above. The fixture already carries the
+  marker that would catch it; `--lvm --encrypt` is the run that settles it.
+- **Multiple volume groups** on one disk, and a group spanning several disks.
+  The picker handles both by construction and neither has been exercised.
+- **SSH bootstrap timed out** in the end-to-end run while console login and the
+  bootstrap command succeeded and the system shut down cleanly. Unexplained, and
+  not known to relate to this mode.
