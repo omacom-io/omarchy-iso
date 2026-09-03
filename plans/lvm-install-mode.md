@@ -180,16 +180,44 @@ The lesson for whoever extends this mode: the unit tests cover the pure helpers
 and the generated text, and they cannot see whether the install works. Changes
 to what the target installs, mounts or boots need layer 4.
 
+### The sibling is booted, not just inspected
+
+Reading the sibling's bootloader back byte-identical says the install did not
+corrupt it. It does not say firmware can still reach and execute it once limine
+sits beside it on the same ESP — a different claim, and the one that decides
+whether the owner keeps their other system.
+
+So the fixture carries a real `systemd-bootx64.efi` at the vendor path and at
+the UEFI fallback path, with a loader entry titled SiblingOS, and the harness
+reboots the installed disk with pristine firmware variables. No NVRAM entry
+matches, so firmware falls back to `EFI/BOOT/BOOTX64.EFI`. After a completed
+install that yields:
+
+```
+Sibling0S
+Reboot Into Firmware Interface
+Boot in 26s.
+```
+
+systemd-boot executed from the fallback path, read the sibling's `loader.conf`
+— the countdown is the fixture's own `timeout 30` — and listed the sibling's
+entry. Binaries are checked by sha256 rather than content, and the check
+degrades to a string stand-in on a host without systemd-boot.
+
+Validating the check against the fixture before trusting it caught two defects a
+reasoned version would have shipped: systemd-boot drops an entry naming no
+kernel, so a title-only file leaves an empty menu and the check fails against a
+healthy install; and OCR reads the capital O of "OS" as a zero, so the obvious
+matcher times out on a passing system. Neither was visible without running it.
+
 ### Still unproven
 
-- **That the sibling still boots.** The oracle reads the sibling's files back
-  and finds them byte-identical; it has never started the sibling system. This
-  is the largest remaining gap, and closing it means booting the fixture's
-  sibling root after an install rather than inspecting it.
 - **That the sibling's NVRAM entry survived.** No runtime check exists;
   `_install_pre_mounted_limine` verifies a *Windows* entry survives and has no
-  equivalent for the sibling Linux entry this mode exists to protect. QEMU's
-  OVMF variables are also not a real firmware's NVRAM.
+  equivalent for the sibling Linux entry this mode exists to protect. The boot
+  check below deliberately sidesteps NVRAM by using the fallback path, so it
+  proves the sibling is still bootable, not that its boot *entry* is still
+  listed. QEMU's OVMF variables are also not a real firmware's NVRAM.
 - **Multiple volume groups** on one disk, and a group spanning several disks.
   The picker handles both by construction and neither has been exercised.
 - **SSH bootstrap timed out** in all three runs, while console login, the
