@@ -101,11 +101,15 @@ Two rounds, each by a reviewer with no access to the author's reasoning, bound t
 - **The adopted-`/home` refusal tested "the type is not empty",** which `crypto_LUKS` and `LVM2_member` both pass. Both name a container, not a filesystem, so the mount failed in `run_lvm_execute` — after the root volume was already erased. Replaced with an allow-list of mountable filesystems.
 - **`vgchange -ay` ran through `disk_step`,** which aborts through `disk_abort_hook` and exits, contradicting `run_lvm_decide`'s documented contract of returning 1 to the install-mode picker. A group that will not activate is a reason to choose another, not to end the installer.
 
+Resolved by reading source, not by inference:
+
+- **`useradd -m` does not touch an existing home.** shadow's `create_home()` returns immediately when the directory already exists (`useradd.c`, `access(prefix_user_home, F_OK) == 0`), before any `mkdir`, `chown` or skel copy. Adopting a populated `/home` therefore cannot rewrite ownership — round 2's hunch is disproven. Two real consequences remain, neither destructive: the target's `/etc/skel` is **not** seeded into an adopted home, so Omarchy's shipped dotfiles arrive only via `omarchy-reinstall-configs`; and `useradd` allocates the next free UID in the fresh target, so a sibling whose user is not UID 1000 ends up with files owned by a UID the new system does not know. Both are recoverable; both should be said out loud in the mode's confirm screen.
+- **`swap: true` is not a disk operation.** archinstall 4.4's `setup_swap` configures zram only — it pacstraps `zram-generator` and writes `/etc/systemd/zram-generator.conf`, and never writes to a block device. `phases_impl` already strips that file afterwards. So the emitted flag is a preference, not a hazard: `false` when a swap volume is adopted, `true` for zram when none is, which is what the mode emits. Round 1's open question is closed.
+
 Still open from round 2, not fixed:
 
 - **The encrypted default mounts the adopted ESP at `/boot`,** where the kernel package writes `vmlinuz-linux` and its initramfs to the ESP root. An Arch-family sibling whose own boot entry points at those same paths would boot Omarchy's kernel instead. The author's ESP assumption covers only what `limine-install` writes; pacman's kernel files are outside it. Unencrypted installs mount at `/efi` and do not have this. Needs settling with the ESP question above.
 - **No runtime check that the sibling's NVRAM entry survived.** `_install_pre_mounted_limine` already verifies a *Windows* entry survives and has no equivalent for the sibling Linux entry this mode exists to protect.
-- **`create_users` against an adopted `/home` that already holds that user's directory** is unread — specifically whether archinstall's path chowns an existing home to a newly allocated UID. On a shared `/home` with a different UID on each system, that would rewrite ownership of every file. This must be answered before anyone points the mode at a home they care about.
 
 ### Round 1
 
@@ -119,3 +123,14 @@ Checked and found closed, recorded so the next reader does not re-derive them:
 
 - `builder/build-iso.sh:66` copies `configs/` wholesale, so `lvm.sh` reaches the ISO. The merge gate builds the ISO and never runs `./test/all`, so this needed confirming separately.
 - `builder/build-iso.sh:121` already installs `lvm2` in the live environment, so `pvs`, `lvs` and `vgchange` exist when the configurator calls them. Without it the mode would never appear, silently.
+
+## Testing status
+
+Nothing in this mode has ever executed. That is the honest state, and no number of unit tests changes it.
+
+- `run_lvm_decide` and `run_lvm_execute` have **no test coverage at all**. They are interactive `gum` prompts wrapped around `mkfs`, `cryptsetup` and `mount`, and not one line of either has run.
+- Every passing check exercises a pure helper against a fixture. The orchestrator tests drive a `FakeContext` with `blkid` mocked, so they prove the fstab *text*, never that the fstab describes a real disk.
+- No run against a real volume group. No ISO built from this branch, which means the only merge gate — the ISO build — has never seen it.
+- The limine/ESP assumption remains unverified, and it is the one that can cost the owner a working system.
+
+The gate this needs is `./bin/omarchy-iso-make` followed by a QEMU run against a synthetic LVM disk shaped like the target: a volume group holding a populated sibling root, a populated `/home`, a swap volume and one empty spare, with an existing ESP carrying another bootloader. Until that run exists and passes, the mode is unproven.
