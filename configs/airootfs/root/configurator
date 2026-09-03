@@ -925,6 +925,10 @@ choose_lv() {
   done
 }
 
+lv_fstype() {
+  awk -F'|' -v p="$1" '$1 == p { print $4 }' <<<"$lvm_records"
+}
+
 # Decide half of the LVM install: pick the group and its volumes, confirm, and
 # set the globals run_lvm_execute reads. Returns 1 to fall back to the
 # install-mode picker. Nothing is written to disk here.
@@ -964,8 +968,20 @@ run_lvm_decide() {
   say "Choose an existing home to keep it. None puts /home inside the Omarchy volume."
   lvm_home_device=$(choose_lv "Home volume (kept as it is)" true) || return 1
 
+  if [[ -n $lvm_home_device && -z $(lv_fstype "$lvm_home_device") ]]; then
+    say --foreground 1 "$lvm_home_device has no filesystem on it."
+    say "This mode mounts an existing /home; it does not create one."
+    return 1
+  fi
+
   step "Select the volume for swap"
   lvm_swap_device=$(choose_lv "Swap volume (kept as it is)" true) || return 1
+
+  if [[ -n $lvm_swap_device && $(lv_fstype "$lvm_swap_device") != "swap" ]]; then
+    say --foreground 1 "$lvm_swap_device is not formatted as swap."
+    say "This mode adopts an existing swap volume; it does not create one."
+    return 1
+  fi
 
   # The same volume cannot fill two roles: the root format would destroy the
   # home the owner just asked to keep.
@@ -993,8 +1009,15 @@ run_lvm_decide() {
 
   say "The ESP is mounted, never reformatted. Limine installs alongside any bootloader already there."
   local esp_choice
-  esp_choice=$(gum choose --header "EFI system partition (kept as it is)" <<<"$esp_options") || return 1
-  efi_dev=$(awk '{print $1}' <<<"$esp_choice")
+  while true; do
+    esp_choice=$(gum choose --header "EFI system partition (kept as it is)" <<<"$esp_options") || return 1
+    efi_dev=$(awk '{print $1}' <<<"$esp_choice")
+    if device_is_busy "$efi_dev"; then
+      notice "$efi_dev is already mounted and cannot be adopted while in use." 3
+      continue
+    fi
+    break
+  done
 
   # The free-space path creates a 2GB ESP because Unified Kernel Images are
   # large. An ESP sized for a bootloader that keeps kernels on the root

@@ -64,13 +64,13 @@ Pure discovery helpers, sourced by the configurator and by the unit tests, mirro
 - `disk_has_lvm <disk>` — does this disk carry a PV with a volume group
 - `volume_groups_on_disk <disk>`
 - `logical_volumes <vg>` — name, size, current filesystem, current label
-- `lv_is_mounted <lv>` — the guard that keeps the running system's own root off the candidate list
+- `device_is_busy <device>` — the guard that keeps the running system's own root off the candidate list. Takes any block device, not only a logical volume: the ESP is checked through it too
 - `describe_lv <lv>` — the display string for the picker
 
 ### `configs/airootfs/root/configurator`
 
 - `install_mode_form` gains "Use existing LVM volumes" when `disk_has_lvm "$disk"`.
-- `run_lvm_decide` — pick the VG, then root / `/home` / swap / ESP; refuse any volume that is currently mounted or that backs the live system; confirm; set the same globals `run_lvm_execute` reads.
+- `run_lvm_decide` — pick the VG, then root / `/home` / swap / ESP; refuse any device that is currently mounted or that backs the live system; refuse an adopted `/home` or swap volume that carries no filesystem, since this mode mounts them rather than creating them; confirm; set the same globals `run_lvm_execute` reads. Every one of those refusals happens here, before `run_lvm_execute` formats anything — a check deferred to mount time fires after the root volume is already erased.
 - `run_lvm_execute` — format and mount root, mount the rest, emit `user_configuration.json` with `mode: protected`, `config_type: pre_mounted_config`, and a `storage` block carrying `home_device` and `swap_device`.
 - `select_installation` and the `install_target` dispatch gain the `lvm` branch.
 
@@ -88,4 +88,17 @@ The discovery helpers against fixture output, following `partition-numbering-tes
 
 1. **ESP adoption.** Verified assumption pending: that `limine-install` writes only `/EFI/limine` and its own NVRAM entry, leaving a sibling bootloader's directory and entries intact.
 2. **Volumes outside the group.** Should the mode allow a `/home` on a plain partition, or only on an LV in the same VG? Only-in-VG is simpler to explain and to validate.
-3. **`swap: true`** in the emitted config. With a real swap volume the archinstall-level swap flag likely wants to be `false`, but its exact effect on a pre-mounted target is unconfirmed.
+3. **`swap: true`** in the emitted config. With a real swap volume the archinstall-level swap flag likely wants to be `false`, but its exact effect on a pre-mounted target is unconfirmed. This is an open question shipped inside the code rather than beside it, and it should be settled before the PR is opened.
+
+## Adversarial review
+
+Reviewed against `2673c61...HEAD` by a reviewer with no access to the author's reasoning. Findings acted on:
+
+- **The ESP was the one runtime-chosen device with no in-use check.** Every logical volume went through `choose_lv`, which refuses a busy selection; the ESP picker did not. This was the site missing from the mode's own stated invariant.
+- **An adopted `/home` or swap volume with no filesystem was accepted**, and failed at mount time — which is after `run_lvm_execute` has already formatted the root volume. Both are now refused during the decide half.
+- **`_lvm_on_disk` matched by bare prefix.** `/dev/nvme0n10p1`, and the whole disk `/dev/nvme0n10`, both matched disk `/dev/nvme0n1`, so the mode could offer to install into a volume group living on a different disk. The original test covered `sdaa1` against `sda`, which does not catch it.
+
+Checked and found closed, recorded so the next reader does not re-derive them:
+
+- `builder/build-iso.sh:66` copies `configs/` wholesale, so `lvm.sh` reaches the ISO. The merge gate builds the ISO and never runs `./test/all`, so this needed confirming separately.
+- `builder/build-iso.sh:121` already installs `lvm2` in the live environment, so `pvs`, `lvs` and `vgchange` exist when the configurator calls them. Without it the mode would never appear, silently.

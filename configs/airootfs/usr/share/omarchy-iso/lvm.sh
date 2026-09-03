@@ -46,12 +46,27 @@ _lvm_trim() {
   printf '%s' "$s"
 }
 
-# Does this partition belong to the disk we are installing to? Prefix matching
-# is what detect_windows_esp already uses for the same question; kept the same
-# here so both answer alike.
+# Does this partition belong to the disk we are installing to?
+#
+# Plain prefix matching is wrong here, and wrong in a way that picks the wrong
+# disk rather than failing: /dev/nvme0n10p1 starts with /dev/nvme0n1 followed
+# by a digit, so a naive "$disk"[0-9]* claims another disk's partitions — and
+# /dev/nvme0n10 itself, a whole disk, matches too. What is left after the disk
+# name must be a partition number and nothing else, and on nvme/mmcblk it must
+# carry the p separator that partition_path() writes.
 _lvm_on_disk() {
-  local part="$1" disk="$2"
-  [[ $part == "$disk" || $part == "$disk"[0-9]* || $part == "${disk}p"[0-9]* ]]
+  local part="$1" disk="$2" suffix
+  [[ $part == "$disk" ]] && return 0
+
+  suffix="${part#"$disk"}"
+  [[ $suffix != "$part" ]] || return 1
+
+  if [[ $disk == *nvme* || $disk == *mmcblk* ]]; then
+    [[ $suffix == p* ]] || return 1
+    suffix="${suffix#p}"
+  fi
+
+  [[ -n $suffix && $suffix != *[![:digit:]]* ]]
 }
 
 # Volume groups with at least one physical volume on this disk, deduplicated
@@ -71,10 +86,11 @@ disk_has_lvm() {
   [[ -n $(volume_groups_on_disk "$1") ]]
 }
 
-# Is this volume backing the running system? A true answer disqualifies the
-# volume from every role: formatting the live root destroys the installer
-# mid-run, and mounting a volume twice corrupts the filesystem on it.
-lv_is_busy() {
+# Is this device backing the running system? A true answer disqualifies it from
+# every role: formatting the live root destroys the installer mid-run, and
+# mounting a device twice corrupts the filesystem on it. Takes any block
+# device, not only a logical volume — the ESP is checked through here too.
+device_is_busy() {
   local lv="$1" resolved busy
   resolved=$(readlink -f "$lv" 2>/dev/null || printf '%s' "$lv")
   while IFS= read -r busy; do
@@ -101,7 +117,7 @@ logical_volumes() {
 
     IFS='|' read -r fstype label < <(lvm_fs_report "$path")
     busy=""
-    lv_is_busy "$path" && busy="busy"
+    device_is_busy "$path" && busy="busy"
 
     printf '%s|%s|%s|%s|%s|%s\n' "$path" "$name" "$size" "$fstype" "$label" "$busy"
   done < <(lvm_lv_report "$vg")

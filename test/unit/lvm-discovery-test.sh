@@ -100,6 +100,20 @@ printf '==> substring safety\n'
 # /dev/sda1 belongs to /dev/sda; it must not be read as belonging to /dev/sd.
 lvm_pv_report() { echo "  /dev/sdaa1|other"; }
 check "does not match a longer disk name by prefix" "" "$(volume_groups_on_disk /dev/sda)"
+
+# The one the sdaa case does not catch: /dev/nvme0n10p1 starts with
+# /dev/nvme0n1 followed by a digit, so prefix matching claims another disk's
+# volume group and offers to install into it.
+lvm_pv_report() { echo "  /dev/nvme0n10p1|other"; }
+check "does not claim a higher-numbered nvme namespace" "" "$(volume_groups_on_disk /dev/nvme0n1)"
+
+# And the whole disk /dev/nvme0n10 is not a partition of /dev/nvme0n1 either.
+lvm_pv_report() { echo "  /dev/nvme0n10|other"; }
+check "does not claim a higher-numbered nvme disk" "" "$(volume_groups_on_disk /dev/nvme0n1)"
+
+# Still finds its own partitions once anchoring is enforced.
+lvm_pv_report() { echo "  /dev/nvme0n1p2|pool"; }
+check "still finds a partition on the selected nvme disk" "pool" "$(volume_groups_on_disk /dev/nvme0n1)"
 lvm_pv_report() {
   cat <<'EOF'
   /dev/nvme0n1p2|pool
@@ -110,7 +124,7 @@ EOF
 printf '==> in-use detection\n'
 
 for busy_lv in /dev/pool/kde /dev/pool/data /dev/pool/swap; do
-  if lv_is_busy "$busy_lv"; then
+  if device_is_busy "$busy_lv"; then
     printf '  ok   %s is reported busy\n' "$busy_lv"
   else
     printf '  FAIL %s is reported busy\n' "$busy_lv"
@@ -118,7 +132,7 @@ for busy_lv in /dev/pool/kde /dev/pool/data /dev/pool/swap; do
   fi
 done
 
-if lv_is_busy /dev/pool/omarchy; then
+if device_is_busy /dev/pool/omarchy; then
   printf '  FAIL the spare volume is not reported busy\n'
   failures=$((failures + 1))
 else
