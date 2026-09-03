@@ -61,9 +61,8 @@ lvm_fs_report() {
   esac
 }
 
-# findmnt names the mapper alias, lvs names the vg/lv alias. On a real machine
-# both resolve through /dev/dm-N; here they are distinct strings, which is the
-# stricter test of the two.
+# Matching device paths verbatim. The case where they differ has its own
+# section below, with real symlinks.
 lvm_busy_devices() {
   cat <<'EOF'
 /dev/pool/kde
@@ -138,6 +137,56 @@ if device_is_busy /dev/pool/omarchy; then
 else
   printf '  ok   the spare volume is not reported busy\n'
 fi
+
+printf '==> in-use detection across device aliases\n'
+
+# The check that matters on a real machine and that string equality cannot
+# make: findmnt reports /dev/mapper/pool-kde while lvs reports /dev/pool/kde.
+# Both are symlinks to the same dm node, so device_is_busy canonicalizes with
+# readlink -f before comparing. Fixtures that hand it equal strings never run
+# that code, and a volume the live system is using would be offered as a
+# format target. Real symlinks to a real file are the only way to reach it.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/dev/pool" "$WORK/dev/mapper"
+: >"$WORK/dev/dm-0"
+: >"$WORK/dev/dm-1"
+ln -s "$WORK/dev/dm-0" "$WORK/dev/pool/kde"
+ln -s "$WORK/dev/dm-0" "$WORK/dev/mapper/pool-kde"
+ln -s "$WORK/dev/dm-1" "$WORK/dev/pool/omarchy"
+
+lvm_busy_devices() { printf '%s\n' "$WORK/dev/mapper/pool-kde"; }
+
+if device_is_busy "$WORK/dev/pool/kde"; then
+  printf '  ok   the lvs alias is busy when findmnt names the mapper alias\n'
+else
+  printf '  FAIL the lvs alias is busy when findmnt names the mapper alias\n'
+  failures=$((failures + 1))
+fi
+
+if device_is_busy "$WORK/dev/pool/omarchy"; then
+  printf '  FAIL a different volume is not busy through the same aliasing\n'
+  failures=$((failures + 1))
+else
+  printf '  ok   a different volume is not busy through the same aliasing\n'
+fi
+
+# A device that resolves to nothing must not be mistaken for one that does:
+# both sides fall back to the literal path, so they compare unequal.
+if device_is_busy "$WORK/dev/pool/absent"; then
+  printf '  FAIL an unresolvable path is not reported busy\n'
+  failures=$((failures + 1))
+else
+  printf '  ok   an unresolvable path is not reported busy\n'
+fi
+
+lvm_busy_devices() {
+  cat <<'EOF'
+/dev/pool/kde
+/dev/pool/data
+/dev/pool/swap
+EOF
+}
 
 printf '==> volume records\n'
 
