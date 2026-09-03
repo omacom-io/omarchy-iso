@@ -243,6 +243,13 @@ verify() {
   printf '==> the sibling bootloader must still be on the ESP\n'
   check_marker /dev/sda1 /EFI/systemd/systemd-bootx64.efi "sibling bootloader binary stand-in"
   check_marker /dev/sda1 /loader/entries/sibling.conf "title SiblingOS"
+  # The fallback path every UEFI firmware will boot when an NVRAM entry is
+  # missing. A bootloader installer that claims it takes the sibling's last
+  # resort with it, which is worse than losing an entry: nothing on the boot
+  # menu changes and the machine still stops booting the other system.
+  check_marker /dev/sda1 /EFI/BOOT/BOOTX64.EFI "sibling fallback bootloader stand-in"
+  # The sibling's own bootloader configuration, as opposed to its entries.
+  check_marker /dev/sda1 /loader/loader.conf "default sibling"
   # Round 2 of the adversarial review flagged this one specifically: an install
   # that mounts the adopted ESP at /boot has pacman write vmlinuz-linux to the
   # ESP root, over the sibling's.
