@@ -626,6 +626,45 @@ audio-panel|meta_l-ctrl-a|omarchy-keyboard-panel|omarchy.audio'
 
 # ----------------------------------------------------- driving the installer
 
+# Prove the sibling system can still be started, not merely that its files
+# survived. Those are different claims: reading a bootloader back byte-identical
+# says the install did not corrupt it, and says nothing about whether firmware
+# can still reach and execute it once another bootloader has been installed
+# beside it.
+#
+# Pristine firmware variables are what make this a test rather than a
+# formality. With no NVRAM entry matching, the firmware falls back to
+# \EFI\BOOT\BOOTX64.EFI — the sibling's bootloader — so if the Omarchy install
+# had claimed that path, or damaged the sibling's loader configuration, this is
+# where it shows. Reaching the sibling's own menu entry proves the whole path:
+# binary present, executable, and still reading the sibling's config.
+boot_sibling_check() {
+  log "Booting the sibling's bootloader from the UEFI fallback path"
+
+  local saved="$RUN_DIR/ovmf-after-install.fd" status=0
+  cp "$BASE_OVMF" "$saved"
+  cp "$OVMF_VARS_TEMPLATE" "$BASE_OVMF"
+
+  start_vm "$BASE_DISK" "$RUN_DIR/sibling-serial.log"
+
+  # Sibling[0O]S, not SiblingOS: tesseract reads the capital O of "OS" as a
+  # zero against this console font, the same way it reads the V of "LVM" as a U.
+  if wait_for_screen "Sibling[0O]S" 180; then
+    capture_console "success-lvm-19-sibling-still-boots"
+    log "The sibling's bootloader came up and listed its own entry"
+  else
+    capture_console "failure-lvm-sibling-did-not-boot"
+    echo "The sibling's bootloader did not come up after the install" >&2
+    status=1
+  fi
+
+  stop_vm
+  # Put the post-install firmware variables back, so the base image still
+  # carries the boot entries the install created.
+  cp "$saved" "$BASE_OVMF"
+  return $status
+}
+
 # Drive the install into existing logical volumes.
 #
 # Every screen is asserted before a key is sent. "Full disk install" sits two
@@ -1174,6 +1213,7 @@ install_phase() {
       echo "The LVM install damaged a volume it was required to leave alone" >&2
       return 1
     fi
+    boot_sibling_check || return 1
   fi
 }
 

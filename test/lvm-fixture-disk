@@ -47,6 +47,22 @@ LV_SPARE=omarchy
 HOME_LABEL=DATA
 HOME_USER=owner
 
+# A real bootloader, so the sibling's boot path can be executed rather than
+# merely inspected. Reading the sibling's files back byte-identical proves the
+# install did not corrupt them; it does not prove firmware can still start the
+# other system. Only booting it proves that, and booting needs a genuine PE
+# binary rather than a text stand-in.
+#
+# When systemd-boot is not installed on the build host the fixture falls back to
+# the stand-in and the boot check is skipped rather than silently weakened.
+SIBLING_BOOTLOADER=/usr/lib/systemd/boot/efi/systemd-bootx64.efi
+SIBLING_BOOTLOADER_STANDIN="sibling bootloader binary stand-in"
+
+# The sibling's boot entry. SiblingOS is what the boot check looks for on
+# screen, so this string is the contract between the fixture and that check.
+SIBLING_LOADER_ENTRY="title SiblingOS
+linux /vmlinuz-linux"
+
 # Marker files, as "path-within-volume|contents". Read back verbatim by verify.
 # Deliberately spread across both volumes and into a deep directory: an install
 # that truncates or reformats fails the first, one that reformats and restores
@@ -128,6 +144,23 @@ emit_marker_writes() {
   done
 }
 
+have_real_bootloader() {
+  [[ -r $SIBLING_BOOTLOADER ]]
+}
+
+# The sibling's bootloader, at both the vendor path and the UEFI fallback path.
+# The fallback is what firmware boots when no NVRAM entry matches, which is
+# exactly the state the boot check recreates.
+emit_bootloader_writes() {
+  if have_real_bootloader; then
+    printf 'upload %s /EFI/systemd/systemd-bootx64.efi\n' "$SIBLING_BOOTLOADER"
+    printf 'upload %s /EFI/BOOT/BOOTX64.EFI\n' "$SIBLING_BOOTLOADER"
+  else
+    printf 'write /EFI/systemd/systemd-bootx64.efi "%s"\n' "$SIBLING_BOOTLOADER_STANDIN"
+    printf 'write /EFI/BOOT/BOOTX64.EFI "%s"\n' "$SIBLING_BOOTLOADER_STANDIN"
+  fi
+}
+
 create() {
   if [[ -e $OUT ]] && ! $FORCE; then
     echo "Error: $OUT already exists (use --force to replace it)" >&2
@@ -141,6 +174,12 @@ create() {
   # Sizes in MB. The spare takes what is left; everything else is only as big
   # as it needs to be to hold a filesystem and its markers.
   local esp_mb=512 sibling_mb=3072 home_mb=3072 swap_mb=1024
+
+  # Written on the host because a loader entry needs two lines and guestfish
+  # write takes one.
+  local entry_file
+  entry_file=$(mktemp)
+  printf '%s\n' "$SIBLING_LOADER_ENTRY" >"$entry_file"
 
   guestfish --rw -a "$OUT" <<EOF
 launch
@@ -175,10 +214,9 @@ mount /dev/sda1 /
 mkdir-p /EFI/systemd
 mkdir-p /EFI/BOOT
 mkdir-p /loader/entries
-write /EFI/systemd/systemd-bootx64.efi "sibling bootloader binary stand-in"
-write /EFI/BOOT/BOOTX64.EFI "sibling fallback bootloader stand-in"
-write /loader/loader.conf "default sibling"
-write /loader/entries/sibling.conf "title SiblingOS"
+$(emit_bootloader_writes)
+write /loader/loader.conf "timeout 30"
+upload $entry_file /loader/entries/sibling.conf
 # A kernel at the ESP root, which is where pacman's linux package puts it. If
 # an install writes its own vmlinuz-linux here, this file changes and verify
 # catches the collision.
@@ -194,6 +232,8 @@ mount /dev/$VG/$LV_HOME /
 $(emit_marker_writes "${HOME_MARKERS[@]}")
 umount /
 EOF
+
+  rm -f "$entry_file"
 
   echo "Created $OUT"
   echo
@@ -230,6 +270,23 @@ verify() {
     fi
   }
 
+  # A real binary is compared by digest rather than read into a shell.
+  check_bootloader() {
+    local path="$1" expected actual
+    if ! have_real_bootloader; then
+      check_marker /dev/sda1 "$path" "$SIBLING_BOOTLOADER_STANDIN"
+      return
+    fi
+    expected=$(sha256sum "$SIBLING_BOOTLOADER" | cut -d' ' -f1)
+    actual=$(guestfish --ro -a "$OUT" -m /dev/sda1 checksum sha256 "$path" 2>/dev/null || true)
+    if [[ $actual == "$expected" ]]; then
+      printf '  ok   /dev/sda1:%s intact (sha256)\n' "$path"
+    else
+      printf '  FAIL /dev/sda1:%s changed\n' "$path"
+      failures=$((failures + 1))
+    fi
+  }
+
   printf '==> the sibling root must be untouched\n'
   for marker in "${SIBLING_MARKERS[@]}"; do
     check_marker "/dev/$VG/$LV_SIBLING" "${marker%%|*}" "${marker#*|}"
@@ -241,15 +298,15 @@ verify() {
   done
 
   printf '==> the sibling bootloader must still be on the ESP\n'
-  check_marker /dev/sda1 /EFI/systemd/systemd-bootx64.efi "sibling bootloader binary stand-in"
-  check_marker /dev/sda1 /loader/entries/sibling.conf "title SiblingOS"
+  check_bootloader /EFI/systemd/systemd-bootx64.efi
+  check_marker /dev/sda1 /loader/entries/sibling.conf "$SIBLING_LOADER_ENTRY"
   # The fallback path every UEFI firmware will boot when an NVRAM entry is
   # missing. A bootloader installer that claims it takes the sibling's last
   # resort with it, which is worse than losing an entry: nothing on the boot
   # menu changes and the machine still stops booting the other system.
-  check_marker /dev/sda1 /EFI/BOOT/BOOTX64.EFI "sibling fallback bootloader stand-in"
+  check_bootloader /EFI/BOOT/BOOTX64.EFI
   # The sibling's own bootloader configuration, as opposed to its entries.
-  check_marker /dev/sda1 /loader/loader.conf "default sibling"
+  check_marker /dev/sda1 /loader/loader.conf "timeout 30"
   # Round 2 of the adversarial review flagged this one specifically: an install
   # that mounts the adopted ESP at /boot has pacman write vmlinuz-linux to the
   # ESP root, over the sibling's.
