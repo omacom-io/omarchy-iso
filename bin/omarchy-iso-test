@@ -14,6 +14,8 @@
 # Usage: omarchy-iso-test [release/omarchy.iso] [options]
 #
 #   --encrypt          Drive the encrypted install flow (default: unencrypted)
+#   --nvme             Present the target disk as NVMe rather than virtio-blk,
+#                      so device names are /dev/nvme0n1p1 rather than /dev/vda1
 #   --lvm              Install into existing logical volumes on a fixture disk
 #                      that already holds a sibling system, and afterwards
 #                      assert that sibling came through untouched
@@ -44,6 +46,7 @@ BOOT_TIMEOUT=600
 ENCRYPT=false
 PROVISION=false
 LVM=false
+NVME=false
 REUSE_BASE=false
 INSTALL_ONLY=false
 KEEP_RUNNING=false
@@ -59,6 +62,7 @@ while (($#)); do
   case "$1" in
     --encrypt) ENCRYPT=true ;;
     --lvm) LVM=true ;;
+    --nvme) NVME=true ;;
     --provision) PROVISION=true ;;
     --reuse-base) REUSE_BASE=true ;;
     --install-only) INSTALL_ONLY=true ;;
@@ -207,6 +211,13 @@ start_vm() {
   local disk="$1" serial="$2"
   shift 2
 
+  local -a DISK_DEVICE
+  if $NVME; then
+    DISK_DEVICE=(-device nvme,drive=drive0,serial=omarchy,bootindex=1)
+  else
+    DISK_DEVICE=(-device virtio-blk-pci,drive=drive0,bootindex=1)
+  fi
+
   # A viewer that resizes the guest display breaks the console driving: OCR
   # cannot read the shrunken font, and a resize during early boot can wedge
   # virtio-gpu before the system comes up.
@@ -219,7 +230,7 @@ start_vm() {
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$BASE_OVMF" \
     -drive file="$disk",format=qcow2,if=none,id=drive0 \
-    -device virtio-blk-pci,drive=drive0,bootindex=1 \
+    "${DISK_DEVICE[@]}" \
     -device virtio-vga \
     -display none \
     -vnc 127.0.0.1:5 \
