@@ -133,4 +133,21 @@ Nothing in this mode has ever executed. That is the honest state, and no number 
 - No run against a real volume group. No ISO built from this branch, which means the only merge gate — the ISO build — has never seen it.
 - The limine/ESP assumption remains unverified, and it is the one that can cost the owner a working system.
 
-The gate this needs is `./bin/omarchy-iso-make` followed by a QEMU run against a synthetic LVM disk shaped like the target: a volume group holding a populated sibling root, a populated `/home`, a swap volume and one empty spare, with an existing ESP carrying another bootloader. Until that run exists and passes, the mode is unproven.
+The gate this needs is `./bin/omarchy-iso-make` followed by a QEMU run against a disk shaped like the target. Half of that now exists.
+
+`test/lvm-fixture-disk create` builds that disk — a volume group holding a populated sibling root, a populated `/home` labelled DATA, a swap volume and one empty spare, plus an ESP already carrying a sibling bootloader and a `vmlinuz-linux` at its root. libguestfs builds the LVM stack in its own appliance, so it needs no root and cannot reach the developer's disks.
+
+`test/lvm-fixture-disk verify` is the half that matters. Every volume the install must leave alone carries marker files, and verify reads them back afterwards. A test that only checks Omarchy booted would pass while the sibling's root was being erased.
+
+The oracle is proven in both directions, which is the only reason to trust it:
+
+| Simulated install | verify |
+| --- | --- |
+| nothing touched | passes |
+| formats the spare only — the one allowed write | passes |
+| formats the adopted `/home` | fails, 4 checks |
+| writes `vmlinuz-linux` onto the shared ESP | fails |
+
+That last row matters beyond regression: it is round 2's open ESP finding, and the fixture can now settle it by observation instead of argument. Run the install with the encrypted default, then `verify`; if the sibling's kernel changed, the `/boot` mount point is wrong for this mode.
+
+Still missing: the ISO build itself, which needs Docker, and the QEMU run that drives the configurator through the LVM mode. Until an install has actually run against this fixture and `verify` has passed afterwards, the mode remains unproven.
