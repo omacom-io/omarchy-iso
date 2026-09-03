@@ -1261,7 +1261,6 @@ run_lvm_execute() {
     "packages": [
         "base-devel",
         "git",
-        "lvm2",
         "omarchy-keyring",
         "$OMARCHY_SETTINGS_PACKAGE",
         "$OMARCHY_RUNTIME_PACKAGE"

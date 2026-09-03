@@ -150,6 +150,33 @@ class LvmMkinitcpioDropinTest(unittest.TestCase):
         self.assertGreater(phases_impl.LVM_MKINITCPIO_DROPIN, "omarchy_hooks.conf")
 
 
+class LvmEarlyPackagesTest(unittest.TestCase):
+    """lvm2 must reach the target before the initramfs is built.
+
+    Without it mkinitcpio cannot resolve the lvm2 hook, the build fails, and
+    the install dies at "Validating boot setup" reporting a missing UKI — a
+    symptom that names nothing about LVM, which is why this is pinned here.
+    """
+
+    def install(self, **overrides):
+        installed = []
+        fake_installer = mock.Mock()
+        fake_installer.add_additional_packages.side_effect = lambda pkgs: installed.extend(pkgs)
+        ctx = FakeContext("/nonexistent", storage_intent(**overrides))
+        with mock.patch.object(phases_impl, "_early_bootstrap_packages", return_value=["base-devel"]), \
+             mock.patch.object(phases_impl, "_early_user_seed_packages", return_value=[]), \
+             mock.patch.object(phases_impl, "EARLY_LUAROCKS_PACKAGES", []), \
+             mock.patch.object(phases_impl, "info"):
+            phases_impl._install_early_packages(ctx, fake_installer)
+        return installed
+
+    def test_lvm_install_gets_lvm2(self):
+        self.assertIn("lvm2", self.install(lvm_volume_group="pool"))
+
+    def test_non_lvm_install_does_not(self):
+        self.assertNotIn("lvm2", self.install())
+
+
 class LvmValidationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()

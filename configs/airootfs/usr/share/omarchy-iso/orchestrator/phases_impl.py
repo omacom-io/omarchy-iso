@@ -279,7 +279,7 @@ def arch_install_system(ctx: InstallContext) -> None:
                 installer.setup_swap(algo=config.swap.algorithm)
                 _drop_archinstall_zram_conf(ctx)
 
-            _install_early_packages(installer)
+            _install_early_packages(ctx, installer)
             _configure_limine_boot(ctx, installer, config)
 
             info("› creating user (with /etc/skel populated)")
@@ -626,8 +626,15 @@ def _drop_archinstall_zram_conf(ctx: InstallContext) -> None:
     zram_conf.unlink(missing_ok=True)
 
 
-def _install_early_packages(installer) -> None:
+def _install_early_packages(ctx: InstallContext, installer) -> None:
     bootstrap_packages = _early_bootstrap_packages()
+    # Root on a logical volume needs lvm2 in the target before the initramfs is
+    # built: mkinitcpio resolves the lvm2 hook against the target's own
+    # /usr/lib/initcpio, and an unresolvable hook fails the build outright, so
+    # the install dies at "Validating boot setup" with no UKI rather than with
+    # anything that names LVM.
+    if _storage_intent(ctx).get("lvm_volume_group"):
+        bootstrap_packages = [*bootstrap_packages, "lvm2"]
     user_seed_packages = _early_user_seed_packages()
 
     info(f"› installing early Omarchy packages: {', '.join(bootstrap_packages)}")
