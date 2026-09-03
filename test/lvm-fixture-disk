@@ -45,7 +45,7 @@ LV_HOME=data
 LV_SWAP=swap
 LV_SPARE=omarchy
 HOME_LABEL=DATA
-HOME_USER=mcrowe
+HOME_USER=owner
 
 # Marker files, as "path-within-volume|contents". Read back verbatim by verify.
 # Deliberately spread across both volumes and into a deep directory: an install
@@ -58,7 +58,7 @@ SIBLING_MARKERS=(
 )
 HOME_MARKERS=(
   "/$HOME_USER/.bashrc|# sibling home dotfile, must survive"
-  "/$HOME_USER/Documents/notes.txt|1.7TB stand-in: this file must never move"
+  "/$HOME_USER/Documents/notes.txt|stands in for the irreplaceable half of a shared home"
   "/$HOME_USER/.config/deep/nested/value|nested marker"
 )
 
