@@ -901,8 +901,18 @@ describe_esp() {
 # Present every volume in the group, including the ones already in use. Hiding
 # them would leave the owner hunting for a volume they can see in lsblk; naming
 # them and refusing the selection explains itself.
+#
+# Reports through chosen_lv instead of printing, the way create_partition()
+# reports through created_partition_number and for the same reason: a caller
+# would have to wrap this in a command substitution, and refusing a busy volume
+# draws the logo on stdout through notice(). That output would be captured
+# alongside the path, and the caller would go on to format a device name with a
+# screenful of escape codes in front of it.
+chosen_lv=""
+
 choose_lv() {
   local header="$1" allow_none="$2" record choice path options=""
+  chosen_lv=""
 
   while IFS= read -r record; do
     [[ -n $record ]] || continue
@@ -913,14 +923,14 @@ choose_lv() {
 
   while true; do
     choice=$(gum choose --header "$header" <<<"$options") || return 1
-    [[ $choice == "None" ]] && { printf '\n'; return 0; }
+    [[ $choice == "None" ]] && return 0
 
     path=$(awk '{print $1}' <<<"$choice")
     if awk -F'|' -v p="$path" '$1 == p && $6 == "busy" { found = 1 } END { exit !found }' <<<"$lvm_records"; then
       notice "$path is in use by the running system and cannot be selected." 3
       continue
     fi
-    printf '%s\n' "$path"
+    chosen_lv="$path"
     return 0
   done
 }
@@ -968,7 +978,8 @@ run_lvm_decide() {
 
   step "Select the volume for Omarchy"
   say "This volume will be reformatted. Everything else you pick is mounted as it is."
-  root_partition_device=$(choose_lv "Root volume (will be erased)" false) || return 1
+  choose_lv "Root volume (will be erased)" false || return 1
+  root_partition_device="$chosen_lv"
   [[ -n $root_partition_device ]] || return 1
 
   local root_fstype root_label
@@ -987,7 +998,8 @@ run_lvm_decide() {
 
   step "Select the volume for /home"
   say "Choose an existing home to keep it. None puts /home inside the Omarchy volume."
-  lvm_home_device=$(choose_lv "Home volume (kept as it is)" true) || return 1
+  choose_lv "Home volume (kept as it is)" true || return 1
+  lvm_home_device="$chosen_lv"
 
   if [[ -n $lvm_home_device ]] && ! fstype_is_mountable "$(lv_fstype "$lvm_home_device")"; then
     say --foreground 1 "$lvm_home_device holds no filesystem this mode can mount."
@@ -997,7 +1009,8 @@ run_lvm_decide() {
   fi
 
   step "Select the volume for swap"
-  lvm_swap_device=$(choose_lv "Swap volume (kept as it is)" true) || return 1
+  choose_lv "Swap volume (kept as it is)" true || return 1
+  lvm_swap_device="$chosen_lv"
 
   if [[ -n $lvm_swap_device && $(lv_fstype "$lvm_swap_device") != "swap" ]]; then
     say --foreground 1 "$lvm_swap_device is not formatted as swap."

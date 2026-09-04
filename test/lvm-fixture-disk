@@ -21,6 +21,7 @@
 # Usage:
 #   test/lvm-fixture-disk create [--out PATH] [--size GB] [--force]
 #   test/lvm-fixture-disk verify [--out PATH]
+#   test/lvm-fixture-disk boot-check-supported
 #
 # Then boot it beside the ISO, e.g.:
 #   qemu-system-x86_64 -enable-kvm -m 8192 \
@@ -55,7 +56,7 @@ HOME_USER=owner
 #
 # When systemd-boot is not installed on the build host the fixture falls back to
 # the stand-in and the boot check is skipped rather than silently weakened.
-SIBLING_BOOTLOADER=/usr/lib/systemd/boot/efi/systemd-bootx64.efi
+SIBLING_BOOTLOADER="${SIBLING_BOOTLOADER:-/usr/lib/systemd/boot/efi/systemd-bootx64.efi}"
 SIBLING_BOOTLOADER_STANDIN="sibling bootloader binary stand-in"
 
 # The sibling's boot entry. SiblingOS is what the boot check looks for on
@@ -82,17 +83,21 @@ usage() {
   cat <<USAGE
 Usage: test/lvm-fixture-disk create [--out PATH] [--size GB] [--force]
        test/lvm-fixture-disk verify [--out PATH]
+       test/lvm-fixture-disk boot-check-supported
 
 create  Build the fixture disk.
 verify  Re-read the markers and fail if anything the installer had to leave
         alone has changed. Run this after an install against the fixture.
+boot-check-supported
+        Exit 0 when the fixture can carry a real bootloader, so a caller knows
+        whether booting the sibling is a meaningful test on this host.
 USAGE
 }
 
 command=${1:-}
 shift || true
 case "$command" in
-  create | verify) ;;
+  create | verify | boot-check-supported) ;;
   -h | --help)
     usage
     exit 0
@@ -159,6 +164,13 @@ emit_bootloader_writes() {
     printf 'write /EFI/systemd/systemd-bootx64.efi "%s"\n' "$SIBLING_BOOTLOADER_STANDIN"
     printf 'write /EFI/BOOT/BOOTX64.EFI "%s"\n' "$SIBLING_BOOTLOADER_STANDIN"
   fi
+}
+
+# Whether this host can give the fixture a bootloader that actually executes.
+# The boot check is only a test when it can; against the text stand-in it would
+# wait for a menu that can never appear and report a healthy install as broken.
+boot-check-supported() {
+  have_real_bootloader
 }
 
 create() {

@@ -1213,7 +1213,14 @@ install_phase() {
       echo "The LVM install damaged a volume it was required to leave alone" >&2
       return 1
     fi
-    boot_sibling_check || return 1
+    # The fixture falls back to a text stand-in when the build host has no
+    # systemd-boot, and a stand-in cannot boot. Ask the fixture rather than
+    # re-deriving its decision here, so the two cannot drift apart.
+    if "$REPO_DIR/test/lvm-fixture-disk" boot-check-supported; then
+      boot_sibling_check || return 1
+    else
+      log "No systemd-boot on this host: the fixture carries a stand-in bootloader, so the sibling boot check is skipped"
+    fi
   fi
 }
 
