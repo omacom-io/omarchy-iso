@@ -430,7 +430,7 @@ stage_qualcomm_firmware() {
     if grep -q BitLocker /run/omarchy/firmware-stage.log 2>/dev/null; then
       say "The Windows partition is BitLocker-encrypted. Turn BitLocker off in Windows to let the firmware be read."
     fi
-    say "Omarchy will install and boot, but GPU acceleration, audio and battery reporting need"
+    say "Installation can continue, but GPU acceleration, audio and battery reporting may need"
     say "\`sudo qcom-firmware-extract\` afterwards with a Windows driver store of this laptop model."
   fi
   echo

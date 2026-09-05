@@ -187,7 +187,8 @@ class StageProvisioningStateTest(unittest.TestCase):
         # A fake bundled Node tarball on the "live ISO".
         self.packages = Path(self.tmp.name) / "opt-packages"
         self.packages.mkdir()
-        (self.packages / "node-v24.0.0-linux-x64.tar.gz").write_bytes(b"node")
+        self.node_tarball = phases_impl.NODE_TARBALL_GLOB.replace("*", "24.0.0")
+        (self.packages / self.node_tarball).write_bytes(b"node")
         node_patch = mock.patch.object(phases_impl, "NODE_PACKAGES_DIR", self.packages)
         node_patch.start()
         self.addCleanup(node_patch.stop)
@@ -207,7 +208,7 @@ class StageProvisioningStateTest(unittest.TestCase):
         ctx = make_ctx(self.target, defer_provisioning=False)
         phases_impl.stage_provisioning_state(ctx)
 
-        self.assertTrue((self.provisioning_dir() / "packages/node-v24.0.0-linux-x64.tar.gz").exists())
+        self.assertTrue((self.provisioning_dir() / "packages" / self.node_tarball).exists())
         self.assertFalse((self.provisioning_dir() / "pending").exists())
         self.assertFalse((self.target / "etc/systemd/system/omarchy-provision-owner.service").exists())
 

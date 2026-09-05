@@ -35,21 +35,9 @@ from pathlib import Path
 
 from . import archinstall_adapter as arch
 from .command import capture, capture_identifier, require_text
-from .context import InstallContext
+from .context import InstallContext, _LIMINE_EFI_BINARY, _LIMINE_SOURCE_EFI
 from .keyboard import configure_keyboard
 from .ui import error, info
-
-# Select Limine EFI filenames for the target architecture.
-_LIMINE_EFI_ARCH = {
-    "x86_64": "X64",
-    "i686": "IA32",
-    "aarch64": "AA64",
-    "riscv64": "RISCV64",
-    "loongarch64": "LOONGARCH64",
-}.get(platform.machine(), "X64")
-_LIMINE_SOURCE_EFI = f"BOOT{_LIMINE_EFI_ARCH}.EFI"
-_LIMINE_EFI_BINARY = f"limine_{_LIMINE_EFI_ARCH.lower()}.efi"
-
 
 # Package targets are written by builder/build-iso.sh. Stable ISOs use the
 # stable package names, while dev/local-source ISOs install the dev package
@@ -214,8 +202,7 @@ def _copy_firmware_stage_into_target(ctx: InstallContext) -> None:
     if not (LIVE_FIRMWARE_STAGE / "manifest").is_file():
         return
     dst = ctx.target / TARGET_FIRMWARE_STAGE
-    if not dst.exists():
-        shutil.copytree(LIVE_FIRMWARE_STAGE, dst)
+    shutil.copytree(LIVE_FIRMWARE_STAGE, dst, dirs_exist_ok=True)
 
 
 def prepare_live(ctx: InstallContext) -> None:
