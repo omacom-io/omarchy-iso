@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Reconcile Arch Linux ARM kernel paths with the names expected by archiso.
-set -uo pipefail
+set -euo pipefail
 
 if [[ $(uname -m) != aarch64 ]]; then
   exit 0
@@ -46,9 +46,7 @@ PRESET
 echo "customize_airootfs: building the live initramfs from archiso.conf"
 rm -f /boot/initramfs-linux*.img
 
-# The unsupported memdisk hook can fail after producing a usable image.
-mkinitcpio -p linux-aarch64 || \
-  echo "customize_airootfs: mkinitcpio reported errors; checking for the image"
+mkinitcpio -p linux-aarch64
 
 # Fail the build if GRUB's initramfs was not produced.
 if [[ ! -s /boot/initramfs-linux-aarch64.img ]]; then
