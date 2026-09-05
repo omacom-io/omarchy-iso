@@ -16,9 +16,9 @@ on:
 
 jobs:
   packages:
-    uses: omacom-io/omarchy-pkgs/.github/workflows/build-aarch64.yml@master
+    uses: omacom/omarchy-pkgs/.github/workflows/build-aarch64.yml@master
     with:
-      pkgs_repository: omacom-io/omarchy-pkgs
+      pkgs_repository: omacom/omarchy-pkgs
       pkgs_ref: ${{ inputs.pkgs_ref || 'master' }}
       # Packages installed from the local aarch64 Omarchy repository.
       packages: >-
@@ -67,7 +67,7 @@ jobs:
       - name: Inspect the repository
         run: |
           test -f omarchy-repo/omarchy.db
-          ls -la omarchy-repo | head -50
+          ls -la omarchy-repo | sed -n '1,50p'
           du -sh omarchy-repo
 
       - name: Build ISO
