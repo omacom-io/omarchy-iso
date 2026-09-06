@@ -101,6 +101,28 @@ select_display_gpu() {
   TRY_DRM_DEVICE="$devdri/$target"; TRY_SOFTWARE=1; return 0
 }
 
+# True when an NVIDIA GPU Omarchy has a driver for is present. Uses Omarchy's own
+# generation check, installed with the omarchy package, so the answer matches
+# what the installer would decide.
+nvidia_gpu_present() {
+  local bin="${OMARCHY_PATH:-/usr/share/omarchy}/bin"
+  [[ -x $bin/omarchy-hw-nvidia-gsp ]] || return 1
+  "$bin/omarchy-hw-nvidia-gsp" || "$bin/omarchy-hw-nvidia-without-gsp"
+}
+
+# Ask, on the greeter's console, whether to set the NVIDIA driver up now or take
+# the quick software preview. Returns 0 for the driver. Defaults to the driver
+# (first choice) since that is the experience the hardware can actually give.
+offer_nvidia() {
+  local choice
+  choice=$(gum choose \
+    --header "Your display is on an NVIDIA GPU. The full experience needs its driver." \
+    "Set up the NVIDIA driver now (~2 minutes, from the USB stick)" \
+    "Skip — quick software preview (lower resolution)" \
+    </dev/tty 2>/dev/tty) || return 1
+  [[ $choice == Set* ]]
+}
+
 # One line for the failure message: name the GPU behind a panel the session
 # could not drive, so the notice is specific rather than generic.
 display_gpu_name() {
@@ -209,6 +231,31 @@ runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \
   say "Try Omarchy: theme setup failed; continuing with defaults."
 runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || true
 
+# Point the compositor at the DRM node that actually drives the display, and
+# force software rendering when that node is the firmware framebuffer. Without
+# this, aquamarine on a machine with a second, display-less GPU (an AMD iGPU
+# alongside an NVIDIA card whose panel is on simpledrm) can pick the wrong node
+# and render to nowhere. Runs on the greeter's VT1 (before the switch below), so
+# the NVIDIA offer and its install are visible. Real-run only: the sandbox has
+# no /sys/class/drm.
+gpu_env=()
+if [[ -z $root ]] && select_display_gpu; then
+  # If the panel is on the firmware framebuffer only because the session has no
+  # driver for an NVIDIA GPU, offer the real driver. The software fallback keeps
+  # the session working on any hardware, but on a high-resolution or ultrawide
+  # panel simpledrm cannot fill, the accelerated driver is the difference between
+  # a poor preview and the real thing.
+  if (( TRY_SOFTWARE )) && nvidia_gpu_present && offer_nvidia; then
+    if /usr/local/bin/omarchy-try-nvidia; then
+      select_display_gpu # the nvidia node now drives the panel: hardware path
+    else
+      say "Try Omarchy: GPU setup didn't complete; continuing with the software preview."
+    fi
+  fi
+  gpu_env=(-E "AQ_DRM_DEVICES=$TRY_DRM_DEVICE")
+  (( TRY_SOFTWARE )) && gpu_env+=(-E LIBGL_ALWAYS_SOFTWARE=1)
+fi
+
 # Bring the session's VT to the foreground BEFORE starting the session. This is
 # load-bearing, not cosmetic: libseat's logind backend only hands input devices
 # to the session that owns the active VT. If the compositor initializes while
@@ -219,17 +266,6 @@ runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || t
 # makes the session active from birth, so input attaches. cleanup returns to
 # VT1 on every exit path, including the refuse below.
 chvt "$session_vt" 2>/dev/null
-
-# Point the compositor at the DRM node that actually drives the display, and
-# force software rendering when that node is the firmware framebuffer. Without
-# this, aquamarine on a machine with a second, display-less GPU (an AMD iGPU
-# alongside an NVIDIA card whose panel is on simpledrm) can pick the wrong node
-# and render to nowhere.
-gpu_env=()
-if select_display_gpu; then
-  gpu_env=(-E "AQ_DRM_DEVICES=$TRY_DRM_DEVICE")
-  (( TRY_SOFTWARE )) && gpu_env+=(-E LIBGL_ALWAYS_SOFTWARE=1)
-fi
 
 # Start the desktop as the try user in its own logind session on that VT.
 # PAMName=login gives it a real seat (uwsm and Hyprland need one); the unit name

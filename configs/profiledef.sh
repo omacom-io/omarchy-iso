@@ -43,6 +43,7 @@ file_permissions=(
   ["/usr/local/bin/omarchy-iso-install"]="0:0:755"
   ["/usr/local/bin/omarchy-try"]="0:0:755"
   ["/usr/local/bin/omarchy-try-install"]="0:0:755"
+  ["/usr/local/bin/omarchy-try-nvidia"]="0:0:755"
   ["/usr/local/bin/omarchy-try-welcome"]="0:0:755"
   ["/usr/local/bin/omarchy-upload-log"]="0:0:755"
   ["/var/cache/omarchy/mirror/offline/"]="0:0:775"
