@@ -13,7 +13,14 @@ fail() { local d="$1" x="${2:-}"; [[ -n $x ]] && printf '%s\n' "$x" >&2; printf 
 
 work=$(mktemp -d); trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 stub_dir="$work/stubs"; mkdir -p "$stub_dir"
-# omarchy-try-setup stub: log its args so we can prove the hand-off.
+# The dashboard stub logs the argv and environment the greeter would hand it,
+# then runs its child like the real one; the setup stub logs its own argv.
+cat >"$stub_dir/omarchy-install-dashboard" <<'STUB'
+#!/bin/bash
+printf 'omarchy-install-dashboard TRY=%s %s\n' "${OMARCHY_DASHBOARD_TRY:-}" "$*" >>"$TEST_LOG"
+while [[ $1 != -- ]]; do shift; done; shift
+exec "$@"
+STUB
 cat >"$stub_dir/omarchy-try-setup" <<'STUB'
 #!/bin/bash
 printf 'omarchy-try-setup %s\n' "$*" >>"$TEST_LOG"
@@ -49,12 +56,16 @@ rm "$sandbox/usr/share/omarchy-iso/try-packages"
 ! run 2>/dev/null || fail "missing list exits non-zero"
 pass "refuses without a try package list"
 
-# Hand-off: omarchy-try runs the setup worker with the sandbox root and no nvidia.
+# Hand-off: omarchy-try runs the setup worker under the dashboard, in try mode,
+# with the log and state files it polls, the sandbox root, and no nvidia.
 new_sandbox
 run >/dev/null 2>&1 || fail "happy path exits zero"
-grep -q "^omarchy-try-setup /run/omarchy-try/state.json no $sandbox\$" "$TEST_LOG" \
-  || fail "hands off to omarchy-try-setup with the state file and root" "$(<"$TEST_LOG")"
-pass "hands the install and setup to omarchy-try-setup"
+state=$sandbox/run/omarchy-try/state.json; log=$sandbox/var/log/omarchy-install.log
+grep -q "^omarchy-install-dashboard TRY=yes $log $state -- omarchy-try-setup $state no $sandbox\$" "$TEST_LOG" \
+  || fail "runs the setup under the dashboard in try mode" "$(<"$TEST_LOG")"
+grep -q "^omarchy-try-setup $state no $sandbox\$" "$TEST_LOG" || fail "the dashboard's child is the setup worker" "$(<"$TEST_LOG")"
+[[ -f $log ]] || fail "starts the install log the dashboard tails"
+pass "hands the install and setup to omarchy-try-setup under the dashboard"
 
 # A failing setup makes omarchy-try exit non-zero.
 new_sandbox

@@ -32,8 +32,8 @@ min_mem_kib=$((7 * 1024 * 1024))
 # would claim VT1 and kill the greeter). See git history for the full rationale.
 session_unit=omarchy-try-session
 session_vt=7
-state_file=/run/omarchy-try/state.json
-log_file=/var/log/omarchy-install.log
+state_file=$root/run/omarchy-try/state.json
+log_file=$root/var/log/omarchy-install.log
 
 say() { printf '%s\n' "$*"; }
 refuse() { printf 'Try Omarchy: %s\n' "$*" >&2; exit 1; }
@@ -153,20 +153,19 @@ fi
 [[ -z $root ]] && trap cleanup EXIT
 
 # --- Install + setup under the real progress dashboard -----------------------
-if [[ -z $root ]]; then
-  mkdir -p "${state_file%/*}" "${log_file%/*}"; : >"$log_file"
-  if ! OMARCHY_DASHBOARD_TRY=yes OMARCHY_DASHBOARD_TTY="$(tty)" \
-    omarchy-install-dashboard "$log_file" "$state_file" -- \
-    omarchy-try-setup "$state_file" "$want_nvidia"; then
-    chvt 1 2>/dev/null
-    say ""
-    say "Try Omarchy could not set up the desktop. See $log_file for details."
-    gum confirm --affirmative="Back to installer" --negative="" "" </dev/tty >/dev/tty 2>&1 || true
-    exit 0
-  fi
-else
-  # Test path: run the worker directly so the sandbox can assert its steps.
-  omarchy-try-setup "$state_file" "$want_nvidia" "$root" || exit 1
+# One path, for tests too: the sandbox stubs the dashboard on PATH and asserts
+# the argv the real greeter runs, rather than a hand-off nothing else exercises.
+mkdir -p "${state_file%/*}" "${log_file%/*}"; : >"$log_file"
+tty_path=$(tty) || tty_path=/dev/tty
+if ! OMARCHY_DASHBOARD_TRY=yes OMARCHY_DASHBOARD_TTY="$tty_path" \
+  omarchy-install-dashboard "$log_file" "$state_file" -- \
+  omarchy-try-setup "$state_file" "$want_nvidia" ${root:+"$root"}; then
+  [[ -n $root ]] && exit 1
+  chvt 1 2>/dev/null
+  say ""
+  say "Try Omarchy could not set up the desktop. See $log_file for details."
+  gum confirm --affirmative="Back to installer" --negative="" "" </dev/tty >/dev/tty 2>&1 || true
+  exit 0
 fi
 
 # --- Point the compositor at the panel's DRM node ----------------------------
