@@ -32,18 +32,16 @@ for preset in /etc/mkinitcpio.d/*.preset; do
   fi
 done
 
-# Use the filename GRUB loads and the live archiso hook configuration.
+# Keep drop-ins enabled so the aarch64 live hooks override installed-system hooks.
 cat > /etc/mkinitcpio.d/linux-aarch64.preset <<'PRESET'
 # Live-ISO preset for Arch Linux ARM's linux-aarch64.
 PRESETS=('archiso')
 
 ALL_kver='/boot/vmlinuz-linux-aarch64'
-archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
-
 archiso_image="/boot/initramfs-linux-aarch64.img"
 PRESET
 
-echo "customize_airootfs: building the live initramfs from archiso.conf"
+echo "customize_airootfs: building the live initramfs with aarch64 overrides"
 rm -f /boot/initramfs-linux*.img
 
 mkinitcpio -p linux-aarch64

@@ -25,3 +25,12 @@ for ISO_ARCH in aarch64 x86_64; do
   [[ -z $(filter_arch_packages </dev/null) ]]
   printf 'ok - %s package filtering preserves comments, exact names and repeated input\n' "$ISO_ARCH"
 done
+
+# Exercise the shipped exclusions, not only the synthetic list above.
+eval "$(sed -n '/^OMARCHY_ARCH_DROP=(/,/^)/p' "$ROOT/builder/build-iso.sh")"
+input=$'dell-xps13-sidecar-amps\nlinux-aarch64'
+ISO_ARCH=aarch64
+[[ $(printf '%s' "$input" | filter_arch_packages) == linux-aarch64 ]]
+ISO_ARCH=x86_64
+[[ $(printf '%s' "$input" | filter_arch_packages) == "$input" ]]
+echo "ok - Dell amplifier exclusion is ARM-only"

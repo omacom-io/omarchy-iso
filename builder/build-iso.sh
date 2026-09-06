@@ -109,8 +109,9 @@ if [[ -d /omarchy-repo ]]; then
     cp "$PACMAN_ONLINE_CONF" "/tmp/pacman-online-${OMARCHY_MIRROR}.conf"
     PACMAN_ONLINE_CONF="/tmp/pacman-online-${OMARCHY_MIRROR}.conf"
   fi
-  sed -i '/^\[omarchy\]$/,/^$/ s|^Server = .*|Server = file:///omarchy-repo|' "$PACMAN_ONLINE_CONF"
-  echo "local repo: [omarchy] served from file:///omarchy-repo"
+  bash /builder/local-repo-config.sh "$PACMAN_ONLINE_CONF" > "$PACMAN_ONLINE_CONF.local"
+  mv "$PACMAN_ONLINE_CONF.local" "$PACMAN_ONLINE_CONF"
+  echo "local repo: [omarchy] takes precedence, served from file:///omarchy-repo"
   ls /omarchy-repo/omarchy.db >/dev/null
 fi
 
@@ -134,7 +135,7 @@ OMARCHY_ARCH_DROP=(
   apple-bcm-firmware apple-t2-audio-config t2fanrd linux-t2 linux-t2-headers
   macbook12-spi-driver-dkms macbook8-spi-pxa2xx-nodma-dkms
   asusctl supergfxctl rog-control-center
-  dell-xps-touchpad-haptics tuxedo-drivers-nocompatcheck-dkms
+  dell-xps-touchpad-haptics dell-xps13-sidecar-amps tuxedo-drivers-nocompatcheck-dkms
   intel-ipu7-camera intel-lpmd intel-media-driver libva-intel-driver
   thermald linux-ptl linux-ptl-headers vpl-gpu-rt libvpl
   vulkan-intel vulkan-radeon

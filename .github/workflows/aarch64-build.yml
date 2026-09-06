@@ -26,7 +26,7 @@ jobs:
         linux-aarch64-pkgbase-shim qcom-firmware-extract omarchy-settings omarchy omarchy-nvim
         aether cliamp herdr localsend-bin mise-bin omacalc omacut omawrite omarchy-chromium-bin
         ttfx yay tobi-try ttf-ia-writer ufw-docker xdg-terminal-exec yaru-icon-theme
-        tzupdate tensaku hyprland-preview-share-picker
+        tzupdate tensaku hyprtoolkit hyprland-guiutils hyprland hyprland-preview-share-picker
 
   build-iso:
     needs: packages
@@ -49,6 +49,12 @@ jobs:
           df -h
           docker version --format '{{.Server.Version}}'
           docker info --format '{{.Driver}} {{.DockerRootDir}}'
+
+      - name: Test ARM live build configuration
+        run: |
+          bash test/unit/arch-package-filter-test.sh
+          bash test/unit/aarch64-initramfs-test.sh
+          python3 -m unittest discover -s test/unit -p test_local_repo_config.py
 
       # The hosted runner's root disk is too small for both build stages.
       - name: Free Disk Space
