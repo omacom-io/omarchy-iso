@@ -119,7 +119,7 @@ pass "omarchy-try-setup adds an NVIDIA phase when asked"
 new_sandbox
 ! COWSPACE_AVAIL_KIB=2000000 run >/dev/null 2>"$sandbox/err" || fail "too-small overlay exits non-zero"
 ! grep -q '^pacman -S --needed' "$TEST_LOG" || fail "too-small overlay never reaches the install"
-grep -qE 'GiB' "$sandbox/err" || fail "too-small overlay says how much is missing" "$(<"$sandbox/err")"
+grep -qE '[0-9]+ MiB free; the desktop needs [0-9]+ MiB' "$sandbox/err" || fail "too-small overlay says how much is missing" "$(<"$sandbox/err")"
 pass "omarchy-try-setup refuses an overlay too small for the try set"
 
 # A second T in the same boot: the user exists, the dotfiles are already seeded,

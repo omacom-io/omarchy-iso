@@ -73,7 +73,7 @@ mount -o remount,size=50% "$cowspace" || fail "could not grow the live overlay"
 need_kib=$(( $(<"$try_installed_kib") * 5 / 4 ))
 avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
 (( avail_kib >= need_kib )) ||
-  fail "the live overlay has $(( avail_kib / 1048576 )) GiB free; the desktop needs $(( need_kib / 1048576 )) GiB"
+  fail "the live overlay has $(( avail_kib / 1024 )) MiB free; the desktop needs $(( need_kib / 1024 )) MiB"
 
 # Compressed swap before the install starts filling that overlay, not after.
 # zram-generator is a 1 MiB package on the stick; omarchy-settings (already in

@@ -389,7 +389,7 @@ pacman --config "$build_cache_dir/pacman-offline.conf" \
   -Si $(printf '%s\n' "$try_packages" | awk '{ print $1 }') 2>/dev/null |
   awk -F': +' '/^Installed Size/ { split($2, a, " "); f = (a[2] == "KiB") ? 1 : (a[2] == "GiB") ? 1048576 : 1024; kib += a[1] * f } END { printf "%d\n", kib }' \
   >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib"
-echo "Try Omarchy installs $(( $(<"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib") / 1048576 )) GiB."
+echo "Try Omarchy installs $(( $(<"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib") / 1024 )) MiB."
 
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
