@@ -1,0 +1,83 @@
+#!/bin/bash
+#
+# Unit tests for omarchy-try-setup — the install/setup worker the dashboard runs.
+# Runs against a sandbox with mount/pacman/systemctl/useradd/passwd/runuser/chown
+# stubbed on PATH; each stub logs its call so the cases assert what ran.
+
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+SETUP="$ROOT/configs/airootfs/usr/local/bin/omarchy-try-setup"
+
+pass() { printf 'ok - %s\n' "$1"; }
+fail() { local d="$1" x="${2:-}"; [[ -n $x ]] && printf '%s\n' "$x" >&2; printf 'not ok - %s\n' "$d" >&2; exit 1; }
+
+work=$(mktemp -d); trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
+stub_dir="$work/stubs"; mkdir -p "$stub_dir"
+for cmd in mount pacman useradd passwd runuser chown; do
+  cat >"$stub_dir/$cmd" <<STUB
+#!/bin/bash
+printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
+[[ \${${cmd^^}_FAIL:-} == 1 ]] && exit 1
+exit 0
+STUB
+done
+cat >"$stub_dir/systemctl" <<'STUB'
+#!/bin/bash
+printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
+exit 0
+STUB
+cat >"$stub_dir/id" <<'STUB'
+#!/bin/bash
+# report the try user as absent so useradd runs
+[[ $* == *try* ]] && exit 1
+exit 0
+STUB
+chmod +x "$stub_dir"/*
+
+new_sandbox() {
+  sandbox=$(mktemp -d "$work/sb.XXXXXX")
+  mkdir -p "$sandbox/usr/share/omarchy-iso" "$sandbox/etc/pacman.d" \
+    "$sandbox/run/archiso/cowspace" "$sandbox/home/try/.config/hypr" "$sandbox/run/omarchy-try"
+  printf 'omarchy omarchy.pkg\nhyprland hyprland.pkg\nchromium chromium.pkg\n' \
+    >"$sandbox/usr/share/omarchy-iso/try-packages"
+  : >"$sandbox/home/try/.config/hypr/bindings.lua"
+  : >"$sandbox/home/try/.config/hypr/autostart.lua"
+  state="$sandbox/run/omarchy-try/state.json"
+  export TEST_LOG="$sandbox/calls.log"; : >"$TEST_LOG"
+}
+run() { PATH="$stub_dir:$PATH" "$SETUP" "$state" "${1:-no}" "$sandbox"; }
+
+# Happy path (no nvidia): every setup step runs and the state file finishes.
+new_sandbox
+run >/dev/null 2>&1 || fail "happy path exits zero"
+grep -q '^mount -o remount,size=50% .*/run/archiso/cowspace$' "$TEST_LOG" || fail "grows the overlay"
+for h in 60-mkinitcpio-remove.hook 80-limine-efi-deploy.hook 90-mkinitcpio-install.hook; do
+  [[ $(readlink "$sandbox/etc/pacman.d/hooks/$h") == /dev/null ]] || fail "masks $h"
+done
+line=$(grep '^pacman ' "$TEST_LOG")
+[[ $line == *"-Sy --needed --noconfirm"* ]] || fail "syncs then installs" "$line"
+for p in limine limine-mkinitcpio-hook limine-snapper-sync snapper; do
+  [[ $line == *"--assume-installed $p"* ]] || fail "assumes $p" "$line"
+done
+[[ $line == *" omarchy hyprland chromium"* ]] || fail "installs the try packages" "$line"
+grep -q '^systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket$' "$TEST_LOG" || fail "stops iwd/networkd"
+grep -q '^systemctl start NetworkManager.service$' "$TEST_LOG" || fail "starts NetworkManager"
+grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
+[[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
+[[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] || fail "masks fcitx5"
+grep -q 'omarchy-try-install' "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
+grep -q '"finished_at": [1-9]' "$state" || fail "marks the state finished"
+grep -q '"total_phases": 3' "$state" || fail "reports 3 phases without nvidia"
+pass "omarchy-try-setup runs every step and finishes the progress state"
+
+# NVIDIA opt-in: a fourth phase is written and setup continues even though the
+# (real) nvidia helper is absent in the sandbox.
+new_sandbox
+run nvidia >/dev/null 2>&1 || fail "nvidia path exits zero"
+grep -q '"total_phases": 4' "$state" || fail "reports 4 phases with nvidia"
+pass "omarchy-try-setup adds an NVIDIA phase when asked"
+
+# Install failure aborts non-zero so the dashboard reports it.
+new_sandbox
+! PACMAN_FAIL=1 run >/dev/null 2>&1 || fail "install failure exits non-zero"
+pass "omarchy-try-setup fails cleanly when the install fails"
