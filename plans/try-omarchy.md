@@ -18,7 +18,7 @@ Resolved against the shipped squashfs listing and the live pacman sync DB (2026-
 
 | | packages | read from stick | lands in RAM |
 |---|---|---|---|
-| Try set (`builder/try.packages`: the desktop, a browser, sound, and what the default bindings and shell call; minus what the live root already has) | ~435 | 0.76 GiB | 2.5 GiB (before zram) |
+| Try set (`builder/try.packages`: the desktop, a browser, sound, and what the default bindings and shell call) | 449 resolved, ~215 not already in the live root | 0.76 GiB | 2.5 GiB (before zram) |
 
 Every one of them is already in the mirror. The list was audited against `omarchy-base.packages` and `omarchy-other.packages` by cost: everything the default `bindings/*.lua`, `omarchy-launch-*`, the Quickshell shell and the bash config exec is in (audio needs `pipewire-pulse`, which nothing in the desktop closure depends on — without it the session is silent); what is not is the heavy, on-demand tier — `nautilus` (+138 packages / 389 MiB, mostly gstreamer/ffmpeg/gvfs), `mpv`, `evince`, `imv`, LibreOffice, Obsidian, the dev toolchain — each one offline `pacman -S` inside the session. The only desktop-adjacent packages *not* in the mirror are `vulkan-nouveau` and `vulkan-swrast`, which `install/hardware/vulkan.sh` does not install either, so they are not part of the product and not part of the try set. Net ISO growth: the scripts in this plan.
 
@@ -82,7 +82,7 @@ tty1 ─ .automated_script.sh
 |---|---|
 | ISO boot to greeter | unchanged |
 | read 0.76 GiB of archives | overlapped with the greeter wait by prefetching the try set first; otherwise 2–8 s on USB 3, ~25 s on USB 2 |
-| `pacman -S` ~435 packages into tmpfs | 8–12 s here, 20–40 s on a laptop |
+| `pacman -S` the ~215 packages the live root lacks into tmpfs | ~8 s here (10 s from T to desktop in QEMU), 20–40 s on a laptop |
 | kept hooks (fontconfig, gdk-pixbuf, glib schemas, mime, desktop-database, sysusers/tmpfiles, ldconfig) | ~5–10 s |
 | NetworkManager start, useradd, theme set | ~2 s |
 | systemd-run session → uwsm → Hyprland on VT7 | ~2–5 s |
