@@ -58,10 +58,15 @@ tty1 ─ .automated_script.sh
       greeter ──── "Install Omarchy" (Return, default) ──────────────┐
         │                                                            │
         └─ "Try Omarchy first" ─▶ omarchy-try                        │
-                                    │ guard RAM, resize cowspace     │
-                                    │ pacman -S <try set> [offline]  │
-                                    │ iwd → NetworkManager           │
-                                    │ useradd try (skel) + theme     │
+                                    │ guard RAM; offer NVIDIA driver │
+                                    │ ┌ omarchy-install-dashboard ──┐│
+                                    │ │ omarchy-try-setup:          ││
+                                    │ │  resize cowspace, install   ││
+                                    │ │  <try set> [offline],       ││
+                                    │ │  [nvidia], NetworkManager,  ││
+                                    │ │  useradd try (skel) + theme ││
+                                    │ │  → logo + progress bar + tips││
+                                    │ └─────────────────────────────┘│
                                     │ systemd-run uwsm → Hyprland    │
                                     │ … session …                    │
                                     │ "Install" stops the unit       │
