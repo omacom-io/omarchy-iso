@@ -104,6 +104,7 @@ grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" |
 grep -q '^passwd -d try$' "$TEST_LOG" || fail "clears the try password"
 [[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
 grep -q 'omarchy-theme-set Tokyo Night' "$TEST_LOG" || fail "sets the theme for the try user"
+grep -q 'omarchy-default-terminal foot' "$TEST_LOG" || fail "sets foot as the try user default terminal"
 grep -q 'o.bind("SUPER + SHIFT + I", "Install Omarchy", "omarchy-try-install")' \
   "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
 grep -q 'o.launch_on_start("omarchy-try-welcome")' \

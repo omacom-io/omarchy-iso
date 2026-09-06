@@ -231,6 +231,13 @@ runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \
   say "Try Omarchy: theme setup failed; continuing with defaults."
 runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || true
 
+# The default terminal binding (Super+Return) goes through xdg-terminal-exec,
+# whose shipped list prefers alacritty — which the try set doesn't include, and
+# which doesn't fall through to foot. Point it at foot, which is installed, so
+# the terminal key works out of the box.
+runuser -u "$try_user" -- env HOME="$home" PATH="/usr/share/omarchy/bin:$PATH" \
+  omarchy-default-terminal foot 2>/dev/null || true
+
 # Point the compositor at the DRM node that actually drives the display, and
 # force software rendering when that node is the firmware framebuffer. Without
 # this, aquamarine on a machine with a second, display-less GPU (an AMD iGPU
