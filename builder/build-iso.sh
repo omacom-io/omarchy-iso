@@ -350,10 +350,11 @@ fi
 resolve_try_packages() {
   local resolve_root=/tmp/omarchy-try-packages
   local -a targets
+  local resolved
 
   rm -rf "$resolve_root"
   mkdir -p "$resolve_root/var/lib/pacman"
-  mapfile -t targets < <(grep -hv '^#\|^$' /builder/try.packages)
+  mapfile -t targets < <(grep -hv '^#\|^$' "${TRY_PACKAGES_LIST:-/builder/try.packages}")
 
   pacman --config "$build_cache_dir/pacman-offline.conf" \
     --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
@@ -362,12 +363,15 @@ resolve_try_packages() {
   # omarchy depends on limine/snapper for the installed system; the live
   # overlay has nowhere to deploy either, so omarchy-try installs with these
   # assumed present. Resolve the same way so the list matches what it installs.
-  pacman --config "$build_cache_dir/pacman-offline.conf" \
+  # Captured before the sort so pacman's status, not sort's, decides (this
+  # script runs without pipefail).
+  resolved=$(pacman --config "$build_cache_dir/pacman-offline.conf" \
     --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
     --noconfirm -S --print --print-format '%n %f' \
     --assume-installed limine --assume-installed limine-mkinitcpio-hook \
     --assume-installed limine-snapper-sync --assume-installed snapper \
-    "${targets[@]}" | sort -u
+    "${targets[@]}") || return 1
+  printf '%s\n' "$resolved" | sort -u
 }
 
 if ! try_packages="$(resolve_try_packages)" || [[ -z $try_packages ]]; then
