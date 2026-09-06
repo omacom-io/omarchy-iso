@@ -46,8 +46,10 @@ chmod +x "$stub_dir"/* "$omarchy_bin"/*
 new_sandbox() {
   sandbox=$(mktemp -d "$work/sb.XXXXXX")
   mkdir -p "$sandbox/sys/class/drm/card1/device"
-  # a card the modprobe "bound": driver -> nvidia, so the readiness check passes
+  # a card the modprobe "bound": driver -> nvidia with a connected panel, so the
+  # readiness check (which requires a connected connector) passes.
   mkdir -p "$sandbox/.drv/nvidia"; ln -sfn "$sandbox/.drv/nvidia" "$sandbox/sys/class/drm/card1/device/driver"
+  mkdir -p "$sandbox/sys/class/drm/card1-DP-1"; echo connected >"$sandbox/sys/class/drm/card1-DP-1/status"
   export TEST_LOG="$sandbox/calls.log"; : >"$TEST_LOG"
 }
 run() { PATH="$stub_dir:$PATH" OMARCHY_PATH="$work/omarchy" "$NV" "$sandbox"; }

@@ -50,12 +50,19 @@ depmod -a 2>/dev/null || true
 modprobe nvidia nvidia_modeset nvidia_uvm nvidia_drm || exit 1
 udevadm settle 2>/dev/null || true
 
-# Confirm the nvidia DRM driver actually bound a card (it evicts simpledrm and
-# takes the panel). Bounded wait for the node to appear.
-for _ in $(seq 1 15); do
+# Wait until the nvidia DRM driver is not just loaded but actually driving a
+# connected panel. Returning the moment the card node merely appears raced the
+# caller's re-detection, which could still see simpledrm as the connected
+# display and keep the low-resolution software fallback. Require a connected
+# connector on the nvidia card so select_display_gpu reliably picks it.
+for _ in $(seq 1 30); do
   for card in "$root"/sys/class/drm/card[0-9]*; do
-    [[ $(basename "$card") =~ ^card[0-9]+$ ]] || continue
-    [[ $(basename "$(readlink -f "$card/device/driver" 2>/dev/null)" 2>/dev/null) == nvidia ]] && exit 0
+    name=$(basename "$card")
+    [[ $name =~ ^card[0-9]+$ ]] || continue
+    [[ $(basename "$(readlink -f "$card/device/driver" 2>/dev/null)" 2>/dev/null) == nvidia ]] || continue
+    for st in "$card"-*/status; do
+      [[ -e $st && $(cat "$st" 2>/dev/null) == connected ]] && exit 0
+    done
   done
   sleep 1
 done
