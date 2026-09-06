@@ -24,7 +24,6 @@ root=${3:-}
 
 try_user=try
 try_packages=$root/usr/share/omarchy-iso/try-packages
-try_installed_kib=$root/usr/share/omarchy-iso/try-installed-kib
 hooks_dir=$root/etc/pacman.d/hooks
 cowspace=$root/run/archiso/cowspace
 sudoers=$root/etc/sudoers.d/$try_user
@@ -67,10 +66,15 @@ phase "$idx" "Preparing the live desktop"
 mapfile -t packages < <(awk '{ print $1 }' "$try_packages")
 mount -o remount,size=50% "$cowspace" || fail "could not grow the live overlay"
 
-# The overlay is a tmpfs capped at half of RAM; the whole try set has to fit it
-# with room for the session to run. Say how far short a machine is rather than
-# letting pacman fail mid-transaction on a full overlay.
-need_kib=$(( $(<"$try_installed_kib") * 5 / 4 ))
+# The overlay is a tmpfs capped at half of RAM; what the try set still has to
+# add to it (the list carries each package's installed size, and a second try
+# in the same boot finds most of it already there) has to fit with room for
+# the session to run. Say how far short a machine is rather than letting
+# pacman fail mid-transaction on a full overlay.
+need_kib=$(awk -v have="$(pacman -Qq | tr '\n' ' ')" \
+  'BEGIN { n = split(have, a, " "); for (i = 1; i <= n; i++) present[a[i]] = 1 }
+   !($1 in present) { kib += $3 }
+   END { print int((kib + 0) * 5 / 4) }' "$try_packages")
 avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
 (( avail_kib >= need_kib )) ||
   fail "the live overlay has $(( avail_kib / 1024 )) MiB free; the desktop needs $(( need_kib / 1024 )) MiB"

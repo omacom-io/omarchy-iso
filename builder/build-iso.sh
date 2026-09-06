@@ -371,7 +371,17 @@ resolve_try_packages() {
     --assume-installed limine --assume-installed limine-mkinitcpio-hook \
     --assume-installed limine-snapper-sync --assume-installed snapper \
     "${targets[@]}") || return 1
-  printf '%s\n' "$resolved" | sort -u
+  resolved=$(printf '%s\n' "$resolved" | sort -u)
+
+  # Each package's installed size in KiB as a third column: omarchy-try-setup
+  # sums the ones not yet installed to check the overlay can hold them, so a
+  # second try in the same boot (set already in place) is not refused.
+  local sizes
+  sizes=$(pacman --config "$build_cache_dir/pacman-offline.conf" \
+    --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
+    -Si $(printf '%s\n' "$resolved" | awk '{ print $1 }') 2>/dev/null |
+    awk -F': +' '/^Name/ { n = $2 } /^Installed Size/ { split($2, a, " "); f = (a[2] == "KiB") ? 1 : (a[2] == "GiB") ? 1048576 : 1024; printf "%s %d\n", n, a[1] * f }') || return 1
+  awk 'NR == FNR { kib[$1] = $2; next } { print $1, $2, kib[$1] + 0 }' <(printf '%s\n' "$sizes") <(printf '%s\n' "$resolved")
 }
 
 if ! try_packages="$(resolve_try_packages)" || [[ -z $try_packages ]]; then
@@ -382,14 +392,7 @@ fi
 printf '%s\n' "$try_packages" >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-packages"
 echo "Try Omarchy resolves to $(printf '%s\n' "$try_packages" | grep -c .) packages."
 
-# The set's installed size, so omarchy-try-setup can refuse an overlay that
-# cannot hold it before pacman fails halfway through.
-pacman --config "$build_cache_dir/pacman-offline.conf" \
-  --root /tmp/omarchy-try-packages --dbpath /tmp/omarchy-try-packages/var/lib/pacman \
-  -Si $(printf '%s\n' "$try_packages" | awk '{ print $1 }') 2>/dev/null |
-  awk -F': +' '/^Installed Size/ { split($2, a, " "); f = (a[2] == "KiB") ? 1 : (a[2] == "GiB") ? 1048576 : 1024; kib += a[1] * f } END { printf "%d\n", kib }' \
-  >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib"
-echo "Try Omarchy installs $(( $(<"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib") / 1024 )) MiB."
+echo "Try Omarchy installs $(( $(printf '%s\n' "$try_packages" | awk '{ kib += $3 } END { print kib + 0 }') / 1024 )) MiB."
 
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"

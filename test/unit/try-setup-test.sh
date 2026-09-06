@@ -13,7 +13,20 @@ fail() { local d="$1" x="${2:-}"; [[ -n $x ]] && printf '%s\n' "$x" >&2; printf 
 
 work=$(mktemp -d); trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 stub_dir="$work/stubs"; mkdir -p "$stub_dir"
-for cmd in mount pacman passwd runuser chown; do
+# pacman remembers what -S installed and answers -Qq from that, so a second run
+# sees the set already present the way a second T in the same boot does.
+cat >"$stub_dir/pacman" <<'STUB'
+#!/bin/bash
+printf 'pacman %s\n' "$*" >>"$TEST_LOG"
+[[ ${PACMAN_FAIL:-} == 1 ]] && exit 1
+installed="${TEST_LOG%/*}/.installed"
+case $1 in
+  -Qq) cat "$installed" 2>/dev/null; exit 0 ;;
+  -S|-Sy) for a in "$@"; do [[ $a == -* || $a == limine* || $a == snapper ]] || echo "$a" >>"$installed"; done ;;
+esac
+exit 0
+STUB
+for cmd in mount passwd runuser chown; do
   cat >"$stub_dir/$cmd" <<STUB
 #!/bin/bash
 printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
@@ -65,9 +78,9 @@ new_sandbox() {
   sandbox=$(mktemp -d "$work/sb.XXXXXX")
   mkdir -p "$sandbox/usr/share/omarchy-iso" "$sandbox/etc/pacman.d" \
     "$sandbox/run/archiso/cowspace" "$sandbox/home/try/.config/hypr" "$sandbox/run/omarchy-try"
-  printf 'omarchy omarchy.pkg\nhyprland hyprland.pkg\nchromium chromium.pkg\n' \
+  # name, archive, installed KiB — the three columns build-iso.sh writes
+  printf 'omarchy omarchy.pkg 1048576\nhyprland hyprland.pkg 1048576\nchromium chromium.pkg 524288\n' \
     >"$sandbox/usr/share/omarchy-iso/try-packages"
-  printf '2631680\n' >"$sandbox/usr/share/omarchy-iso/try-installed-kib" # 2.51 GiB
   : >"$sandbox/home/try/.config/hypr/bindings.lua"
   : >"$sandbox/home/try/.config/hypr/autostart.lua"
   state="$sandbox/run/omarchy-try/state.json"
@@ -98,6 +111,7 @@ gen_at=$(grep -n '^pacman -Sy --needed --noconfirm zram-generator$' "$TEST_LOG" 
 set_at=$(grep -n '^pacman -S --needed' "$TEST_LOG" | cut -d: -f1)
 (( gen_at < zram_at && zram_at < set_at )) || fail "installs the generator, starts zram, then installs the set" "$(<"$TEST_LOG")"
 grep -q '^df -k --output=avail .*/run/archiso/cowspace$' "$TEST_LOG" || fail "checks the overlay's capacity"
+grep -q '^pacman -Qq$' "$TEST_LOG" || fail "asks pacman what is already installed"
 grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is up"
 grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
 grep -q '^chown -R try:try .*/home/try$' "$TEST_LOG" || fail "hands the seeded home to the try user"
@@ -128,7 +142,9 @@ new_sandbox
 mkdir -p "$sandbox/var/lib/pacman"; : >"$sandbox/var/lib/pacman/db.lck"
 run >/dev/null 2>&1 || fail "first run exits zero"
 [[ ! -e $sandbox/var/lib/pacman/db.lck ]] || fail "clears a stale pacman lock before installing"
-run >/dev/null 2>&1 || fail "second run exits zero"
+# The set now occupies the overlay; free space is below the set's size but
+# nothing needs installing, so the capacity check must let this through.
+COWSPACE_AVAIL_KIB=1400000 run >/dev/null 2>"$sandbox/err2" || fail "second run exits zero" "$(<"$sandbox/err2")"
 (( $(grep -c useradd "$TEST_LOG") == 1 )) || fail "does not recreate the user"
 (( $(grep -c omarchy-try-install "$sandbox/home/try/.config/hypr/bindings.lua") == 1 )) || fail "appends the install binding once" "$(<"$sandbox/home/try/.config/hypr/bindings.lua")"
 (( $(grep -c omarchy-try-welcome "$sandbox/home/try/.config/hypr/autostart.lua") == 1 )) || fail "appends the welcome autostart once"

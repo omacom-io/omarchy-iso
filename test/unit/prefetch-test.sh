@@ -25,7 +25,7 @@ head -c 5120 /dev/zero >"$work/mirror/big-1-x86_64.pkg.tar.zst"
 head -c 3072 /dev/zero >"$work/mirror/try-a-1-x86_64.pkg.tar.zst"
 head -c 2048 /dev/zero >"$work/mirror/try-b-1-x86_64.pkg.tar.zst"
 head -c 1024 /dev/zero >"$work/mirror/small-1-x86_64.pkg.tar.zst"
-printf 'try-a try-a-1-x86_64.pkg.tar.zst\ntry-b try-b-1-x86_64.pkg.tar.zst\n' >"$work/try-packages"
+printf 'try-a try-a-1-x86_64.pkg.tar.zst 3\ntry-b try-b-1-x86_64.pkg.tar.zst 2\n' >"$work/try-packages"
 printf 'MemAvailable:   4000000 kB\n' >"$work/meminfo"
 export TEST_LOG="$work/reads.log"; : >"$TEST_LOG"
 

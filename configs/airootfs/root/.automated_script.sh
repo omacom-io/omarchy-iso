@@ -83,7 +83,7 @@ warm_offline_mirror() {
   # The try set first: it is what "Try Omarchy" reads seconds after the greeter
   # appears, and it is small enough to always fit the budget.
   if [[ -f $try_list ]]; then
-    while read -r _ file; do
+    while read -r _ file _; do
       path=$mirror/$file
       [[ -f $path ]] || continue
       size_kb=$(du -k "$path" | cut -f1)

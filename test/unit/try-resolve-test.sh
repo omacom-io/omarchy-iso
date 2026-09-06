@@ -29,6 +29,12 @@ for a in "$@"; do
   esac
   targets+=("$a")
 done
+if [[ " $* " == *" -Si "* ]]; then # sizes for the resolved names, in the units pacman uses
+  for t in "${targets[@]}"; do
+    printf 'Name            : %s\nInstalled Size  : %s\n\n' "$t" "$([[ $t == glibc ]] && echo '40.00 MiB' || echo '512.00 KiB')"
+  done
+  exit 0
+fi
 for t in "${targets[@]}"; do
   [[ $t == missing ]] && { echo "error: target not found: $t" >&2; exit 1; }
   printf '%s %s-1-1-x86_64.pkg.tar.zst\n' "$t" "$t"
@@ -44,8 +50,8 @@ build_cache_dir="$work/cache"
 
 printf '# the desktop\nomarchy\n\nfoot\n' >"$work/try.packages"
 out=$(PATH="$work/stubs:$PATH" TRY_PACKAGES_LIST="$work/try.packages" resolve_try_packages) || fail "resolves a valid list"
-[[ $out == $'foot foot-1-1-x86_64.pkg.tar.zst\nglibc glibc-2-1-x86_64.pkg.tar.zst\nomarchy omarchy-1-1-x86_64.pkg.tar.zst' ]] \
-  || fail "emits sorted, de-duplicated 'name file' lines, comments and blanks skipped" "$out"
+[[ $out == $'foot foot-1-1-x86_64.pkg.tar.zst 512\nglibc glibc-2-1-x86_64.pkg.tar.zst 40960\nomarchy omarchy-1-1-x86_64.pkg.tar.zst 512' ]] \
+  || fail "emits sorted, de-duplicated 'name file kib' lines, comments and blanks skipped" "$out"
 line=$(grep -- '--print' "$TEST_LOG")
 for p in limine limine-mkinitcpio-hook limine-snapper-sync snapper; do
   [[ $line == *"--assume-installed $p"* ]] || fail "assumes $p, as omarchy-try-setup does" "$line"
