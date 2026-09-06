@@ -61,6 +61,16 @@ new_sandbox
 ! SETUP_RC=1 run >/dev/null 2>&1 || fail "setup failure exits non-zero"
 pass "propagates a setup failure"
 
+# cleanup() promises the installer the environment it booted into: every unit
+# omarchy-try-setup starts for the session (zram aside — swap is harmless and
+# swapoff would only pull the overlay back into RAM) must be stopped here.
+SETUP="$ROOT/configs/airootfs/usr/local/bin/omarchy-try-setup"
+stops=$(sed -n '/^cleanup() {/,/^}/p' "$TRY" | grep 'systemctl stop')
+for unit in $(grep -oE '^systemctl start [^|&]*' "$SETUP" | cut -d' ' -f3- | tr ' ' '\n' | grep -v zram | sort -u); do
+  grep -q -- "$unit" <<<"$stops" || fail "cleanup stops $unit" "$stops"
+done
+pass "cleanup stops every service the setup started"
+
 # --- GPU selection helpers, sourced against sysfs fixtures -------------------
 eval "$(sed -n '/^is_firmware_fb() {/,/^}/p' "$TRY")"
 eval "$(sed -n '/^select_display_gpu() {/,/^}/p' "$TRY")"

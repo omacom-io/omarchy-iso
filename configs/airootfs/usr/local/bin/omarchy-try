@@ -98,7 +98,9 @@ display_gpu_name() {
 }
 
 # Ask, on the greeter's console, whether to set the NVIDIA driver up now (native,
-# accelerated) or take the quick software preview. Returns 0 for the driver.
+# accelerated) or take the quick software preview. Returns 0 for the driver, 1
+# for the preview, 2 when the user backed out (Esc / Ctrl+C) — which is not a
+# choice of the preview.
 offer_nvidia() {
   local choice rows pad
   # Vertically center the menu the way the greeter centers its welcome, rather
@@ -110,18 +112,20 @@ offer_nvidia() {
     --header "Your display is on an NVIDIA GPU. The full experience needs its driver." \
     "Set up the NVIDIA driver now (~2 minutes, from the USB stick)" \
     "Skip — quick software preview (lower resolution)" \
-    </dev/tty 2>/dev/tty) || { printf '\033[?25h' >/dev/tty 2>/dev/null; return 1; }
+    </dev/tty 2>/dev/tty) || { printf '\033[?25h' >/dev/tty 2>/dev/null; return 2; }
   printf '\033[?25h' >/dev/tty 2>/dev/null
   [[ $choice == Set* ]]
 }
 
 # The installer expects the environment it booted into, so restore it on the way
-# out (omarchy-try-setup swapped iwd/networkd for NetworkManager), stop any
-# session unit, and bring the greeter's VT back.
+# out: stop any session unit, bring the greeter's VT back, stop every daemon
+# omarchy-try-setup started for the session (zram stays — swapoff would only
+# pull the overlay back into RAM), and put iwd/networkd back in NetworkManager's
+# place.
 cleanup() {
   systemctl stop "$session_unit.service" 2>/dev/null
   chvt 1 2>/dev/null
-  systemctl stop NetworkManager.service 2>/dev/null
+  systemctl stop bluetooth.service power-profiles-daemon.service NetworkManager.service 2>/dev/null
   systemctl start systemd-networkd.socket systemd-networkd.service iwd.service 2>/dev/null
 }
 
@@ -131,14 +135,19 @@ mem_kib=$(awk '/^MemTotal:/ { print $2 }' "$meminfo" 2>/dev/null)
   refuse "needs at least 8 GiB of memory to run the desktop from the USB stick; this machine has $(( ${mem_kib:-0} / 1024 )) MiB."
 [[ -s $try_packages ]] || refuse "this medium carries no try package list."
 
-# The installer's mirror prefetch is competing for memory and the medium; stop it.
-[[ -n ${OMARCHY_PREFETCH_PID:-} ]] && kill "$OMARCHY_PREFETCH_PID" 2>/dev/null
-
 # --- The one interactive step: offer NVIDIA before the dashboard owns the TTY -
 want_nvidia=no
-if [[ -z $root ]] && select_display_gpu && (( TRY_SOFTWARE )) && nvidia_pci_present && offer_nvidia; then
-  want_nvidia=nvidia
+if [[ -z $root ]] && select_display_gpu && (( TRY_SOFTWARE )) && nvidia_pci_present; then
+  offer_nvidia
+  case $? in
+    0) want_nvidia=nvidia ;;
+    2) exit 0 ;; # backed out: straight back to the greeter, nothing touched
+  esac
 fi
+
+# The installer's mirror prefetch is competing for memory and the medium; stop it
+# only now that the user has committed to a try session.
+[[ -n ${OMARCHY_PREFETCH_PID:-} ]] && kill "$OMARCHY_PREFETCH_PID" 2>/dev/null
 
 # Only the real run touches system state, so only it needs the restore trap.
 [[ -z $root ]] && trap cleanup EXIT
