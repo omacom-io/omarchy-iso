@@ -133,6 +133,15 @@ cat >>"$home/.config/hypr/autostart.lua" <<'LUA'
 -- Try Omarchy: one notification saying what this session is.
 o.launch_on_start("omarchy-try-welcome")
 LUA
+
+# Omarchy enables an input-method service (fcitx5) for every user, but its
+# binary is outside the minimal try set, so left alone it crash-loops in the
+# session for the whole visit. Mask it for the try user — compose-key input is
+# not something a look-and-feel session needs. A /dev/null symlink in the user
+# unit dir is exactly what `systemctl --user mask` writes.
+mkdir -p "$home/.config/systemd/user"
+ln -sfn /dev/null "$home/.config/systemd/user/omarchy-fcitx5.service"
+
 id "$try_user" &>/dev/null && chown -R "$try_user:$try_user" "$home"
 
 runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \

@@ -108,6 +108,8 @@ grep -q 'o.bind("SUPER + SHIFT + I", "Install Omarchy", "omarchy-try-install")' 
   "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
 grep -q 'o.launch_on_start("omarchy-try-welcome")' \
   "$sandbox/home/try/.config/hypr/autostart.lua" || fail "adds the welcome autostart"
+[[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] \
+  || fail "masks the fcitx5 service that would otherwise crash-loop"
 session_line=$(grep '^systemd-run ' "$TEST_LOG")
 [[ $session_line == *"--unit=omarchy-try-session"* ]] || fail "names the session unit" "$session_line"
 [[ $session_line == *"--uid=try"* ]] || fail "runs the session as the try user" "$session_line"
