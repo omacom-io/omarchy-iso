@@ -105,6 +105,7 @@ installer_network() {
 # Undo in reverse regardless of how we leave.
 cleanup() {
   systemctl stop "$session_unit.service" 2>/dev/null
+  chvt 1 2>/dev/null
   installer_network
 }
 
@@ -139,10 +140,21 @@ runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \
   say "Try Omarchy: theme setup failed; continuing with defaults."
 runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || true
 
-# Start the desktop as the try user in its own logind session on a dedicated
-# VT. PAMName=login gives it a real seat (uwsm and Hyprland need one); the unit
-# name is fixed so omarchy-try-install can stop it by name from inside the
-# session. The session file is the same one SDDM would have launched.
+# Bring the session's VT to the foreground BEFORE starting the session. This is
+# load-bearing, not cosmetic: libseat's logind backend only hands input devices
+# to the session that owns the active VT. If the compositor initializes while
+# the greeter's VT1 is still in front, logind reports the session inactive,
+# libinput refuses every device ("not using input device …"), and the desktop
+# comes up with a frozen mouse and dead keyboard even though it renders fine.
+# Switching first — the way SDDM and greetd allocate and switch to their VT —
+# makes the session active from birth, so input attaches. cleanup returns to
+# VT1 on every exit path, including the refuse below.
+chvt "$session_vt" 2>/dev/null
+
+# Start the desktop as the try user in its own logind session on that VT.
+# PAMName=login gives it a real seat (uwsm and Hyprland need one); the unit name
+# is fixed so omarchy-try-install can stop it by name from inside the session.
+# The session file is the same one SDDM would have launched.
 systemctl reset-failed "$session_unit.service" 2>/dev/null
 systemd-run --unit="$session_unit" --collect --quiet \
   --uid="$try_user" --gid="$try_user" \
@@ -154,10 +166,10 @@ systemd-run --unit="$session_unit" --collect --quiet \
   /usr/bin/uwsm start -g -1 -e -D Hyprland hyprland.desktop ||
   refuse "could not start the desktop session."
 
-# Bring the session's VT to the foreground once its compositor is up, and tell a
-# serial console (the QEMU harness) the same moment. Bounded so a machine where
-# the compositor never comes up still falls through to the cleanup below rather
-# than hanging on the greeter. Skipped in the test sandbox (no real session).
+# Tell a serial console (the QEMU harness) when the compositor is up. Bounded so
+# a machine where the compositor never comes up still falls through to the
+# cleanup below rather than hanging on the greeter. Skipped in the test sandbox
+# (no real session ever appears there).
 if [[ -z $root ]]; then
   uid=$(id -u "$try_user" 2>/dev/null || echo 1000)
   for _ in $(seq 1 60); do
@@ -165,10 +177,7 @@ if [[ -z $root ]]; then
     systemctl is-active --quiet "$session_unit.service" || break
     sleep 1
   done
-  if [[ -d /run/user/$uid/hypr ]]; then
-    chvt "$session_vt" 2>/dev/null
-    echo OMARCHY_TRY_SESSION_UP >/dev/ttyS0 2>/dev/null
-  fi
+  [[ -d /run/user/$uid/hypr ]] && echo OMARCHY_TRY_SESSION_UP >/dev/ttyS0 2>/dev/null
 fi
 
 # The session lives as long as its unit; omarchy-try-install stops it.

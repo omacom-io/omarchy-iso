@@ -113,6 +113,9 @@ session_line=$(grep '^systemd-run ' "$TEST_LOG")
 [[ $session_line == *"--uid=try"* ]] || fail "runs the session as the try user" "$session_line"
 [[ $session_line == *"PAMName=login"* ]] || fail "gives the session a login seat" "$session_line"
 [[ $session_line == *"uwsm start"*"Hyprland"* ]] || fail "launches the Hyprland session" "$session_line"
+grep -q '^chvt 7$' "$TEST_LOG" || fail "switches to the session VT"
+awk '/^chvt 7$/{c=NR} /^systemd-run /{s=NR} END{exit !(c && s && c<s)}' "$TEST_LOG" \
+  || fail "activates the session VT before starting the session (else libinput gets no devices)" "$(<"$TEST_LOG")"
 pass "prepares the user and starts the session"
 
 # Order: network switched and sddm started only after pacman succeeded; network
