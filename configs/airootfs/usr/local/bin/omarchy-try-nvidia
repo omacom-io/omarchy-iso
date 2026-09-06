@@ -58,7 +58,7 @@ udevadm settle 2>/dev/null || true
 # caller's re-detection, which could still see simpledrm as the connected
 # display and keep the low-resolution software fallback. Require a connected
 # connector on the nvidia card so select_display_gpu reliably picks it.
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "${TRY_NVIDIA_RETRIES:-30}"); do
   for card in "$root"/sys/class/drm/card[0-9]*; do
     name=$(basename "$card")
     [[ $name =~ ^card[0-9]+$ ]] || continue

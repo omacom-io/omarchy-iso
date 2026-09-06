@@ -78,3 +78,18 @@ pass "omarchy-try-nvidia picks the 580xx driver for a pre-GSP card"
 new_sandbox; export GSP=1 PACMAN_FAIL=1
 ! run >/dev/null 2>&1 || fail "install failure exits non-zero"
 pass "omarchy-try-nvidia fails cleanly when the driver install fails"
+
+# The readiness loop is the guard that decides between the accelerated session
+# and the software fallback; it has to fail when the driver never drives a
+# panel — the real-hardware case where nvidia_drm silently did not load.
+new_sandbox; export GSP=1; unset PACMAN_FAIL
+rm "$sandbox/sys/class/drm/card1/device/driver"; mkdir -p "$sandbox/.drv/amdgpu"
+ln -sfn "$sandbox/.drv/amdgpu" "$sandbox/sys/class/drm/card1/device/driver"
+! TRY_NVIDIA_RETRIES=2 run >/dev/null 2>&1 || fail "no nvidia card: exits non-zero"
+grep -q '^modprobe -a nvidia' "$TEST_LOG" || fail "no nvidia card: still tried to load the driver"
+pass "omarchy-try-nvidia fails when no card ends up on the nvidia driver"
+
+new_sandbox; export GSP=1; unset PACMAN_FAIL
+echo disconnected >"$sandbox/sys/class/drm/card1-DP-1/status"
+! TRY_NVIDIA_RETRIES=2 run >/dev/null 2>&1 || fail "no connected panel: exits non-zero"
+pass "omarchy-try-nvidia fails when the nvidia card drives no connected panel"
