@@ -88,7 +88,7 @@ done
 pass "grows the overlay and masks the boot-image hooks"
 
 pacman_line=$(grep '^pacman ' "$TEST_LOG")
-[[ $pacman_line == *"-S --needed --noconfirm"* ]] || fail "pacman installs non-interactively" "$pacman_line"
+[[ $pacman_line == *"-Sy --needed --noconfirm"* ]] || fail "pacman syncs the offline db, then installs non-interactively" "$pacman_line"
 for pkg in limine limine-mkinitcpio-hook limine-snapper-sync snapper; do
   [[ $pacman_line == *"--assume-installed $pkg"* ]] || fail "assumes $pkg installed" "$pacman_line"
 done

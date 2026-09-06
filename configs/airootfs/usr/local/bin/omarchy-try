@@ -72,8 +72,12 @@ for pkg in "${assume_installed[@]}"; do
   assume+=(--assume-installed "$pkg")
 done
 
+# -Sy, not -S: mkarchiso empties /var/lib/pacman/sync when it builds the live
+# root, so the [offline] database has to be read off the medium first. The
+# live pacman.conf carries only [offline] (a file:// path), so this touches no
+# network and cannot mix in newer packages than the mirror was built from.
 say "Installing the Omarchy desktop from the USB stick. Nothing is written to your disk."
-pacman -S --needed --noconfirm "${assume[@]}" "${packages[@]}" ||
+pacman -Sy --needed --noconfirm "${assume[@]}" "${packages[@]}" ||
   refuse "installing the desktop packages failed; see above."
 
 # --- Everything below can undo itself. -----------------------------------
