@@ -13,7 +13,7 @@ fail() { local d="$1" x="${2:-}"; [[ -n $x ]] && printf '%s\n' "$x" >&2; printf 
 
 work=$(mktemp -d); trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 stub_dir="$work/stubs"; mkdir -p "$stub_dir"
-for cmd in mount pacman useradd passwd runuser chown; do
+for cmd in mount pacman passwd runuser chown; do
   cat >"$stub_dir/$cmd" <<STUB
 #!/bin/bash
 printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
@@ -30,6 +30,7 @@ STUB
 cat >"$stub_dir/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
+[[ -n ${SYSTEMCTL_FAIL_ON:-} && $* == "$SYSTEMCTL_FAIL_ON" ]] && exit 1
 exit 0
 STUB
 # Network is "up" unless a case says otherwise; tzupdate only logs.
@@ -44,10 +45,18 @@ cat >"$stub_dir/tzupdate" <<'STUB'
 printf 'tzupdate %s\n' "$*" >>"$TEST_LOG"
 exit 0
 STUB
+# useradd records that it ran; id reports the user present only after that, so
+# a second run in the same sandbox takes the user-exists path like a second T.
+cat >"$stub_dir/useradd" <<'STUB'
+#!/bin/bash
+printf 'useradd %s\n' "$*" >>"$TEST_LOG"
+[[ ${USERADD_FAIL:-} == 1 ]] && exit 1
+touch "${TEST_LOG%/*}/.useradd-ran"
+exit 0
+STUB
 cat >"$stub_dir/id" <<'STUB'
 #!/bin/bash
-# report the try user as absent so useradd runs
-[[ $* == *try* ]] && exit 1
+[[ $* == *try* && ! -e ${TEST_LOG%/*}/.useradd-ran ]] && exit 1
 exit 0
 STUB
 chmod +x "$stub_dir"/*
@@ -91,6 +100,7 @@ set_at=$(grep -n '^pacman -S --needed' "$TEST_LOG" | cut -d: -f1)
 grep -q '^df -k --output=avail .*/run/archiso/cowspace$' "$TEST_LOG" || fail "checks the overlay's capacity"
 grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is up"
 grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
+grep -q '^chown -R try:try .*/home/try$' "$TEST_LOG" || fail "hands the seeded home to the try user"
 [[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
 [[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] || fail "masks fcitx5"
 grep -q 'omarchy-try-install' "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
@@ -111,6 +121,24 @@ new_sandbox
 ! grep -q '^pacman -S --needed' "$TEST_LOG" || fail "too-small overlay never reaches the install"
 grep -qE 'GiB' "$sandbox/err" || fail "too-small overlay says how much is missing" "$(<"$sandbox/err")"
 pass "omarchy-try-setup refuses an overlay too small for the try set"
+
+# A second T in the same boot: the user exists, the dotfiles are already seeded,
+# and a Ctrl+C in the first attempt may have left pacman's lock behind.
+new_sandbox
+mkdir -p "$sandbox/var/lib/pacman"; : >"$sandbox/var/lib/pacman/db.lck"
+run >/dev/null 2>&1 || fail "first run exits zero"
+[[ ! -e $sandbox/var/lib/pacman/db.lck ]] || fail "clears a stale pacman lock before installing"
+run >/dev/null 2>&1 || fail "second run exits zero"
+(( $(grep -c useradd "$TEST_LOG") == 1 )) || fail "does not recreate the user"
+(( $(grep -c omarchy-try-install "$sandbox/home/try/.config/hypr/bindings.lua") == 1 )) || fail "appends the install binding once" "$(<"$sandbox/home/try/.config/hypr/bindings.lua")"
+(( $(grep -c omarchy-try-welcome "$sandbox/home/try/.config/hypr/autostart.lua") == 1 )) || fail "appends the welcome autostart once"
+pass "omarchy-try-setup is safe to run twice"
+
+# The session needs NetworkManager; a failed start is a failed setup, not "Ready".
+new_sandbox
+! SYSTEMCTL_FAIL_ON='start NetworkManager.service' run >/dev/null 2>&1 || fail "NetworkManager failure exits non-zero"
+! grep -q '"finished_at": [1-9]' "$state" || fail "NetworkManager failure does not mark the state finished"
+pass "omarchy-try-setup fails when NetworkManager cannot start"
 
 # No network yet: the timezone step is skipped rather than waited for.
 new_sandbox

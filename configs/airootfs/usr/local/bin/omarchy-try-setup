@@ -80,6 +80,11 @@ avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
 # the live root) ships the zram config an installed system runs, so once the
 # generator is installed a daemon-reload is all it needs. -Sy: the live sync db
 # is empty (mkarchiso clears it); the only repo is the offline file:// mirror.
+# A Ctrl+C in an earlier attempt can leave pacman's lock behind; nothing else
+# runs pacman on this console before the installer, so a lock with no pacman
+# alive is stale.
+lock=$root/var/lib/pacman/db.lck
+[[ -e $lock ]] && ! pgrep -x pacman >/dev/null && rm -f "$lock"
 pacman -Sy --needed --noconfirm zram-generator || fail "could not install zram-generator"
 systemctl daemon-reload
 systemctl start systemd-zram-setup@zram0.service ||
@@ -102,8 +107,8 @@ fi
 idx=$((idx + 1))
 phase "$idx" "Setting up your session"
 # Omarchy's shell drives NetworkManager; the live root boots iwd/networkd.
-systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket
-systemctl start NetworkManager.service
+systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket || true
+systemctl start NetworkManager.service || fail "could not start NetworkManager"
 # The other daemons the shell talks to, which an installed system enables.
 systemctl start bluetooth.service power-profiles-daemon.service || true
 
@@ -122,14 +127,16 @@ mkdir -p "${sudoers%/*}"
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$try_user" >"$sudoers"
 chmod 440 "$sudoers"
 
-# Seed the try user's extras on top of /etc/skel (which useradd copied).
+# Seed the try user's extras on top of /etc/skel (which useradd copied). The
+# greeter re-runs all of this on every T, so each append is guarded by its own
+# marker.
 mkdir -p "$home/.config/hypr" "$home/.config/systemd/user"
-cat >>"$home/.config/hypr/bindings.lua" <<'LUA'
+grep -qs omarchy-try-install "$home/.config/hypr/bindings.lua" || cat >>"$home/.config/hypr/bindings.lua" <<'LUA'
 
 -- Try Omarchy: end this session and start the installer.
 o.bind("SUPER + SHIFT + I", "Install Omarchy", "omarchy-try-install")
 LUA
-cat >>"$home/.config/hypr/autostart.lua" <<'LUA'
+grep -qs omarchy-try-welcome "$home/.config/hypr/autostart.lua" || cat >>"$home/.config/hypr/autostart.lua" <<'LUA'
 
 -- Try Omarchy: one notification saying what this session is.
 o.launch_on_start("omarchy-try-welcome")
