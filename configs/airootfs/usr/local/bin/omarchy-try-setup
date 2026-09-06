@@ -86,6 +86,22 @@ phase "$idx" "Setting up your session"
 # Omarchy's shell drives NetworkManager; the live root boots iwd/networkd.
 systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket
 systemctl start NetworkManager.service
+# The other daemons the shell talks to, which an installed system enables.
+systemctl start bluetooth.service power-profiles-daemon.service || true
+
+# Compressed swap so the overlay's pages can be reclaimed on a small machine.
+# zram-generator was just installed; the live root already carries the same
+# zram config an installed system runs (omarchy-settings ships it).
+systemctl daemon-reload
+systemctl start systemd-zram-setup@zram0.service ||
+  echo "omarchy-try-setup: no zram; the desktop runs without compressed swap." >&2
+
+# The bar's clock should read local time — the installed system asks tzupdate
+# the same question. Only when the network is already up; never wait for a
+# wifi network that isn't configured yet.
+if nm-online -q -t 4 2>/dev/null; then
+  timeout 15 tzupdate >/dev/null 2>&1 || true
+fi
 
 if ! id "$try_user" &>/dev/null; then
   useradd -m -G wheel,video,input,audio -s /bin/bash "$try_user" || fail "could not create the try user"

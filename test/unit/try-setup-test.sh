@@ -26,6 +26,18 @@ cat >"$stub_dir/systemctl" <<'STUB'
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
 exit 0
 STUB
+# Network is "up" unless a case says otherwise; tzupdate only logs.
+cat >"$stub_dir/nm-online" <<'STUB'
+#!/bin/bash
+printf 'nm-online %s\n' "$*" >>"$TEST_LOG"
+[[ ${OFFLINE:-} == 1 ]] && exit 1
+exit 0
+STUB
+cat >"$stub_dir/tzupdate" <<'STUB'
+#!/bin/bash
+printf 'tzupdate %s\n' "$*" >>"$TEST_LOG"
+exit 0
+STUB
 cat >"$stub_dir/id" <<'STUB'
 #!/bin/bash
 # report the try user as absent so useradd runs
@@ -62,6 +74,10 @@ done
 [[ $line == *" omarchy hyprland chromium"* ]] || fail "installs the try packages" "$line"
 grep -q '^systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket$' "$TEST_LOG" || fail "stops iwd/networkd"
 grep -q '^systemctl start NetworkManager.service$' "$TEST_LOG" || fail "starts NetworkManager"
+grep -q '^systemctl start bluetooth.service power-profiles-daemon.service$' "$TEST_LOG" || fail "starts the shell's daemons"
+grep -q '^systemctl daemon-reload$' "$TEST_LOG" || fail "reloads so the zram generator runs"
+grep -q '^systemctl start systemd-zram-setup@zram0.service$' "$TEST_LOG" || fail "starts zram"
+grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is up"
 grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
 [[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
 [[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] || fail "masks fcitx5"
@@ -76,6 +92,13 @@ new_sandbox
 run nvidia >/dev/null 2>&1 || fail "nvidia path exits zero"
 grep -q '"total_phases": 4' "$state" || fail "reports 4 phases with nvidia"
 pass "omarchy-try-setup adds an NVIDIA phase when asked"
+
+# No network yet: the timezone step is skipped rather than waited for.
+new_sandbox
+OFFLINE=1 run >/dev/null 2>&1 || fail "offline path exits zero"
+grep -q '^nm-online -q -t 4$' "$TEST_LOG" || fail "asks NetworkManager with a short bound"
+! grep -q '^tzupdate' "$TEST_LOG" || fail "does not run tzupdate offline"
+pass "omarchy-try-setup skips the timezone lookup without a network"
 
 # Install failure aborts non-zero so the dashboard reports it.
 new_sandbox
