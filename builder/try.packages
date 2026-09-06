@@ -1,0 +1,13 @@
+# Packages "Try Omarchy" installs into the live overlay from the offline
+# mirror. Everything here must already be in the mirror (it is: all of it is
+# in omarchy-base.packages or its closure), so the list adds no bytes to the
+# ISO. Kept small on purpose — every other Omarchy app is one
+# omarchy-install-app away inside the session, from the same mirror.
+omarchy
+mesa
+vulkan-radeon
+vulkan-intel
+networkmanager
+noto-fonts
+noto-fonts-emoji
+foot

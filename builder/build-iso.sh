@@ -343,6 +343,41 @@ else
   echo "Target install resolves to $expected_packages packages."
 fi
 
+# Resolve the Try Omarchy package set against the same offline DB the mirror
+# was pruned by and ship it as "<name> <archive>" lines. Doing it here means a
+# package leaving the mirror fails the build, not the user at the greeter, and
+# gives the tty1 prefetch a list of files to warm before Return is pressed.
+resolve_try_packages() {
+  local resolve_root=/tmp/omarchy-try-packages
+  local -a targets
+
+  rm -rf "$resolve_root"
+  mkdir -p "$resolve_root/var/lib/pacman"
+  mapfile -t targets < <(grep -hv '^#\|^$' /builder/try.packages)
+
+  pacman --config "$build_cache_dir/pacman-offline.conf" \
+    --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
+    --noconfirm -Sy >/dev/null || return 1
+
+  # omarchy depends on limine/snapper for the installed system; the live
+  # overlay has nowhere to deploy either, so omarchy-try installs with these
+  # assumed present. Resolve the same way so the list matches what it installs.
+  pacman --config "$build_cache_dir/pacman-offline.conf" \
+    --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
+    --noconfirm -S --print --print-format '%n %f' \
+    --assume-installed limine --assume-installed limine-mkinitcpio-hook \
+    --assume-installed limine-snapper-sync --assume-installed snapper \
+    "${targets[@]}" | sort -u
+}
+
+if ! try_packages="$(resolve_try_packages)" || [[ -z $try_packages ]]; then
+  echo "ERROR: could not resolve builder/try.packages from the offline mirror." >&2
+  echo "       Every package Try Omarchy installs must already be in the mirror." >&2
+  exit 1
+fi
+printf '%s\n' "$try_packages" >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-packages"
+echo "Try Omarchy resolves to $(printf '%s\n' "$try_packages" | grep -c .) packages."
+
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
 
