@@ -61,7 +61,10 @@ line=$(grep '^pacman -Sy' "$TEST_LOG")
 [[ $line == *nvidia-open-dkms* && $line == *nvidia-utils* ]] || fail "gsp: installs nvidia-open" "$line"
 [[ $line == *linux-t2-headers* ]] || fail "gsp: installs matching kernel headers" "$line"
 [[ $(<"$sandbox/etc/modprobe.d/nvidia.conf") == 'options nvidia_drm modeset=1' ]] || fail "gsp: writes modeset config"
-grep -q '^modprobe nvidia ' "$TEST_LOG" || fail "gsp: loads the nvidia modules"
+# Without -a, modprobe loads only the first name and passes the rest as module
+# parameters ("nvidia: unknown parameter 'nvidia_drm' ignored") — nvidia_drm
+# then never loads and no NVIDIA DRM device appears. Seen on real hardware.
+grep -q '^modprobe -a nvidia nvidia_modeset nvidia_uvm nvidia_drm$' "$TEST_LOG" || fail "gsp: loads all four nvidia modules with modprobe -a"
 pass "omarchy-try-nvidia picks nvidia-open for a GSP card"
 
 # Pre-GSP card: the 580xx branch.
