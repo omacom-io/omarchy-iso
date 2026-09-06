@@ -96,12 +96,18 @@ display_gpu_name() {
 # Ask, on the greeter's console, whether to set the NVIDIA driver up now (native,
 # accelerated) or take the quick software preview. Returns 0 for the driver.
 offer_nvidia() {
-  local choice
+  local choice rows pad
+  # Vertically center the menu the way the greeter centers its welcome, rather
+  # than letting gum draw it at the top of the screen.
+  rows=$(stty size 2>/dev/null </dev/tty | awk '{print $1}'); [[ $rows =~ ^[0-9]+$ ]] || rows=24
+  pad=$(( (rows - 6) / 2 )); (( pad < 0 )) && pad=0
+  { printf '\033[?25l\033[H\033[2J'; printf '\n%.0s' $(seq 1 "$pad"); } >/dev/tty 2>/dev/null
   choice=$(gum choose \
     --header "Your display is on an NVIDIA GPU. The full experience needs its driver." \
     "Set up the NVIDIA driver now (~2 minutes, from the USB stick)" \
     "Skip — quick software preview (lower resolution)" \
-    </dev/tty 2>/dev/tty) || return 1
+    </dev/tty 2>/dev/tty) || { printf '\033[?25h' >/dev/tty 2>/dev/null; return 1; }
+  printf '\033[?25h' >/dev/tty 2>/dev/null
   [[ $choice == Set* ]]
 }
 
