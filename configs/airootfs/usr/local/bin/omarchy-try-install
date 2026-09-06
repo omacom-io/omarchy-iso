@@ -1,0 +1,6 @@
+#!/bin/bash
+#
+# Bound to Super+Shift+I in a Try Omarchy session. Stopping the display manager
+# ends the session; omarchy-try on tty1 notices and hands back to the greeter,
+# where Return starts the ordinary install.
+exec sudo systemctl stop sddm.service
