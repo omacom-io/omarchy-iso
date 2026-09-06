@@ -77,6 +77,20 @@ warm_offline_mirror() {
   budget_kb=$(($(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 2))
   ((budget_kb > 262144)) || return 0
 
+  # The try set first: it is what "Try Omarchy" reads seconds after the greeter
+  # appears, and it is small enough to always fit the budget. Re-reading a file
+  # later in the largest-first pass is free once it is cached.
+  local try_list=/usr/share/omarchy-iso/try-packages file
+  if [[ -f $try_list ]]; then
+    while read -r _ file; do
+      [[ -f $mirror/$file ]] || continue
+      size_kb=$(du -k "$mirror/$file" | cut -f1)
+      ((spent_kb + size_kb > budget_kb)) && break
+      cat -- "$mirror/$file" >/dev/null 2>&1 || true
+      spent_kb=$((spent_kb + size_kb))
+    done <"$try_list"
+  fi
+
   # Largest first: the install reads most of the mirror, so when the budget
   # cannot cover all of it this still front-loads the bytes that dominate.
   while read -r size_kb path; do
@@ -88,6 +102,8 @@ warm_offline_mirror() {
 
 warm_offline_mirror &
 warm_pid=$!
+# omarchy-try stops the prefetch so a session gets the memory and bandwidth.
+export OMARCHY_PREFETCH_PID=$warm_pid
 trap 'kill "$warm_pid" 2>/dev/null' EXIT
 
 cd /root
