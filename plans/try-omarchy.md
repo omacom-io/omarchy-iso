@@ -91,7 +91,14 @@ The two things that would blow it are `mkinitcpio` and `limine` hooks, which are
 
 ### GPU
 
-`mesa` + `vulkan-radeon` + `vulkan-intel` from the mirror; `nouveau` is in-kernel with GSP firmware already present. Hybrid NVIDIA laptops drive the panel from the iGPU and just work. A desktop with a discrete NVIDIA card as its only output gets nouveau — a working but unaccelerated session, which is enough to check wifi, input, display and the look. Proprietary NVIDIA is out: the userspace alone is 300 MiB of archive / 886 MiB installed, and both branches in the mirror are DKMS (`nvidia-open-dkms`, `nvidia-580xx-dkms`) — a multi-minute compile into RAM. The installer does it properly on disk afterwards (`install/hardware/nvidia.sh`), which is the right place.
+AMD and Intel get full hardware acceleration from `mesa` + `vulkan-radeon` + `vulkan-intel` in the try set. The interesting case is a machine whose only display is on a GPU the session has no driver for — above all NVIDIA, whose proprietary driver the try session deliberately doesn't ship.
+
+The answer is **software rendering on the firmware framebuffer**, and it covers every GPU including the newest, at zero cost. The kernel's `simpledrm` already lights the panel for the greeter via the EFI framebuffer; aquamarine (Hyprland's backend) requires GBM, and Mesa's `kms_swrast` provides GBM on `simpledrm` backed by llvmpipe — so Hyprland comes up software-rendered on any GPU. Verified against aquamarine's source and confirmed running in the wild. It needs two things:
+
+- **`nouveau` blacklisted in the live root** (`etc/modprobe.d/omarchy-try-nouveau.conf`). Otherwise nouveau binds the NVIDIA card and *evicts* `simpledrm` while being unable to modeset newer cards (Blackwell), leaving no display at all. `modconf` runs before `kms` in the live HOOKS, so the blacklist applies from early boot.
+- **Steering aquamarine to the panel's node.** `omarchy-try`'s `select_display_gpu` finds the DRM card actually driving a connected display and passes it as `AQ_DRM_DEVICES`, forcing `LIBGL_ALWAYS_SOFTWARE` only when that node is the firmware framebuffer. This matters on a hybrid box (an AMD iGPU with no monitor alongside an NVIDIA card whose panel is on `simpledrm`): without steering, aquamarine can pick the display-less iGPU and render to nowhere.
+
+The trade-off is that an unsupported-GPU preview runs on llvmpipe — slow, but "Try" is about look, feel and hardware compatibility (wifi, trackpad, display), not GPU speed; the accelerated experience is exactly what installing delivers, where Omarchy sets up the proprietary driver on disk (`install/hardware/nvidia.sh`). Proprietary NVIDIA in the live session was rejected: it's ~886 MiB of userspace into RAM, silently fails under Secure Boot (unsigned module), and adds a second hardware-tested path — while buying only speed the try session doesn't need. If even software rendering can't bring up a display, the session shows a GPU-named notice pointing to install or an iGPU port rather than looping.
 
 ### Apps on demand
 
