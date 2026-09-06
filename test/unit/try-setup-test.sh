@@ -21,6 +21,12 @@ printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
 exit 0
 STUB
 done
+cat >"$stub_dir/df" <<'STUB'
+#!/bin/bash
+printf 'df %s\n' "$*" >>"$TEST_LOG"
+printf 'Avail\n%s\n' "${COWSPACE_AVAIL_KIB:-8000000}"
+exit 0
+STUB
 cat >"$stub_dir/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
@@ -52,6 +58,7 @@ new_sandbox() {
     "$sandbox/run/archiso/cowspace" "$sandbox/home/try/.config/hypr" "$sandbox/run/omarchy-try"
   printf 'omarchy omarchy.pkg\nhyprland hyprland.pkg\nchromium chromium.pkg\n' \
     >"$sandbox/usr/share/omarchy-iso/try-packages"
+  printf '2631680\n' >"$sandbox/usr/share/omarchy-iso/try-installed-kib" # 2.51 GiB
   : >"$sandbox/home/try/.config/hypr/bindings.lua"
   : >"$sandbox/home/try/.config/hypr/autostart.lua"
   state="$sandbox/run/omarchy-try/state.json"
@@ -66,17 +73,22 @@ grep -q '^mount -o remount,size=50% .*/run/archiso/cowspace$' "$TEST_LOG" || fai
 for h in 60-mkinitcpio-remove.hook 80-limine-efi-deploy.hook 90-mkinitcpio-install.hook; do
   [[ $(readlink "$sandbox/etc/pacman.d/hooks/$h") == /dev/null ]] || fail "masks $h"
 done
-line=$(grep '^pacman ' "$TEST_LOG")
-[[ $line == *"-Sy --needed --noconfirm"* ]] || fail "syncs then installs" "$line"
+grep -q '^pacman -Sy --needed --noconfirm zram-generator$' "$TEST_LOG" || fail "syncs the db and installs zram-generator first"
+line=$(grep '^pacman -S --needed --noconfirm .* omarchy hyprland chromium$' "$TEST_LOG") || fail "installs the try set after the sync" "$(<"$TEST_LOG")"
 for p in limine limine-mkinitcpio-hook limine-snapper-sync snapper; do
   [[ $line == *"--assume-installed $p"* ]] || fail "assumes $p" "$line"
 done
-[[ $line == *" omarchy hyprland chromium"* ]] || fail "installs the try packages" "$line"
 grep -q '^systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket$' "$TEST_LOG" || fail "stops iwd/networkd"
 grep -q '^systemctl start NetworkManager.service$' "$TEST_LOG" || fail "starts NetworkManager"
 grep -q '^systemctl start bluetooth.service power-profiles-daemon.service$' "$TEST_LOG" || fail "starts the shell's daemons"
 grep -q '^systemctl daemon-reload$' "$TEST_LOG" || fail "reloads so the zram generator runs"
 grep -q '^systemctl start systemd-zram-setup@zram0.service$' "$TEST_LOG" || fail "starts zram"
+# zram has to be up before the install fills the overlay, not after.
+zram_at=$(grep -n '^systemctl start systemd-zram-setup' "$TEST_LOG" | cut -d: -f1)
+gen_at=$(grep -n '^pacman -Sy --needed --noconfirm zram-generator$' "$TEST_LOG" | cut -d: -f1)
+set_at=$(grep -n '^pacman -S --needed' "$TEST_LOG" | cut -d: -f1)
+(( gen_at < zram_at && zram_at < set_at )) || fail "installs the generator, starts zram, then installs the set" "$(<"$TEST_LOG")"
+grep -q '^df -k --output=avail .*/run/archiso/cowspace$' "$TEST_LOG" || fail "checks the overlay's capacity"
 grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is up"
 grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
 [[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
@@ -92,6 +104,13 @@ new_sandbox
 run nvidia >/dev/null 2>&1 || fail "nvidia path exits zero"
 grep -q '"total_phases": 4' "$state" || fail "reports 4 phases with nvidia"
 pass "omarchy-try-setup adds an NVIDIA phase when asked"
+
+# An overlay that cannot hold the try set fails before pacman, with numbers.
+new_sandbox
+! COWSPACE_AVAIL_KIB=2000000 run >/dev/null 2>"$sandbox/err" || fail "too-small overlay exits non-zero"
+! grep -q '^pacman -S --needed' "$TEST_LOG" || fail "too-small overlay never reaches the install"
+grep -qE 'GiB' "$sandbox/err" || fail "too-small overlay says how much is missing" "$(<"$sandbox/err")"
+pass "omarchy-try-setup refuses an overlay too small for the try set"
 
 # No network yet: the timezone step is skipped rather than waited for.
 new_sandbox

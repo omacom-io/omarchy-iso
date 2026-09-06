@@ -24,6 +24,7 @@ root=${3:-}
 
 try_user=try
 try_packages=$root/usr/share/omarchy-iso/try-packages
+try_installed_kib=$root/usr/share/omarchy-iso/try-installed-kib
 hooks_dir=$root/etc/pacman.d/hooks
 cowspace=$root/run/archiso/cowspace
 sudoers=$root/etc/sudoers.d/$try_user
@@ -65,15 +66,32 @@ idx=0
 phase "$idx" "Preparing the live desktop"
 mapfile -t packages < <(awk '{ print $1 }' "$try_packages")
 mount -o remount,size=50% "$cowspace" || fail "could not grow the live overlay"
+
+# The overlay is a tmpfs capped at half of RAM; the whole try set has to fit it
+# with room for the session to run. Say how far short a machine is rather than
+# letting pacman fail mid-transaction on a full overlay.
+need_kib=$(( $(<"$try_installed_kib") * 5 / 4 ))
+avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
+(( avail_kib >= need_kib )) ||
+  fail "the live overlay has $(( avail_kib / 1048576 )) GiB free; the desktop needs $(( need_kib / 1048576 )) GiB"
+
+# Compressed swap before the install starts filling that overlay, not after.
+# zram-generator is a 1 MiB package on the stick; omarchy-settings (already in
+# the live root) ships the zram config an installed system runs, so once the
+# generator is installed a daemon-reload is all it needs. -Sy: the live sync db
+# is empty (mkarchiso clears it); the only repo is the offline file:// mirror.
+pacman -Sy --needed --noconfirm zram-generator || fail "could not install zram-generator"
+systemctl daemon-reload
+systemctl start systemd-zram-setup@zram0.service ||
+  echo "omarchy-try-setup: no zram; the desktop runs without compressed swap." >&2
+
 mkdir -p "$hooks_dir"
 for hook in "${deferred_boot_hooks[@]}"; do ln -sfn /dev/null "$hooks_dir/$hook"; done
 
 idx=$((idx + 1))
 phase "$idx" "Installing the desktop"
 assume=(); for pkg in "${assume_installed[@]}"; do assume+=(--assume-installed "$pkg"); done
-# -Sy: the live sync db is empty (mkarchiso clears it); the only repo is the
-# offline file:// mirror, so this touches no network.
-pacman -Sy --needed --noconfirm "${assume[@]}" "${packages[@]}" || fail "installing the desktop failed"
+pacman -S --needed --noconfirm "${assume[@]}" "${packages[@]}" || fail "installing the desktop failed"
 
 if [[ $want_nvidia == nvidia ]]; then
   idx=$((idx + 1))
@@ -88,13 +106,6 @@ systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket
 systemctl start NetworkManager.service
 # The other daemons the shell talks to, which an installed system enables.
 systemctl start bluetooth.service power-profiles-daemon.service || true
-
-# Compressed swap so the overlay's pages can be reclaimed on a small machine.
-# zram-generator was just installed; the live root already carries the same
-# zram config an installed system runs (omarchy-settings ships it).
-systemctl daemon-reload
-systemctl start systemd-zram-setup@zram0.service ||
-  echo "omarchy-try-setup: no zram; the desktop runs without compressed swap." >&2
 
 # The bar's clock should read local time — the installed system asks tzupdate
 # the same question. Only when the network is already up; never wait for a

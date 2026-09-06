@@ -378,6 +378,15 @@ fi
 printf '%s\n' "$try_packages" >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-packages"
 echo "Try Omarchy resolves to $(printf '%s\n' "$try_packages" | grep -c .) packages."
 
+# The set's installed size, so omarchy-try-setup can refuse an overlay that
+# cannot hold it before pacman fails halfway through.
+pacman --config "$build_cache_dir/pacman-offline.conf" \
+  --root /tmp/omarchy-try-packages --dbpath /tmp/omarchy-try-packages/var/lib/pacman \
+  -Si $(printf '%s\n' "$try_packages" | awk '{ print $1 }') 2>/dev/null |
+  awk -F': +' '/^Installed Size/ { split($2, a, " "); f = (a[2] == "KiB") ? 1 : (a[2] == "GiB") ? 1048576 : 1024; kib += a[1] * f } END { printf "%d\n", kib }' \
+  >"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib"
+echo "Try Omarchy installs $(( $(<"$build_cache_dir/airootfs/usr/share/omarchy-iso/try-installed-kib") / 1048576 )) GiB."
+
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
 

@@ -22,7 +22,11 @@ root=${1:-}
 try_user=try
 try_packages=$root/usr/share/omarchy-iso/try-packages
 meminfo=$root/proc/meminfo
-min_mem_kib=$((4 * 1024 * 1024))
+# The try set is 2.5 GiB installed and lands in a tmpfs overlay capped at half
+# of RAM, so the floor is a nominal 8 GiB machine. MemTotal on one of those
+# reads ~7.6-7.9 GiB after kernel reservations; compare against 7 GiB so the
+# floor admits the machines it names.
+min_mem_kib=$((7 * 1024 * 1024))
 
 # The session runs as a transient systemd unit on its own VT (not SDDM, which
 # would claim VT1 and kill the greeter). See git history for the full rationale.
@@ -124,7 +128,7 @@ cleanup() {
 # --- Guards ------------------------------------------------------------------
 mem_kib=$(awk '/^MemTotal:/ { print $2 }' "$meminfo" 2>/dev/null)
 (( ${mem_kib:-0} >= min_mem_kib )) ||
-  refuse "needs at least 4 GiB of memory to run the desktop from the USB stick; this machine has $(( ${mem_kib:-0} / 1024 )) MiB."
+  refuse "needs at least 8 GiB of memory to run the desktop from the USB stick; this machine has $(( ${mem_kib:-0} / 1024 )) MiB."
 [[ -s $try_packages ]] || refuse "this medium carries no try package list."
 
 # The installer's mirror prefetch is competing for memory and the medium; stop it.
