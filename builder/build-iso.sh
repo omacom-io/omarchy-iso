@@ -156,6 +156,7 @@ OMARCHY_ARCH_DROP=(
 # Use equivalent packages available on aarch64.
 OMARCHY_ARCH_SUBST_FROM=(quickshell-git mise)
 OMARCHY_ARCH_SUBST_TO=(quickshell mise-bin)
+source /builder/filter-packages.sh
 offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
 mkdir -p "$build_cache_dir" "$offline_mirror_dir"
 
@@ -327,19 +328,8 @@ filter_shipped_package_list() {
   local file="$1" tmp
   [[ -f $file ]] || return 0
   tmp="$(mktemp)"
-  local line kept=0 dropped=0
-  while IFS= read -r line || [[ -n $line ]]; do
-    if [[ -z $line || $line == \#* ]]; then printf '%s\n' "$line" >>"$tmp"; continue; fi
-    local skip=""
-    for d in "${OMARCHY_ARCH_DROP[@]}"; do [[ $line == "$d" ]] && { skip=1; break; }; done
-    if [[ -n $skip ]]; then dropped=$((dropped+1)); continue; fi
-    for i in "${!OMARCHY_ARCH_SUBST_FROM[@]}"; do
-      [[ $line == "${OMARCHY_ARCH_SUBST_FROM[$i]}" ]] && line="${OMARCHY_ARCH_SUBST_TO[$i]}"
-    done
-    printf '%s\n' "$line" >>"$tmp"; kept=$((kept+1))
-  done <"$file"
+  filter_arch_packages <"$file" >"$tmp"
   mv "$tmp" "$file"
-  echo "aarch64: $(basename "$file"): kept $kept, dropped $dropped"
 }
 
 if [[ $(uname -m) == aarch64 ]]; then
@@ -365,30 +355,8 @@ mapfile -t all_packages < <(
     # Always include the selected Omarchy packages so the target install can
     # find the runtime and companion packages in the offline mirror.
     printf '%s\n' "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" "$OMARCHY_NVIM_PACKAGE"
-  } | sort -u
+  } | filter_arch_packages | sort -u
 )
-
-if [[ $(uname -m) == aarch64 ]]; then
-  declare -a _kept=() _dropped=()
-  for _p in "${all_packages[@]}"; do
-    _skip=""
-    for _d in "${OMARCHY_ARCH_DROP[@]}"; do
-      [[ $_p == "$_d" ]] && { _skip=1; break; }
-    done
-    if [[ -n $_skip ]]; then _dropped+=("$_p"); continue; fi
-    for _i in "${!OMARCHY_ARCH_SUBST_FROM[@]}"; do
-      if [[ $_p == "${OMARCHY_ARCH_SUBST_FROM[$_i]}" ]]; then
-        _p="${OMARCHY_ARCH_SUBST_TO[$_i]}"
-        echo "aarch64: substituting ${OMARCHY_ARCH_SUBST_FROM[$_i]} -> $_p"
-      fi
-    done
-    _kept+=("$_p")
-  done
-  mapfile -t all_packages < <(printf '%s\n' "${_kept[@]}" | sort -u)
-  echo "aarch64: dropped ${#_dropped[@]} package(s) with no aarch64 build:"
-  printf '  %s\n' "${_dropped[@]}"
-  echo "aarch64: ${#all_packages[@]} package(s) remain for the offline mirror"
-fi
 
 # With --local-source we already built these omarchy* packages directly into
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
