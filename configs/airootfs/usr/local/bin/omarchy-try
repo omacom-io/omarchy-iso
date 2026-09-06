@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# Try Omarchy: bring up the real desktop from the live ISO without touching a
+# disk. Every package it needs is already on the medium in the offline mirror,
+# so this installs them into the live overlay (RAM), starts a session for a
+# throwaway user, and returns when that user chooses "Install Omarchy" — at
+# which point the caller shows the greeter again and the ordinary configurator
+# takes over. The installer path is not involved at any point.
+#
+# Exits 0 when the session ended and the greeter should redraw. Exits 1, having
+# already printed why, when the session could not start. Never touches a
+# block device.
+#
+# The optional argument prefixes every path the script touches; tests use it
+# to run against a sandbox with mount/pacman/systemctl/useradd stubbed out.
+
+set -uo pipefail
+
+root=${1:-}
+try_user=try
+try_packages=$root/usr/share/omarchy-iso/try-packages
+hooks_dir=$root/etc/pacman.d/hooks
+cowspace=$root/run/archiso/cowspace
+meminfo=$root/proc/meminfo
+sddm_dir=$root/etc/sddm.conf.d
+sudoers=$root/etc/sudoers.d/$try_user
+home=$root/home/$try_user
+min_mem_kib=$((4 * 1024 * 1024))
+
+# Boot-image hooks that must not fire in a live root with no ESP and no btrfs.
+# Same names the orchestrator masks around pacstrap (DEFERRED_BOOT_HOOKS in
+# orchestrator/phases_impl.py); a /dev/null symlink in the local hook dir
+# overrides the package's own hook (pacman.conf(5), HookDir).
+deferred_boot_hooks=(
+  60-mkinitcpio-remove.hook
+  60-limine-mkinitcpio-remove-pre.hook
+  80-limine-efi-deploy.hook
+  90-limine-mkinitcpio-remove-post.hook
+  90-mkinitcpio-install.hook
+)
+
+# omarchy depends on these for the installed system. The live overlay has
+# nowhere to deploy a bootloader or take a snapshot, so satisfy the dependency
+# without installing them (and without their hooks).
+assume_installed=(limine limine-mkinitcpio-hook limine-snapper-sync snapper)
+
+say() { printf '%s\n' "$*"; }
+refuse() { printf 'Try Omarchy: %s\n' "$*" >&2; exit 1; }
+
+mem_kib=$(awk '/^MemTotal:/ { print $2 }' "$meminfo" 2>/dev/null)
+(( ${mem_kib:-0} >= min_mem_kib )) ||
+  refuse "needs at least 4 GiB of memory to run the desktop from the USB stick; this machine has $(( ${mem_kib:-0} / 1024 )) MiB."
+[[ -s $try_packages ]] || refuse "this medium carries no try package list."
+
+# The installer's prefetch is reading the whole mirror largest-first; stop it
+# so the session has the memory and the medium's bandwidth.
+[[ -n ${OMARCHY_PREFETCH_PID:-} ]] && kill "$OMARCHY_PREFETCH_PID" 2>/dev/null
+
+mapfile -t packages < <(awk '{ print $1 }' "$try_packages")
+
+# archiso's overlay upper is a tmpfs sized by cow_spacesize, 256M by default;
+# the try set needs about 1.2 GiB. tmpfs resizes live.
+mount -o remount,size=50% "$cowspace" || refuse "could not grow the live overlay."
+
+mkdir -p "$hooks_dir"
+for hook in "${deferred_boot_hooks[@]}"; do
+  ln -sfn /dev/null "$hooks_dir/$hook"
+done
+
+assume=()
+for pkg in "${assume_installed[@]}"; do
+  assume+=(--assume-installed "$pkg")
+done
+
+say "Installing the Omarchy desktop from the USB stick. Nothing is written to your disk."
+pacman -S --needed --noconfirm "${assume[@]}" "${packages[@]}" ||
+  refuse "installing the desktop packages failed; see above."
+
+# --- Everything below can undo itself. -----------------------------------
+
+session_network() {
+  systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket
+  systemctl start NetworkManager.service
+}
+
+# The installer expects the environment it booted into (tzupdate and the
+# mirror sanity checks run against networkd), so put it back on the way out.
+installer_network() {
+  systemctl stop NetworkManager.service
+  systemctl start systemd-networkd.socket systemd-networkd.service iwd.service
+}
+
+# Undo in reverse regardless of how we leave.
+cleanup() {
+  rm -f "$sddm_dir/autologin.conf"
+  installer_network
+}
+
+session_network
+trap cleanup EXIT
+
+if ! id "$try_user" &>/dev/null; then
+  useradd -m -G wheel,video,input,audio -s /bin/bash "$try_user" || refuse "could not create the try user."
+  passwd -d "$try_user" >/dev/null
+fi
+mkdir -p "${sudoers%/*}"
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$try_user" >"$sudoers"
+chmod 440 "$sudoers"
+
+# useradd seeded ~/.config from /etc/skel (omarchy-settings ships it in the
+# live root already). Add only what a try session needs on top.
+mkdir -p "$home/.config/hypr"
+cat >>"$home/.config/hypr/bindings.lua" <<'LUA'
+
+-- Try Omarchy: end this session and start the installer.
+o.bind("SUPER + SHIFT + I", "Install Omarchy", "omarchy-try-install")
+LUA
+cat >>"$home/.config/hypr/autostart.lua" <<'LUA'
+
+-- Try Omarchy: one notification saying what this session is.
+o.launch_on_start("omarchy-try-welcome")
+LUA
+id "$try_user" &>/dev/null && chown -R "$try_user:$try_user" "$home"
+
+runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \
+  /usr/share/omarchy/bin/omarchy-theme-set "Tokyo Night" ||
+  say "Try Omarchy: theme setup failed; continuing with defaults."
+runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || true
+
+# The same drop-in configure_login writes on an encrypted install.
+mkdir -p "$sddm_dir"
+printf '[Autologin]\nUser=%s\nSession=omarchy.desktop\n' "$try_user" >"$sddm_dir/autologin.conf"
+
+# Tell a serial console (the QEMU harness) when the compositor is up. Bounded
+# so a stub serial port on real hardware can never hang anything. Skipped in
+# the test sandbox, where no session will ever appear.
+if [[ -z $root ]]; then
+  (
+    uid=$(id -u "$try_user" 2>/dev/null || echo 1000)
+    until [[ -d /run/user/$uid/hypr ]]; do sleep 1; done
+    timeout 2 sh -c 'echo OMARCHY_TRY_SESSION_UP >/dev/ttyS0' 2>/dev/null
+  ) &
+  marker_pid=$!
+  trap 'kill "$marker_pid" 2>/dev/null; cleanup' EXIT
+fi
+
+systemctl start sddm.service || refuse "could not start the display manager."
+
+# The session lives as long as sddm does; omarchy-try-install stops it.
+while systemctl is-active --quiet sddm.service; do
+  sleep 2
+done
+
+exit 0
