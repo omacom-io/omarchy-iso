@@ -22,10 +22,18 @@ try_packages=$root/usr/share/omarchy-iso/try-packages
 hooks_dir=$root/etc/pacman.d/hooks
 cowspace=$root/run/archiso/cowspace
 meminfo=$root/proc/meminfo
-sddm_dir=$root/etc/sddm.conf.d
 sudoers=$root/etc/sudoers.d/$try_user
 home=$root/home/$try_user
 min_mem_kib=$((4 * 1024 * 1024))
+
+# The session runs as a transient systemd unit — not through SDDM. SDDM claims
+# VT1, which is where the configurator that launched us lives; starting it
+# deallocates that VT and kills the greeter we mean to return to, and stopping
+# it leaves VT1 blank. A logind session on its own VT leaves the configurator
+# running on VT1 the whole time, so ending the session drops us straight back
+# to the greeter this script was called from.
+session_unit=omarchy-try-session
+session_vt=7
 
 # Boot-image hooks that must not fire in a live root with no ESP and no btrfs.
 # Same names the orchestrator masks around pacstrap (DEFERRED_BOOT_HOOKS in
@@ -96,7 +104,7 @@ installer_network() {
 
 # Undo in reverse regardless of how we leave.
 cleanup() {
-  rm -f "$sddm_dir/autologin.conf"
+  systemctl stop "$session_unit.service" 2>/dev/null
   installer_network
 }
 
@@ -131,28 +139,45 @@ runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \
   say "Try Omarchy: theme setup failed; continuing with defaults."
 runuser -u "$try_user" -- env HOME="$home" xdg-user-dirs-update 2>/dev/null || true
 
-# The same drop-in configure_login writes on an encrypted install.
-mkdir -p "$sddm_dir"
-printf '[Autologin]\nUser=%s\nSession=omarchy.desktop\n' "$try_user" >"$sddm_dir/autologin.conf"
+# Start the desktop as the try user in its own logind session on a dedicated
+# VT. PAMName=login gives it a real seat (uwsm and Hyprland need one); the unit
+# name is fixed so omarchy-try-install can stop it by name from inside the
+# session. The session file is the same one SDDM would have launched.
+systemctl reset-failed "$session_unit.service" 2>/dev/null
+systemd-run --unit="$session_unit" --collect --quiet \
+  --uid="$try_user" --gid="$try_user" \
+  -p PAMName=login -p TTYPath="/dev/tty$session_vt" \
+  -p TTYReset=yes -p TTYVHangup=yes -p TTYVTDisallocate=yes \
+  -p StandardInput=tty -p StandardOutput=journal -p StandardError=journal \
+  -p WorkingDirectory="/home/$try_user" \
+  -E XDG_SESSION_TYPE=wayland -E XDG_SESSION_CLASS=user \
+  /usr/bin/uwsm start -g -1 -e -D Hyprland hyprland.desktop ||
+  refuse "could not start the desktop session."
 
-# Tell a serial console (the QEMU harness) when the compositor is up. Bounded
-# so a stub serial port on real hardware can never hang anything. Skipped in
-# the test sandbox, where no session will ever appear.
+# Bring the session's VT to the foreground once its compositor is up, and tell a
+# serial console (the QEMU harness) the same moment. Bounded so a machine where
+# the compositor never comes up still falls through to the cleanup below rather
+# than hanging on the greeter. Skipped in the test sandbox (no real session).
 if [[ -z $root ]]; then
-  (
-    uid=$(id -u "$try_user" 2>/dev/null || echo 1000)
-    until [[ -d /run/user/$uid/hypr ]]; do sleep 1; done
-    timeout 2 sh -c 'echo OMARCHY_TRY_SESSION_UP >/dev/ttyS0' 2>/dev/null
-  ) &
-  marker_pid=$!
-  trap 'kill "$marker_pid" 2>/dev/null; cleanup' EXIT
+  uid=$(id -u "$try_user" 2>/dev/null || echo 1000)
+  for _ in $(seq 1 60); do
+    [[ -d /run/user/$uid/hypr ]] && break
+    systemctl is-active --quiet "$session_unit.service" || break
+    sleep 1
+  done
+  if [[ -d /run/user/$uid/hypr ]]; then
+    chvt "$session_vt" 2>/dev/null
+    echo OMARCHY_TRY_SESSION_UP >/dev/ttyS0 2>/dev/null
+  fi
 fi
 
-systemctl start sddm.service || refuse "could not start the display manager."
-
-# The session lives as long as sddm does; omarchy-try-install stops it.
-while systemctl is-active --quiet sddm.service; do
+# The session lives as long as its unit; omarchy-try-install stops it.
+while systemctl is-active --quiet "$session_unit.service"; do
   sleep 2
 done
+
+# The compositor let go of its VT; put the greeter back in front. cleanup (the
+# EXIT trap) restores the installer's network and stops any lingering unit.
+chvt 1 2>/dev/null
 
 exit 0

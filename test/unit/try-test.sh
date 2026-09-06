@@ -23,7 +23,7 @@ trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 
 stub_dir="$work/stubs"
 mkdir -p "$stub_dir"
-for cmd in mount pacman useradd passwd runuser chown; do
+for cmd in mount pacman useradd passwd runuser chown chvt; do
   cat >"$stub_dir/$cmd" <<STUB
 #!/bin/bash
 printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
@@ -31,16 +31,19 @@ printf '$cmd %s\n' "\$*" >>"\$TEST_LOG"
 exit 0
 STUB
 done
-# systemctl: log everything; report sddm inactive so the wait loop returns.
+# systemctl: log everything; report the session unit inactive so the wait loop
+# returns at once. reset-failed/stop/start all succeed.
 cat >"$stub_dir/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
 [[ $1 == is-active ]] && exit 3
-# Snapshot the autologin drop-in as the session starts: omarchy-try removes it
-# on the way out, so the cases assert on this copy.
-[[ $1 == start && $2 == sddm.service ]] &&
-  cp "$SANDBOX/etc/sddm.conf.d/autologin.conf" "$SANDBOX/autologin.at-start" 2>/dev/null
-[[ ${SYSTEMCTL_FAIL:-} == 1 && $1 == start && $2 == sddm.service ]] && exit 1
+exit 0
+STUB
+# systemd-run: log the launch; optionally fail to exercise the refuse path.
+cat >"$stub_dir/systemd-run" <<'STUB'
+#!/bin/bash
+printf 'systemd-run %s\n' "$*" >>"$TEST_LOG"
+[[ ${SYSTEMD_RUN_FAIL:-} == 1 ]] && exit 1
 exit 0
 STUB
 chmod +x "$stub_dir"/*
@@ -105,16 +108,18 @@ grep -q 'o.bind("SUPER + SHIFT + I", "Install Omarchy", "omarchy-try-install")' 
   "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
 grep -q 'o.launch_on_start("omarchy-try-welcome")' \
   "$sandbox/home/try/.config/hypr/autostart.lua" || fail "adds the welcome autostart"
-[[ $(<"$sandbox/autologin.at-start") == $'[Autologin]\nUser=try\nSession=omarchy.desktop' ]] \
-  || fail "writes sddm autologin before starting the session"
-grep -q '^systemctl start sddm.service$' "$TEST_LOG" || fail "starts sddm"
+session_line=$(grep '^systemd-run ' "$TEST_LOG")
+[[ $session_line == *"--unit=omarchy-try-session"* ]] || fail "names the session unit" "$session_line"
+[[ $session_line == *"--uid=try"* ]] || fail "runs the session as the try user" "$session_line"
+[[ $session_line == *"PAMName=login"* ]] || fail "gives the session a login seat" "$session_line"
+[[ $session_line == *"uwsm start"*"Hyprland"* ]] || fail "launches the Hyprland session" "$session_line"
 pass "prepares the user and starts the session"
 
 # Order: network switched and sddm started only after pacman succeeded; network
 # restored after sddm is gone.
-awk '/^pacman /{p=NR} /start NetworkManager/{n=NR} /start sddm/{s=NR} /^systemctl start systemd-networkd.socket/{r=NR}
-     END{exit !(p<n && n<s && s<r)}' "$TEST_LOG" || fail "sequence is pacman -> NetworkManager -> sddm -> restore" "$(<"$TEST_LOG")"
-[[ ! -e $sandbox/etc/sddm.conf.d/autologin.conf ]] || fail "removes autologin after the session"
+awk '/^pacman /{p=NR} /start NetworkManager/{n=NR} /^systemd-run /{s=NR} /^systemctl start systemd-networkd.socket/{r=NR}
+     END{exit !(p<n && n<s && s<r)}' "$TEST_LOG" || fail "sequence is pacman -> NetworkManager -> session -> restore" "$(<"$TEST_LOG")"
+grep -q '^systemctl stop omarchy-try-session.service$' "$TEST_LOG" || fail "stops the session unit on the way out"
 pass "restores the installer's network after the session"
 
 # pacman failure: no user, no sddm, network untouched.
@@ -124,9 +129,9 @@ new_sandbox
 ! grep -q '^useradd' "$TEST_LOG" || fail "pacman failure creates no user"
 pass "a failed install leaves the live environment as it was"
 
-# sddm failure after the network switch: restore it.
+# session launch fails after the network switch: restore it.
 new_sandbox
-! SYSTEMCTL_FAIL=1 run_try >"$sandbox/out" 2>&1 || fail "sddm failure exits non-zero"
+! SYSTEMD_RUN_FAIL=1 run_try >"$sandbox/out" 2>&1 || fail "session launch failure exits non-zero"
 grep -q '^systemctl start systemd-networkd.socket systemd-networkd.service iwd.service$' "$TEST_LOG" \
-  || fail "sddm failure restores the network"
+  || fail "session launch failure restores the network"
 pass "a failed session start restores the network"

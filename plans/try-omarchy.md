@@ -62,9 +62,9 @@ tty1 ─ .automated_script.sh
                                     │ pacman -S <try set> [offline]  │
                                     │ iwd → NetworkManager           │
                                     │ useradd try (skel) + theme     │
-                                    │ sddm autologin → Hyprland      │
+                                    │ systemd-run uwsm → Hyprland    │
                                     │ … session …                    │
-                                    │ "Install Omarchy" stops sddm   │
+                                    │ "Install" stops the unit       │
                                     ▼                                │
                                   return ────────────────────────────┤
                                                                      ▼
@@ -80,7 +80,7 @@ tty1 ─ .automated_script.sh
 | `pacman -S` 167 packages into tmpfs | 4–6 s here, 10–20 s on a laptop |
 | kept hooks (fontconfig, gdk-pixbuf, glib schemas, mime, desktop-database, sysusers/tmpfiles, ldconfig) | ~5–10 s |
 | NetworkManager start, useradd, theme set | ~2 s |
-| SDDM autologin → uwsm → Hyprland | ~3–5 s |
+| systemd-run session → uwsm → Hyprland on VT7 | ~2–5 s |
 | **Try → desktop** | **~15 s here, ~25–40 s on a laptop** |
 
 The two things that would blow it are `mkinitcpio` and `limine` hooks, which are masked, and `copytoram`, which is never set.
@@ -103,19 +103,19 @@ The live `pacman.conf` already points at `[offline]`, so inside the session `oma
 
 Runs as root on tty1, called from `.automated_script.sh`. Returns 0 when the user chose Install from the session, non-zero (with a one-line reason already shown) on any failure. Never touches a block device.
 
-1. **Guard.** `MemTotal ≥ 4 GiB` or bail with a message. `pgrep sddm` → bail (already running). Kill the mirror prefetch (`warm_pid` is exported by the caller; see §3).
+1. **Guard.** `MemTotal ≥ 4 GiB` or bail with a message. Kill the mirror prefetch (`warm_pid` is exported by the caller; see §3).
 2. **Grow the overlay.** `mount -o remount,size=50% /run/archiso/cowspace`. tmpfs resizes live; the mount point is the one archiso created.
 3. **Mask boot hooks.** Symlink each name in `DEFERRED_BOOT_HOOKS` (`60-mkinitcpio-remove.hook`, `60-limine-mkinitcpio-remove-pre.hook`, `80-limine-efi-deploy.hook`, `90-limine-mkinitcpio-remove-post.hook`, `90-mkinitcpio-install.hook`) to `/dev/null` under `/etc/pacman.d/hooks`. Mirrors `_mask_mkinitcpio_pacman_hooks`; the live root is discarded at reboot so no unmask is needed.
 4. **Install.** `pacman -Sy --needed --noconfirm --assume-installed limine --assume-installed limine-mkinitcpio-hook --assume-installed limine-snapper-sync --assume-installed snapper omarchy mesa vulkan-radeon vulkan-intel networkmanager noto-fonts noto-fonts-emoji foot`. `--assume-installed` keeps the four bootloader/snapshot packages (17 MiB, and the source of the dangerous hooks) out of a root that has no ESP and no btrfs. `-Sy` rather than `-S` because mkarchiso empties `/var/lib/pacman/sync` in the live root; the sync reads `offline.db` off the medium and touches no network. Progress goes to the TTY under the Tokyo Night palette the script already sets.
 5. **Network.** `systemctl stop iwd systemd-networkd`; `systemctl start NetworkManager`. `systemd-resolved` stays (NM uses it). This is the installed product's stack.
 6. **User.** `useradd -m -G wheel,video,input,audio -s /bin/bash try`; empty password; `/etc/sudoers.d/try` NOPASSWD. `/etc/skel` seeds the dotfiles. Then as `try`: `OMARCHY_THEME_HEADLESS=1 omarchy-theme-set "Tokyo Night"` and `xdg-user-dirs-update`. Not `omarchy-provision-user`: `install/user/mise.sh` and `chromium.sh` reach for the network and have no guards, and none of what they do matters for a look-and-feel session.
-7. **Session.** Write `/etc/sddm.conf.d/autologin.conf` (`User=try`, `Session=omarchy.desktop`); install the in-session affordances (§2); `systemctl start sddm`; then `systemctl is-active --wait`-style loop until sddm exits.
-8. **Return.** When sddm stops (the in-session Install action, or the user logging out), `systemctl stop NetworkManager; systemctl start iwd systemd-networkd` to restore the environment the installer expects, and return 0. Optionally `pacman -Rns` the try set to give the RAM back; the installer is disk-bound so this is not required and is left out of the first cut.
+7. **Session.** Start the desktop as a transient unit: `systemd-run --unit=omarchy-try-session --uid=try -p PAMName=login -p TTYPath=/dev/tty7 … uwsm start … Hyprland`. Not SDDM: SDDM claims VT1, where the configurator that called us lives, so starting it kills the greeter and stopping it leaves VT1 blank (verified on the stock 4.0.2 ISO). A logind session on VT7 leaves the configurator running on VT1 the whole time. `chvt 7` once the compositor socket appears; then wait until the unit goes inactive.
+8. **Return.** When the session unit goes inactive (the in-session Install action stops it), `chvt 1` to bring the greeter forward, restore the installer's network (`systemctl start systemd-networkd.socket systemd-networkd.service iwd.service`, stop NetworkManager), and return 0. Optionally `pacman -Rns` the try set to give the RAM back; the installer is disk-bound so this is not required and is left out of the first cut.
 
 ### 2. In-session affordances (shipped inside the same script, written at try-time)
 
 - `/etc/xdg/autostart`-style hook or a `hyprctl notify` on session start: "Try session — running from the USB stick, nothing has been written to your disk. Press Super+Shift+I to install." Kept to one notification.
-- `/usr/local/bin/omarchy-try-install`: `systemctl stop sddm` via `sudo`. Bound in a drop-in Hyprland config for the `try` user only (`~/.config/hypr/bindings.conf` include), so the shipped `default/hypr` is untouched.
+- `/usr/local/bin/omarchy-try-install`: `sudo systemctl stop omarchy-try-session.service`. Bound via the `try` user's `~/.config/hypr/bindings.lua`, so the shipped `default/hypr` is untouched.
 - Nothing else. No wallpaper packs, no welcome app.
 
 ### 3. `configs/airootfs/root/.automated_script.sh`
@@ -157,13 +157,17 @@ The harness runs `-device virtio-vga` without GL (`:220`), so Hyprland renders o
 - `bin/omarchy-iso-test --try` (§7) in QEMU.
 - Real hardware, before the PR: an Intel iGPU laptop, an AMD laptop, a hybrid NVIDIA laptop, and a desktop with a discrete NVIDIA card as its only output. Record time-to-desktop from the Try keypress and `MemAvailable` after the session is up. Land those numbers in the PR body.
 
-## Spikes before implementation
+## Spike results (stock omarchy-4.0.2 ISO, QEMU, virtio-vga/llvmpipe, 8 GiB)
 
-1. **SDDM VT handoff.** `.automated_script.sh` holds tty1; confirm SDDM takes another VT, that `systemctl stop sddm` returns the console to tty1 cleanly, and that the greeter redraws. If it fights, run the session on a fixed VT (`sddm.conf` `[X11]`/`[Wayland]` doesn't pin one; `chvt` before start does).
-2. **Overlay resize.** `mount -o remount,size=` on `/run/archiso/cowspace` — verify against the shipped initramfs (it is a plain tmpfs, but confirm nothing holds it read-only).
-3. **Hook set.** Run the install with the five boot hooks masked and everything else live; record which remaining hooks cost more than a second. Anything expensive that the session does not need gets masked too.
-4. **`omarchy.desktop` under uwsm in the live root.** The session file assumes the installed system's environment; check `uwsm` finds the Hyprland config from `/etc/skel` for a user created at runtime.
-5. **llvmpipe in QEMU** for §7.
+Run against the shipped ISO with the exact sequence this design uses:
+
+1. **Overlay resize** — `mount -o remount,size=50% /run/archiso/cowspace` took the upper from 256M to 3.9G live. Works.
+2. **Install** — `pacman -Sy --needed --assume-installed {limine,limine-mkinitcpio-hook,limine-snapper-sync,snapper} omarchy mesa vulkan-radeon vulkan-intel networkmanager noto-fonts noto-fonts-emoji foot` resolved 146 packages, 1126 MiB installed, in **3.5 s** on this host. All 17 post-transaction hooks ran (ldconfig, sysusers, tmpfiles, fontconfig, gio, gsettings, gtk3 im, icon caches, desktop/mime) and **no `limine`/`mkinitcpio` hook fired** — the five `/dev/null` masks held. Overlay used 1.6 GiB after.
+3. **Network** — stopping iwd/networkd and starting NetworkManager left `nmcli device` reporting the wired link `connected`.
+4. **User + theme** — `useradd` + `omarchy-theme-set "Tokyo Night"` (headless) succeeded; `/home/try/.local/state/omarchy/current/` was populated and the Quickshell bar rendered the theme. Two harmless warnings under `runuser`: the theme-set flock lives at `${XDG_RUNTIME_DIR}/…` which is root's under `runuser` (the lock is best-effort; theme still applied), and `xdg-user-dirs-update` needs a real user session (skipped, `|| true`). omarchy-try runs both with `env HOME=…` and tolerates their failure.
+5. **Session / VT handoff — the design-changing result.** SDDM autologin brought the desktop up in ~1 s, **but SDDM claims VT1**: starting it deallocated the getty there and killed the configurator that had launched the try session, and stopping SDDM left VT1 blank — the greeter never came back. Relaunching needed `systemctl start getty@tty1`, which re-runs the whole `.automated_script.sh` (prefetch included), not the waiting configurator. Switching to a transient logind session — `systemd-run --unit=omarchy-try-session --uid=try -p PAMName=login -p TTYPath=/dev/tty7 … uwsm start … Hyprland` — brought Hyprland + Quickshell up in ~2 s on **VT7** and left the configurator alive on VT1 the entire time (`ps -t tty1` still showed it). This is why the design starts the session as a unit rather than through SDDM. `uwsm` found the `omarchy.desktop` session and started Hyprland with no extra environment beyond `XDG_SESSION_TYPE`/`XDG_SESSION_CLASS`.
+6. **Apps on demand** — `pacman -Sy chromium` from inside the live root pulled from `[offline]` in **0.66 s** (already in page cache). Confirms in-session installs are offline and instant.
+7. **llvmpipe** — Hyprland and Quickshell rendered under plain `virtio-vga` (software GL) without extra environment; no `WLR_RENDERER_ALLOW_SOFTWARE` needed on this QEMU. Real hardware with a GPU will be faster.
 
 ## Out of scope
 
