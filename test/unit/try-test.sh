@@ -88,6 +88,19 @@ pass "cleanup stops every service the setup started"
 sed -n '/^cleanup() {/,/^}/p' "$TRY" | grep -q 'systemctl start --no-block' || fail "cleanup restores the installer's network without waiting"
 pass "cleanup does not block restoring the installer's network"
 
+# The software fallback only has something to render to because nouveau is kept
+# off the card, so the parameter that does it is load-bearing for every NVIDIA
+# machine. It belongs on the UEFI cmdline and nowhere else: a BIOS boot has no
+# firmware framebuffer to fall back to, so it must keep nouveau and its console.
+GRUB="$ROOT/configs/grub/grub.cfg"
+(( $(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") == 2 )) || fail "blacklists nouveau on both UEFI boot entries" "$(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") found"
+grep -q 'set gfxmode="auto"' "$GRUB" || fail "leaves the boot resolution as upstream set it"
+[[ ! -e $ROOT/configs/airootfs/etc/modprobe.d/omarchy-try-nouveau.conf ]] || fail "does not blacklist nouveau for BIOS boots too"
+for f in "$ROOT"/configs/syslinux/*; do
+  ! grep -q 'nouveau' "$f" || fail "leaves the BIOS boot config alone" "$f"
+done
+pass "nouveau is kept off the card on UEFI boots only"
+
 # --- GPU selection helpers, sourced against sysfs fixtures -------------------
 eval "$(sed -n '/^is_firmware_fb() {/,/^}/p' "$TRY")"
 eval "$(sed -n '/^select_display_gpu() {/,/^}/p' "$TRY")"

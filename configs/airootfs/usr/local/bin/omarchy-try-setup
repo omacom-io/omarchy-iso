@@ -131,7 +131,10 @@ fi
 
 if ! id "$try_user" &>/dev/null; then
   useradd -m -G wheel,video,input,audio -s /bin/bash "$try_user" || fail "could not create the try user"
-  passwd -d "$try_user" >/dev/null
+  # Locked rather than empty: nothing can authenticate as this user. The session
+  # is started by systemd-run as root and never consults the password field, and
+  # sudo does not either (NOPASSWD below), so locking costs nothing.
+  passwd -l "$try_user" >/dev/null
 fi
 mkdir -p "${sudoers%/*}"
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$try_user" >"$sudoers"

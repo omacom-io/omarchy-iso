@@ -120,6 +120,11 @@ grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is u
 grep -q '^useradd -m -G wheel,video,input,audio -s /bin/bash try$' "$TEST_LOG" || fail "creates the try user"
 grep -q '^chown -R try:try .*/home/try$' "$TEST_LOG" || fail "hands the seeded home to the try user"
 [[ $(<"$sandbox/etc/sudoers.d/try") == 'try ALL=(ALL) NOPASSWD: ALL' ]] || fail "writes sudoers"
+# Locked, not empty: nothing can authenticate as this user, while NOPASSWD sudo
+# still works. The session is started by systemd-run as root, so it never
+# authenticates against the password field.
+grep -q '^passwd -l try$' "$TEST_LOG" || fail "locks the try user's password" "$(<"$TEST_LOG")"
+! grep -q '^passwd -d' "$TEST_LOG" || fail "does not leave the try user with an empty password"
 [[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] || fail "masks fcitx5"
 grep -q 'omarchy-try-install' "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
 grep -q '"finished_at": [1-9]' "$state" || fail "marks the state finished"
