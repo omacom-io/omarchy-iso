@@ -38,18 +38,19 @@ new_sandbox() {
 run() { PATH="$stub_dir:$PATH" "$TRY" "$sandbox"; }
 
 # Guards.
-new_sandbox 4028000 # what MemTotal reports on a nominal 4 GiB machine
+new_sandbox 2000000 # a 2 GiB machine cannot hold the set under any cap
 ! run 2>"$sandbox/err" || fail "low memory exits non-zero"
-grep -q '8 GiB' "$sandbox/err" || fail "low memory explains the floor" "$(<"$sandbox/err")"
+grep -q '4 GiB' "$sandbox/err" || fail "low memory explains the floor" "$(<"$sandbox/err")"
 ! grep -q '^omarchy-try-setup' "$TEST_LOG" || fail "low memory sets nothing up"
 pass "refuses below the memory floor without setting up"
 
-# MemTotal on a nominal 8 GiB machine is ~7.7 GiB after kernel reservations; the
-# floor has to admit it or the product's stated minimum never admits anyone.
-new_sandbox 7800000
-run >/dev/null 2>&1 || fail "a nominal 8 GiB machine is admitted"
-grep -q '^omarchy-try-setup' "$TEST_LOG" || fail "a nominal 8 GiB machine sets up"
-pass "admits a nominal 8 GiB machine"
+# MemTotal on a nominal 4 GiB machine reads ~3.8 GiB after kernel reservations.
+# Measured: such a machine runs the session, with zram holding ~1 GiB and the
+# browser open, so the floor has to admit it.
+new_sandbox 3992896
+run >/dev/null 2>&1 || fail "a nominal 4 GiB machine is admitted"
+grep -q '^omarchy-try-setup' "$TEST_LOG" || fail "a nominal 4 GiB machine sets up"
+pass "admits a nominal 4 GiB machine"
 
 new_sandbox
 rm "$sandbox/usr/share/omarchy-iso/try-packages"

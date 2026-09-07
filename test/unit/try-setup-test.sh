@@ -91,7 +91,7 @@ run() { PATH="$stub_dir:$PATH" "$SETUP" "$state" "${1:-no}" "$sandbox"; }
 # Happy path (no nvidia): every setup step runs and the state file finishes.
 new_sandbox
 run >/dev/null 2>&1 || fail "happy path exits zero"
-grep -q '^mount -o remount,size=50% .*/run/archiso/cowspace$' "$TEST_LOG" || fail "grows the overlay"
+grep -q '^mount -o remount,size=100% .*/run/archiso/cowspace$' "$TEST_LOG" || fail "grows the overlay to the whole of RAM"
 for h in 60-mkinitcpio-remove.hook 80-limine-efi-deploy.hook 90-mkinitcpio-install.hook; do
   [[ $(readlink "$sandbox/etc/pacman.d/hooks/$h") == /dev/null ]] || fail "masks $h"
 done
@@ -113,7 +113,12 @@ grep -q '^systemctl start systemd-zram-setup@zram0.service$' "$TEST_LOG" || fail
 zram_at=$(grep -n '^systemctl start systemd-zram-setup' "$TEST_LOG" | cut -d: -f1)
 gen_at=$(grep -n '^pacman -Sy --needed --noconfirm zram-generator$' "$TEST_LOG" | cut -d: -f1)
 set_at=$(grep -n '^pacman -S --needed' "$TEST_LOG" | cut -d: -f1)
-(( gen_at < zram_at && zram_at < set_at )) || fail "installs the generator, starts zram, then installs the set" "$(<"$TEST_LOG")"
+df_at=$(grep -n '^df -k --output=avail' "$TEST_LOG" | cut -d: -f1)
+# zram has to be up before the overlay is judged and before it is filled: the
+# check is asking whether the machine can hold the set, and compressed swap is
+# part of the answer.
+(( gen_at < zram_at && zram_at < df_at && df_at < set_at )) \
+  || fail "generator, zram, capacity check, then the install" "$(<"$TEST_LOG")"
 grep -q '^df -k --output=avail .*/run/archiso/cowspace$' "$TEST_LOG" || fail "checks the overlay's capacity"
 grep -q '^pacman -Qq$' "$TEST_LOG" || fail "asks pacman what is already installed"
 grep -q '^tzupdate' "$TEST_LOG" || fail "sets the timezone when the network is up"

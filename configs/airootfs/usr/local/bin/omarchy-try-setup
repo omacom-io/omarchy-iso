@@ -64,20 +64,8 @@ fail() { echo "omarchy-try-setup: $*" >&2; exit 1; }
 idx=0
 phase "$idx" "Preparing the live desktop"
 mapfile -t packages < <(awk '{ print $1 }' "$try_packages")
-mount -o remount,size=50% "$cowspace" || fail "could not grow the live overlay"
+mount -o remount,size=100% "$cowspace" || fail "could not grow the live overlay"
 
-# The overlay is a tmpfs capped at half of RAM; what the try set still has to
-# add to it (the list carries each package's installed size, and a second try
-# in the same boot finds most of it already there) has to fit with room for
-# the session to run. Say how far short a machine is rather than letting
-# pacman fail mid-transaction on a full overlay.
-need_kib=$(awk -v have="$(pacman -Qq | tr '\n' ' ')" \
-  'BEGIN { n = split(have, a, " "); for (i = 1; i <= n; i++) present[a[i]] = 1 }
-   !($1 in present) { kib += $3 }
-   END { print int((kib + 0) * 5 / 4) }' "$try_packages")
-avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
-(( avail_kib >= need_kib )) ||
-  fail "the live overlay has $(( avail_kib / 1024 )) MiB free; the desktop needs $(( need_kib / 1024 )) MiB"
 
 # Compressed swap before the install starts filling that overlay, not after.
 # zram-generator is a 1 MiB package on the stick; omarchy-settings (already in
@@ -93,6 +81,20 @@ pacman -Sy --needed --noconfirm zram-generator || fail "could not install zram-g
 systemctl daemon-reload
 systemctl start systemd-zram-setup@zram0.service ||
   echo "omarchy-try-setup: no zram; the desktop runs without compressed swap." >&2
+
+# Only now is the overlay worth judging: it is a tmpfs the size of RAM, and the
+# compressed swap that makes filling it survivable is up. What the try set still
+# has to add (the list carries each package's installed size, and a second try
+# in the same boot finds most of it already there) has to fit with room for the
+# session. Say how far short a machine is rather than letting pacman fail
+# mid-transaction on a full overlay.
+need_kib=$(awk -v have="$(pacman -Qq | tr '\n' ' ')" \
+  'BEGIN { n = split(have, a, " "); for (i = 1; i <= n; i++) present[a[i]] = 1 }
+   !($1 in present) { kib += $3 }
+   END { print int((kib + 0) * 5 / 4) }' "$try_packages")
+avail_kib=$(df -k --output=avail "$cowspace" | tail -1)
+(( avail_kib >= need_kib )) ||
+  fail "the live overlay has $(( avail_kib / 1024 )) MiB free; the desktop needs $(( need_kib / 1024 )) MiB"
 
 mkdir -p "$hooks_dir"
 for hook in "${deferred_boot_hooks[@]}"; do ln -sfn /dev/null "$hooks_dir/$hook"; done
