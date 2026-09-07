@@ -131,7 +131,7 @@ draw_greeter() {
   printf '\033[%d;%dH\033[2m%s\033[0m' "$hint_row" "$((hpad + 1))" "$hint"
 
   local try_hint try_pad
-  try_hint="or T to try Omarchy first, without installing"
+  try_hint="or Ctrl+T to try Omarchy first, without installing"
   try_pad=$(((cols - ${#try_hint}) / 2)); (( try_pad < 0 )) && try_pad=0
   printf '\033[%d;%dH\033[2m%s\033[0m' "$((hint_row + 1))" "$((try_pad + 1))" "$try_hint"
 
@@ -168,13 +168,14 @@ draw_greeter() {
     </dev/null >/dev/tty 2>/dev/null &
   anim=$!
 
-  # Return starts the install; T starts a try session. Anything else is
+  # Return starts the install; Ctrl+T starts a try session. Anything else is
   # ignored, so a stray key can never advance the greeter.
   local key status=0
   while IFS= read -rsn1 key </dev/tty; do
     case $key in
       "") break ;;
-      t|T) status=130; break ;;
+      $'\x14') status=130; break ;; # ^T
+      t|T) status=130; break ;;     # plain T still works as a fallback
     esac
   done
   # Tolerate ttfx's kill signal in `wait` so a future `set -e` here can't abort.
@@ -190,7 +191,7 @@ draw_greeter() {
 }
 
 # The greeter owns the Try loop so the rest of the configurator never sees it:
-# Return falls through to the keyboard step exactly as before; T runs a try
+# Return falls through to the keyboard step exactly as before; Ctrl+T runs a try
 # session and, when it ends, draws the greeter again.
 greeter() {
   while :; do

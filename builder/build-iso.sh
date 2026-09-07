@@ -131,27 +131,24 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 #
 # Two kernels are shipped and both get an initramfs (see customize_airootfs.sh):
 #   - linux-t2   — the T2/Mac kernel (keyboard + trackpad on T2 Macs).
-#   - linux      — the stock kernel, now the default try-desktop boot (broadest
-#                  generic-PC hardware support, and the only kernel the prebuilt
-#                  nvidia driver targets).
-# NVIDIA support for the live desktop uses NVIDIA's OPEN driver, nvidia-open-dkms,
-# paired with the stock linux kernel. The module is COMPILED ONCE AT ISO-BUILD
-# TIME against the stock linux headers (see customize_airootfs.sh: it runs dkms
-# autoinstall and then rebuilds the linux initramfs with the nvidia modules baked
-# in), so the stock-linux try-desktop boot gets NVIDIA modesetting with NO DKMS
-# compile at live boot. After the build the heavyweight build-only packages
-# (linux-headers, dkms) are removed to keep the medium lean. The linux-t2 boot is
-# NOT given the nvidia module (ABI mismatch) — T2 Macs use Mesa/IGP and never
-# need it. nvidia-settings is intentionally absent: it pulls GTK deps for a
-# control panel, against the size budget. The INSTALLED system gets its NVIDIA
-# (nvidia-open-dkms, built at install time by the omarchy nvidia.sh hardware
-# script) from its own offline mirror, unchanged.
+#   - linux      — the stock kernel: the installer-greeter default AND the kernel
+#                  the Try/install sessions boot (broadest generic-PC hardware
+#                  support). The mac and accessibility grub entries run linux-t2.
+# NO graphics driver is prebaked into either initramfs, and nouveau is blacklisted
+# on the UEFI boots (see configs/grub/grub.cfg): the live desktop renders on the
+# firmware framebuffer instead of dead-looping on an NVIDIA panel it cannot
+# modeset. When an NVIDIA panel is actually detected, the try/install session
+# installs the proprietary driver on demand from the offline mirror (the omarchy
+# nvidia script, nvidia-open-dkms/nvidia-utils). The INSTALLED system likewise
+# gets its NVIDIA (nvidia-open-dkms, built at install time by the omarchy
+# nvidia.sh hardware script) from its own offline mirror. nvidia-settings is
+# intentionally absent: it pulls GTK deps for a control panel, against the size
+# budget.
 arch_packages=(
   linux linux-t2 git gum jq openssl plymouth ttfx tzupdate omarchy-keyring
   "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted
   polkit foot
   xdg-terminal-exec nautilus nautilus-python chromium fastfetch gnome-disk-utility
-  nvidia-open-dkms nvidia-utils linux-headers base-devel
 )
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 

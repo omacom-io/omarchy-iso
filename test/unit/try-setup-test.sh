@@ -127,6 +127,11 @@ grep -q '^passwd -l try$' "$TEST_LOG" || fail "locks the try user's password" "$
 ! grep -q '^passwd -d' "$TEST_LOG" || fail "does not leave the try user with an empty password"
 [[ $(readlink "$sandbox/home/try/.config/systemd/user/omarchy-fcitx5.service") == /dev/null ]] || fail "masks fcitx5"
 grep -q 'omarchy-try-install' "$sandbox/home/try/.config/hypr/bindings.lua" || fail "adds the install binding"
+[[ -f "$sandbox/home/try/.local/share/applications/omarchy-install.desktop" ]] || fail "writes the Install Omarchy desktop entry"
+grep -q 'OMARCHY_LIVE_USER=try' "$sandbox/home/try/.local/share/applications/omarchy-install.desktop" || fail "desktop entry targets the try session"
+[[ -f "$sandbox/home/try/.config/omarchy/extensions/omarchy-menu.jsonc" ]] || fail "writes the Install Omarchy menu extension"
+grep -q 'omarchy-live-install' "$sandbox/home/try/.config/omarchy/extensions/omarchy-menu.jsonc" || fail "menu extension launches the installer"
+grep -q 'sudo -n' "$sandbox/home/try/.config/omarchy/extensions/omarchy-menu.jsonc" || fail "menu extension uses passwordless sudo (the try account is locked)"
 grep -q '"finished_at": [1-9]' "$state" || fail "marks the state finished"
 grep -q '"total_phases": 3' "$state" || fail "reports 3 phases without nvidia"
 pass "omarchy-try-setup runs every step and finishes the progress state"
@@ -157,6 +162,8 @@ COWSPACE_AVAIL_KIB=1400000 run >/dev/null 2>"$sandbox/err2" || fail "second run 
 (( $(grep -c useradd "$TEST_LOG") == 1 )) || fail "does not recreate the user"
 (( $(grep -c omarchy-try-install "$sandbox/home/try/.config/hypr/bindings.lua") == 1 )) || fail "appends the install binding once" "$(<"$sandbox/home/try/.config/hypr/bindings.lua")"
 (( $(grep -c omarchy-try-welcome "$sandbox/home/try/.config/hypr/autostart.lua") == 1 )) || fail "appends the welcome autostart once"
+[[ -f "$sandbox/home/try/.local/share/applications/omarchy-install.desktop" ]] || fail "keeps the desktop entry on re-run"
+[[ -f "$sandbox/home/try/.config/omarchy/extensions/omarchy-menu.jsonc" ]] || fail "keeps the menu extension on re-run"
 pass "omarchy-try-setup is safe to run twice"
 
 # The session needs NetworkManager; a failed start is a failed setup, not "Ready".

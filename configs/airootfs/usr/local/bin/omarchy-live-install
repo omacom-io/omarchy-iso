@@ -1,30 +1,45 @@
 #!/usr/bin/env bash
 #
-# Launch the Omarchy installer from the live desktop.
+# Launch the Omarchy installer from a live session (the live desktop, or a
+# "Try Omarchy" session started from the installer greeter).
 #
-# Intended to be run (as root, via pkexec) from the Omarchy live desktop. It
+# Intended to be run as root (via pkexec on the live desktop, or via the
+# NOPASSWD sudo a Try session grants) from Omarchy's live/Try session. It
 # opens the installer wizard (configurator + install dashboard) in a graphical
 # foot terminal so the user can install Omarchy without leaving the desktop.
 #
-# pkexec strips the environment, so we recover the display (the live user's
+# pkexec strips the environment, so we recover the display (the session user's
 # Wayland socket and XDG_RUNTIME_DIR) from a helper that still holds it.
 set -euo pipefail
 
-[[ $EUID -eq 0 ]] || { echo "omarchy-live-install must run as root (pkexec)." >&2; exit 1; }
+[[ $EUID -eq 0 ]] || { echo "omarchy-live-install must run as root (pkexec or sudo)." >&2; exit 1; }
 
-# The live user's interactive Wayland session env. Prefer foot; fall back to the
-# user's default terminal via foot's own xdg-terminal-exec resolution if absent.
+# The session user's interactive Wayland session env. Prefer foot; fall back to
+# the user's default terminal via foot's own xdg-terminal-exec resolution if
+# absent.
 terminal_cmd=(foot)
 
-# Find a process owned by the live desktop user that has a Wayland socket.
-# Anything on the graphical session carries it; the shell/bar/store do.
-LIVE_UID="$(
-  getent passwd live | cut -d: -f3 2>/dev/null
-)"
+# Which live/session user are we? The launcher passes OMARCHY_LIVE_USER (the
+# try session does this), but fall back to auto-detecting the first live/try
+# user running a Wayland session.
+session_users=()
+[[ -n ${OMARCHY_LIVE_USER:-} ]] && session_users+=("$OMARCHY_LIVE_USER")
+for fallback in live try; do
+  if getent passwd "$fallback" >/dev/null 2>&1; then
+    session_users+=("$fallback")
+  fi
+done
+
+found_session() { [[ -n $runtime_dir && -n $wayland_display ]]; }
+
 runtime_dir=""
 wayland_display=""
-if [[ -n $LIVE_UID ]]; then
-  for pid in $(pgrep -u "$LIVE_UID" 2>/dev/null); do
+for session_user in "${session_users[@]}"; do
+  # Find a process owned by the session user that has a Wayland socket.
+  # Anything on the graphical session carries it; the shell/bar/store do.
+  local_uid="$(getent passwd "$session_user" | cut -d: -f3 2>/dev/null)"
+  [[ -n $local_uid ]] || continue
+  for pid in $(pgrep -u "$local_uid" 2>/dev/null); do
     if [[ -r /proc/$pid/environ ]]; then
       envfile="/proc/$pid/environ"
       if grep -qz '^WAYLAND_DISPLAY=' "$envfile" 2>/dev/null; then
@@ -34,10 +49,13 @@ if [[ -n $LIVE_UID ]]; then
       fi
     fi
   done
-fi
+  if found_session; then
+    break
+  fi
+done
 
 if [[ -z $runtime_dir || -z $wayland_display ]]; then
-  echo "Could not find the live desktop's Wayland session." >&2
+  echo "Could not find the live/Try session's Wayland session." >&2
   exit 1
 fi
 

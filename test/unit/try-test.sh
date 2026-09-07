@@ -92,8 +92,13 @@ pass "cleanup does not block restoring the installer's network"
 # off the card, so the parameter that does it is load-bearing for every NVIDIA
 # machine. It belongs on the UEFI cmdline and nowhere else: a BIOS boot has no
 # firmware framebuffer to fall back to, so it must keep nouveau and its console.
+# With no graphics driver prebaked into the live initramfs, EVERY UEFI entry
+# carries it — the installer greeter (Ctrl+T), the live desktop, the nomodeset
+# fallback, and the screen-reader entry — except the Mac desktop (omarchy-live-t2),
+# which never meets an NVIDIA panel. A new entry with a new kernel param must
+# remember this or NVIDIA machines lose their display.
 GRUB="$ROOT/configs/grub/grub.cfg"
-(( $(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") == 2 )) || fail "blacklists nouveau on both UEFI boot entries" "$(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") found"
+(( $(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") == 4 )) || fail "blacklists nouveau on every UEFI boot entry (except linux-t2)" "$(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") found"
 grep -q 'set gfxmode="auto"' "$GRUB" || fail "leaves the boot resolution as upstream set it"
 [[ ! -e $ROOT/configs/airootfs/etc/modprobe.d/omarchy-try-nouveau.conf ]] || fail "does not blacklist nouveau for BIOS boots too"
 for f in "$ROOT"/configs/syslinux/*; do

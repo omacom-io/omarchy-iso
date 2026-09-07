@@ -156,6 +156,47 @@ o.launch_on_start("omarchy-try-welcome")
 LUA
 # fcitx5 isn't in the try set; mask its user service so it doesn't crash-loop.
 ln -sfn /dev/null "$home/.config/systemd/user/omarchy-fcitx5.service"
+
+# --- "Install Omarchy" entry in the menus + launcher of the try session -------
+# The same .desktop + command-menu extension the omarchy.live desktop carries,
+# but for the try user. Picking it runs omarchy-live-install, which opens foot
+# (the try session's default terminal) on the configurator + install dashboard.
+# The launcher passes OMARCHY_LIVE_USER=try so the root helper finds the *try*
+# session's Wayland socket rather than the live-desktop one. It uses `sudo -n`,
+# not pkexec: the try account is deliberately locked (no password), so a polkit
+# prompt could never succeed; the NOPASSWD sudoers entry already grants root
+# without one. Guarded by existence checks so a second T in the same boot does
+# not duplicate anything.
+install -d "$home/.local/share/applications" "$home/.config/omarchy/extensions"
+if [[ ! -f "$home/.local/share/applications/omarchy-install.desktop" ]]; then
+  cat > "$home/.local/share/applications/omarchy-install.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Install Omarchy
+Comment=Install Omarchy to this machine from the live session
+Exec=sudo -n OMARCHY_LIVE_USER=try omarchy-live-install
+Icon=system-installer
+Terminal=false
+Categories=System;
+Keywords=Install;Omarchy;Setup;
+EOF
+fi
+if [[ ! -f "$home/.config/omarchy/extensions/omarchy-menu.jsonc" ]]; then
+  cat > "$home/.config/omarchy/extensions/omarchy-menu.jsonc" <<'EOF'
+{
+  // Live session only: install Omarchy from the desktop, without restarting.
+  "install-omarchy": {
+    "icon": "\uf101",
+    "label": "Install Omarchy",
+    "description": "Install Omarchy to this machine from the live session",
+    "action": "sudo -n OMARCHY_LIVE_USER=try omarchy-live-install"
+  }
+}
+EOF
+fi
+id "$try_user" &>/dev/null && chown -R "$try_user:$try_user" "$home/.local" "$home/.config/omarchy"
+command -v update-desktop-database >/dev/null 2>&1 &&
+  update-desktop-database "$home/.local/share/applications" >/dev/null 2>&1 || true
 id "$try_user" &>/dev/null && chown -R "$try_user:$try_user" "$home"
 
 runuser -u "$try_user" -- env HOME="$home" OMARCHY_THEME_HEADLESS=1 \

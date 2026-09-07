@@ -16,9 +16,10 @@
 # /usr/local/bin/mkinitcpio shadows it and aborts looking for an ESP.
 #
 # Every installed kernel is built, so the live medium ships both stock linux
-# (the default try-desktop boot) and linux-t2 (T2/Mac keyboards and trackpads).
-# Each kernel package installs /usr/lib/modules/<kver>/vmlinuz, records its
-# pkgbase in /usr/lib/modules/<kver>/pkgbase, and ships the matching
+# (the installer-greeter default and the Try/install kernel) and linux-t2 (the
+# kernel of last resort for T2/Mac keyboards and trackpads). Each kernel package
+# installs /usr/lib/modules/<kver>/vmlinuz, records its pkgbase in
+# /usr/lib/modules/<kver>/pkgbase, and ships the matching
 # /etc/mkinitcpio.d/<pkgbase>.preset. We write the archiso presets ourselves so
 # a kernel package's default preset cannot diverge from the archiso initramfs
 # the boot loaders reference, then build one per kernel.
@@ -36,49 +37,21 @@ rm -f \
   /usr/share/libalpm/hooks/90-limine-mkinitcpio-remove-post.hook \
   /usr/share/libalpm/hooks/10-limine-snapper-lock.hook
 
-# Identify the stock linux kernel's version.
-linux_kver=""
-for kver in /usr/lib/modules/*/; do
-  kver="${kver%/}"
-  [[ -f "$kver/pkgbase" ]] || continue
-  pkgbase="$(cat "$kver/pkgbase")"
-  if [[ $pkgbase == "linux" ]]; then
-    linux_kver="${kver##*/}"
-  fi
-done
-
-# 2. Compile the NVIDIA open driver (nvidia-open-dkms) ONCE here, at ISO-build
-#    time, for the stock linux kernel using the linux-headers + base-devel
-#    installed into this chroot. This drops the nvidia modules under
-#    /usr/lib/modules/<linux-kver>/updates/dkms/, which the linux initramfs
-#    below then bakes in. The result: the stock-linux try-desktop boot gets
-#    NVIDIA modesetting with NO DKMS compile at live boot. linux-t2 has no
-#    nvidia module (ABI mismatch; T2 Macs use Mesa/IGP) and is left untouched.
-nvidia_present=0
-if [[ -n $linux_kver && -d /usr/src && $(find /usr/src -maxdepth 1 -type d -name 'nvidia-open-*' 2>/dev/null | wc -l) -gt 0 ]]; then
-  echo "customize_airootfs.sh: building nvidia-open-dkms for linux $linux_kver"
-  if dkms autoinstall -k "$linux_kver"; then
-    if compgen -G "/usr/lib/modules/$linux_kver/updates/dkms/nvidia*.ko*" >/dev/null; then
-      nvidia_present=1
-    fi
-  else
-    echo "customize_airootfs.sh: nvidia-open-dkms DKMS build failed; the linux initramfs will omit nvidia" >&2
-  fi
-fi
-
-# 3. Write the canonical archiso presets for every kernel we boot, so the build
-#    is deterministic regardless of what a kernel package shipped. The stock
-#    linux preset uses the NVIDIA config (nvidia modules baked in) when the
-#    driver compiled at step 2; otherwise it falls back to the plain config so a
-#    DKMS hiccup degrades gracefully instead of hard-failing the ISO. linux-t2
-#    always uses the plain config.
+# 2. Write the canonical archiso presets for every kernel we boot, so the build
+#    is deterministic regardless of what a kernel package shipped. Both stock
+#    linux and linux-t2 use the plain archiso.conf, i.e. a generic initramfs —
+#    deliberately nothing graphics is baked into it. The grub entries blacklist
+#    nouveau on the UEFI-only boots (the live desktop then renders on the
+#    firmware framebuffer instead of dead-looping on an NVIDIA panel it cannot
+#    modeset), and the proprietary driver is installed on demand inside a
+#    Try/install session only when an NVIDIA panel is actually detected.
 mkdir -p /etc/mkinitcpio.d
 
-cat > /etc/mkinitcpio.d/linux.preset <<EOF
+cat > /etc/mkinitcpio.d/linux.preset <<'EOF'
 # mkinitcpio preset for the stock 'linux' kernel on the Omarchy live medium.
 PRESETS=('archiso')
 ALL_kver='/boot/vmlinuz-linux'
-archiso_config='/etc/mkinitcpio.conf.d/$([ "$nvidia_present" = 1 ] && echo archiso-nvidia.conf || echo archiso.conf)'
+archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
 archiso_image="/boot/initramfs-linux.img"
 EOF
 
@@ -90,11 +63,8 @@ archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
 archiso_image="/boot/initramfs-linux-t2.img"
 EOF
 
-# 4. Stage each kernel's vmlinuz where its preset names, then build the live
-#    initramfs (/boot/initramfs-<pkgbase>.img) through the real mkinitcpio. The
-#    linux preset points at archiso-nvidia.conf, whose MODULES list the nvidia
-#    modules — present now because step 2 compiled them — so they end up inside
-#    /boot/initramfs-linux.img.
+# 3. Stage each kernel's vmlinuz where its preset names, then build the live
+#    initramfs (/boot/initramfs-<pkgbase>.img) through the real mkinitcpio.
 built=0
 for kver in /usr/lib/modules/*/; do
   kver="${kver%/}"
@@ -109,16 +79,4 @@ done
 if ((built == 0)); then
   echo "customize_airootfs.sh: no kernel found under /usr/lib/modules" >&2
   exit 1
-fi
-
-# 5. Size hygiene: the nvidia module is baked into the live initramfs (step 2+4),
-#    so the heavyweight build-only packages needed only to compile it have no
-#    further purpose on the live medium. linux-headers is the large one
-#    (~1.5-2GB); gcc/make/binutils are the rest of the compiler from base-devel.
-#    Remove them without dependency resolution (-Rdd) so nothing cascades away
-#    and gcc-libs / binutils-libs (which live apps link against) are kept. dkms
-#    is kept too: nvidia-open-dkms lists it as a runtime dependency, and keeping
-#    that dependency unbroken is worth its small footprint.
-if [[ -n $linux_kver ]]; then
-  pacman --noconfirm -Rdd linux-headers gcc make binutils 2>/dev/null || true
 fi

@@ -607,14 +607,12 @@ audio-panel|meta_l-ctrl-a|omarchy-keyboard-panel|omarchy.audio'
 
 # ----------------------------------------------------- driving the installer
 
-# The ISO default boot entry is the live desktop (stock linux). The TTY
-# installer lives on its own grub entry placed at menu index 1 — immediately
-# after the default `omarchy-live` entry — so a single Down + Return from the
-# default lands on it. Detect the menu (grub renders the "Try the desktop"
-# default and an "Install" item) and send Down + Return. Falls back to a timed
-# press so we still beat grub's auto-boot even if OCR cannot read the graphical
-# menu. NOTE: keep the `omarchy-install` entry at index 1 in configs/grub/grub.cfg
-# or this navigation breaks.
+# The ISO default boot entry is the TTY installer greeter (index 0), so a plain
+# Return from the default lands on it. Detect the menu (grub renders an
+# "Install" item) and send Return to confirm the highlighted default. Falls back
+# to a timed press so we still beat grub's auto-boot even if OCR cannot read the
+# graphical menu. NOTE: keep the `omarchy-install` entry at index 0 in
+# configs/grub/grub.cfg or this navigation breaks.
 boot_installer_entry() {
   log "Selecting the TTY installer entry from the boot menu"
   # Watch for the menu (grub renders an "Install" item) but never exceed grub's
@@ -631,19 +629,17 @@ boot_installer_entry() {
     ((waited += 3))
   done
   capture_console "success-boot-01-select-installer-entry"
-  press down
-  sleep 1
   press ret
   log "Booted into the installer entry."
 }
 
-# T on the greeter installs the desktop into the live overlay and starts a
+# Ctrl+T on the greeter installs the desktop into the live overlay and starts a
 # session. The desktop announces itself on the serial console (OCR cannot read
 # a Wayland session reliably and the live root has no SSH key); Super+Shift+I
 # then ends the session and the greeter comes back.
 drive_try_session() {
   log "Starting a Try Omarchy session"
-  press t
+  press ctrl-t
   sleep 5
   capture_console "success-try-01-installing"
 

@@ -30,9 +30,11 @@ Use `--dev` or `--rc` to build against those package channels. Both `--dev` and 
 
 ## Live desktop
 
-The ISO's default boot entry lands in a live Omarchy desktop (Hyprland + Quickshell) so you can try the environment before installing. A dedicated `live` user session is started by SDDM from `/etc/skel` — the same config that appears after an install — and an **Install Omarchy** launcher row opens the installer wizard inside a terminal on the desktop.
+The ISO boots to a menu whose default entry is the TTY installer greeter (`"Omarchy - Install"`, kernel cmdline `omarchy.install`, stock `linux`). It stays up for the 15s timeout so you can instead pick the full live desktop (`omarchy.live`), a `nomodeset` GPU fallback, or the Mac/T2 kernel before it auto-boots the installer.
 
-The classic TTY installer is still available as a separate boot-menu entry ("Omarchy - Install (TTY wizard)", kernel cmdline `omarchy.install`). The desktop and TTY boots are distinguished by the `omarchy.live` kernel command line; the TTY path, including the headless cidata autoinstall used by the acceptance/integration harnesses, is unchanged. The acceptance harness selects the TTY entry from the boot menu before driving the wizard.
+At the greeter, **Return** starts the install; **Ctrl+T** boots Try Omarchy — a full live desktop (Hyprland + Quickshell) running from the USB stick with nothing written to your disk. The try session carries an **Install Omarchy** launcher/menu entry that opens the installer wizard inside its default terminal (foot), so you can try first and still install from inside the session. `Super+Shift+I` returns you to the greeter without installing.
+
+The desktop boots are distinguished by the `omarchy.live` kernel command line from the installer's `omarchy.install`. A dedicated `live` user session is started by SDDM from `/etc/skel` — the same config that appears after an install. Both stock-linux boots (install and live desktop) run on the same kernel; `linux-t2` is reserved for the Mac and screen-reader entries. The TTY path, including the headless cidata autoinstall used by the acceptance/integration harnesses, is unchanged; the harness boots the default entry and drives the wizard.
 
 ## Autoinstall
 
