@@ -1,0 +1,901 @@
+#!/usr/bin/env bash
+# Foreground Omarchy ISO install UI supervisor.
+#
+# This process is the only owner of the visible install UI. It launches the
+# actual installer as a non-interactive child, sends child output to the support
+# log, renders progress while the child runs, then renders the final installed
+# time + reboot prompt itself. There is deliberately no background dashboard.
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 <log-file> <state-file> -- <installer command...>" >&2
+  exit 2
+}
+
+(( $# >= 4 )) || usage
+LOG_FILE="$1"
+STATE_FILE="$2"
+shift 2
+[[ ${1:-} == "--" ]] || usage
+shift
+(( $# > 0 )) || usage
+INSTALL_CMD=("$@")
+
+TTY_PATH="${OMARCHY_DASHBOARD_TTY:-/dev/tty}"
+LOGO_PATH="${OMARCHY_PATH:-/usr/share/omarchy}/logo.txt"
+
+# Autoinstall has no one at the keyboard, and every prompt this dashboard owns
+# reads from the TTY, so each would hang forever. Suppress them here rather than
+# in the scripts they live in: this process is the only owner of the visible UI.
+interactive() { [[ ${OMARCHY_UI_INTERACTIVE:-} != "no" ]]; }
+
+CSI=$'\033['
+RESET="${CSI}0m"
+DIM="${CSI}2m"
+HIDE_CURSOR="${CSI}?25l"
+SHOW_CURSOR="${CSI}?25h"
+CLEAR="${CSI}2J${CSI}H"
+CLEAR_LINE="${CSI}2K"
+CLEAR_TO_END="${CSI}J"
+GREEN="${CSI}32m"
+WHITE="${CSI}37m"
+RED="${CSI}31m"
+DARK="${CSI}90m"
+
+# The dashboard owns the final reboot prompt now, so keep the gum confirm
+# styling that used to come from install/helpers/presentation.sh.
+export GUM_CONFIRM_PROMPT_FOREGROUND="${GUM_CONFIRM_PROMPT_FOREGROUND:-6}"
+export GUM_CONFIRM_SELECTED_FOREGROUND="${GUM_CONFIRM_SELECTED_FOREGROUND:-0}"
+export GUM_CONFIRM_SELECTED_BACKGROUND="${GUM_CONFIRM_SELECTED_BACKGROUND:-2}"
+export GUM_CONFIRM_UNSELECTED_FOREGROUND="${GUM_CONFIRM_UNSELECTED_FOREGROUND:-7}"
+export GUM_CONFIRM_UNSELECTED_BACKGROUND="${GUM_CONFIRM_UNSELECTED_BACKGROUND:-0}"
+
+child_pid=""
+child_pgid=""
+
+tips=(
+  "Super + Space opens the Omarchy menu for apps, settings, and more"
+  "Super + K shows all the key bindings"
+  "Super is the Windows or command key on your keyboard"
+  "Use Xournal++ to sign PDFs"
+  "Share files with phones and laptops using LocalSend"
+  "Turn any website into an app with Install > Web App in the menu"
+  "Super + Return opens a terminal, Super + Shift + Return the browser"
+  "Edit images with Pinta, videos with Kdenlive, docs with LibreOffice"
+  "Super + Ctrl + Print grabs text off the screen with OCR"
+  "Print takes a screenshot, Alt + Print records the screen"
+  "Set a reminder with Super + Ctrl + R"
+  "Switch themes from Style > Theme in the Omarchy menu"
+  "Double-click the menu bar to make it transparent"
+  "Run a full Windows VM via Install > Windows in the menu"
+  "Super + Ctrl + V opens the clipboard manager"
+  "Super + 1 through 0 switches workspaces, add Shift to bring the window"
+  "Super + Print picks a color from anywhere on screen"
+  "Keep the system fresh with Update in the Omarchy menu"
+)
+
+cleanup() {
+  printf '%s%s' "$RESET" "$SHOW_CURSOR" >"$TTY_PATH" 2>/dev/null || true
+}
+
+dashboard_log() {
+  printf '[dashboard] %s\n' "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+stop_child() {
+  [[ -n ${child_pid:-} ]] || return 0
+  if kill -0 "$child_pid" 2>/dev/null; then
+    if [[ -n ${child_pgid:-} ]]; then
+      kill -- -"$child_pgid" 2>/dev/null || true
+    fi
+    kill "$child_pid" 2>/dev/null || true
+    for _ in {1..20}; do
+      kill -0 "$child_pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    if kill -0 "$child_pid" 2>/dev/null; then
+      [[ -n ${child_pgid:-} ]] && kill -9 -- -"$child_pgid" 2>/dev/null || true
+      kill -9 "$child_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$child_pid" 2>/dev/null || true
+}
+
+interrupt() {
+  local code="$1"
+  stop_child
+  cleanup
+  exit "$code"
+}
+
+trap cleanup EXIT
+trap 'interrupt 130' INT
+trap 'interrupt 143' TERM
+
+term_size() { stty size 2>/dev/null <"$TTY_PATH" || printf '24 80\n'; }
+term_cols() { local size; size="$(term_size)"; printf '%s\n' "${size#* }"; }
+
+repeat() {
+  local char="$1" count="$2" out="" i
+  for ((i=0; i<count; i++)); do out+="$char"; done
+  printf '%s' "$out"
+}
+
+logo_width() {
+  if [[ -f $LOGO_PATH ]]; then
+    # The logo is drawn in box-drawing glyphs, three bytes each in UTF-8, so
+    # awk's `length` returns 197 rather than 81 unless the locale happens to be
+    # UTF-8 — and a width wider than the console makes left_padding clamp to
+    # zero, which puts the logo flush left. Count bytes deliberately (LC_ALL=C)
+    # and drop the continuation bytes instead, so the answer is columns in every
+    # locale rather than only in the ones that have a charset.
+    LC_ALL=C awk '
+      { gsub(/[\200-\277]/, ""); if (length > max) max = length }
+      END { print max+0 }
+    ' "$LOGO_PATH"
+  else
+    printf '81\n'
+  fi
+}
+
+logo_height() {
+  if [[ -f $LOGO_PATH ]]; then
+    wc -l <"$LOGO_PATH"
+  else
+    printf '1\n'
+  fi
+}
+
+LOGO_WIDTH="$(logo_width)"
+LOGO_HEIGHT="$(logo_height)"
+(( LOGO_WIDTH > 0 )) || LOGO_WIDTH=81
+(( LOGO_HEIGHT > 0 )) || LOGO_HEIGHT=1
+CONTENT_WIDTH="$LOGO_WIDTH"
+# Rows the progress screen occupies: logo, blank, title, blank, bar, blank, tip.
+PROGRESS_HEIGHT=$((LOGO_HEIGHT + 6))
+TOP_ROW=1
+DYNAMIC_ROW=$((LOGO_HEIGHT + 3))
+LAST_SIZE=""
+LAST_PM=10
+# The finish screen mirrors the greeter's frame — logo, blank, one line, gap,
+# one button — so the last thing the installer shows matches the first. It runs
+# one row taller: `gum confirm` always paints prompt/blank/button and clears all
+# three, so the button cannot sit closer than two rows under a title we drew.
+FINISH_HEIGHT=$((LOGO_HEIGHT + 5))
+FINISH_TOP_ROW=2
+
+# ── Install progress ─────────────────────────────────────────────────────────
+#
+# Position = max(floor, work), both non-decreasing, in per-mille of the bar.
+#
+#   floor  lo + (span-1) * t / (t+tau), on time since this process saw the
+#          phase. Asymptotic, so it approaches the band end without reaching it.
+#          tau is a shape constant, not a duration prediction.
+#   work   packages installed / PKG_TOTAL, for the package phase only (~85% of
+#          the install). libalpm makes one directory per package under
+#          <target>/var/lib/pacman/local; the denominator comes from
+#          build-iso.sh, so there is no second package list to drift.
+#
+# Per-mille because a whole-percent asymptote over a 2-point band has two
+# reachable values and stops moving. No give-up predicate: two discontinuous
+# curves behind a monotonic clamp freeze. With no signal the floor alone still
+# finishes the band.
+EXPECTED_PACKAGES_FILE="${OMARCHY_EXPECTED_PACKAGES_FILE:-/usr/share/omarchy-iso/expected-packages}"
+PKG_TOTAL=0
+if [[ -r $EXPECTED_PACKAGES_FILE ]]; then
+  read -r PKG_TOTAL _ <"$EXPECTED_PACKAGES_FILE" 2>/dev/null || PKG_TOTAL=0
+fi
+[[ $PKG_TOTAL =~ ^[0-9]+$ ]] || PKG_TOTAL=0
+# A wrong denominator is worse than none: it never triggers the fallback.
+(( PKG_TOTAL < 300 || PKG_TOTAL > 5000 )) && PKG_TOTAL=0
+
+PKG_BONUS_MAX_PM=100   # cap on how far the bar may run ahead of the count
+PKG_TAIL_PM=40         # band held back so a stalled bar has somewhere to go
+PKG_FLOOR_TAU=900      # with a work signal, time is only a backstop until the
+                       # first package, so slow it until it cannot outrun data
+
+POS=10                 # position, per-mille, monotonic
+PROGRESS_PM=10
+NOW=0                  # monotonic seconds, refreshed once per frame
+DASH_T0=0
+PHASE_NAME=""          # last phase this process observed
+PHASE_T0=0             # NOW when it was first observed
+PHASE_LO=10            # POS on entry, for an unknown phase with no index
+PKG_DB_DIR=""
+PKG_COUNT=0
+PKG_BASE=-1            # package count when the phase started
+PKG_SEEN=0             # running max of packages since PKG_BASE
+PKG_LAST_CHANGE=0
+PKG_BONUS=0
+
+# Monotonic clock: tzupdate and systemd-timesyncd can step the wall clock
+# mid-install, which would jump every time-driven band to its ceiling.
+set_now() {
+  local up rest
+  if read -r up rest </proc/uptime 2>/dev/null && [[ $up == [0-9]* ]]; then
+    NOW=${up%%.*}
+  else
+    NOW=$EPOCHSECONDS
+  fi
+  return 0
+}
+
+left_padding() {
+  local width="${1:-$CONTENT_WIDTH}" cols pad
+  cols="$(term_cols)"
+  pad=$(( (cols - width) / 2 ))
+  (( pad < 0 )) && pad=0
+  printf '%*s' "$pad" ''
+}
+
+visible_len() {
+  local text="$1"
+  text="$(printf '%b' "$text" | sed -E $'s/\x1b\\[[0-9;?]*[A-Za-z]//g')"
+  printf '%s' "${#text}"
+}
+
+blank_line() { printf '\r%s\n' "$CLEAR_LINE"; }
+
+line_at() {
+  local width="${1:-$CONTENT_WIDTH}" indent="${2:-0}"
+  shift 2
+  printf '\r%s%s%*s' "$CLEAR_LINE" "$(left_padding "$width")" "$indent" ''
+  printf '%b' "$*"
+}
+
+center() {
+  local text="$1" width="${2:-$CONTENT_WIDTH}" len inner_pad
+  len="$(visible_len "$text")"
+  inner_pad=$(( (width - len) / 2 ))
+  (( inner_pad < 0 )) && inner_pad=0
+  printf '\r%s%s%*s%b%s\n' "$CLEAR_LINE" "$(left_padding "$width")" "$inner_pad" '' "$text" "$RESET"
+}
+
+render_logo() {
+  local pad
+  pad="$(left_padding "$LOGO_WIDTH")"
+  if [[ -f $LOGO_PATH ]]; then
+    while IFS= read -r line; do
+      printf '\r%s%s%b%s%b\n' "$CLEAR_LINE" "$pad" "$GREEN" "$line" "$RESET"
+    done <"$LOGO_PATH"
+  else
+    center "${GREEN}Omarchy${RESET}" "$CONTENT_WIDTH"
+  fi
+}
+
+progress_bar() {
+  local pm="$1" width="${2:-34}" filled empty
+  (( pm < 0 )) && pm=0
+  (( pm > 1000 )) && pm=1000
+  filled=$(( pm * width / 1000 ))
+  empty=$(( width - filled ))
+  printf '%s%s%s%s%s' "$WHITE" "$(repeat █ "$filled")" "$DARK" "$(repeat ░ "$empty")" "$RESET"
+}
+
+# Packages libalpm has finished installing. local/ holds one directory per
+# package and nothing else in it is a directory, so */ is exact. One glob, no
+# forks: this runs twice a second while the disk is saturated.
+count_packages() {
+  local -a entries
+  PKG_COUNT=0
+  [[ -n $PKG_DB_DIR ]] || return 0
+  entries=("$PKG_DB_DIR"/*/)
+  # Unmatched globs expand to the pattern; nullglob stays off script-wide.
+  if (( ${#entries[@]} == 1 )) && [[ ! -d ${entries[0]} ]]; then
+    return 0
+  fi
+  PKG_COUNT=${#entries[@]}
+  return 0
+}
+
+# Sets PROGRESS_PM. Never call in a command substitution: POS, the phase timer
+# and the package counters must survive between frames. Print nothing — output
+# here would land on the TTY between the cursor escape and the bar.
+install_progress() {
+  local phase finished index total target
+  local lo hi tau span t pos work gap n pkg_signal=0
+  local -a state
+
+  PROGRESS_PM=$POS
+  [[ -f $STATE_FILE ]] || return 0
+
+  mapfile -t state < <(jq -r '
+    (.current_phase // "Starting installation"),
+    ((.finished_at // 0) | tonumber? // 0 | floor),
+    ((.current_index // -1) | tonumber? // -1 | floor),
+    ((.total_phases // 0) | tonumber? // 0 | floor),
+    (.target // "/mnt")
+  ' "$STATE_FILE" 2>/dev/null)
+  (( ${#state[@]} == 5 )) || return 0
+  phase="${state[0]}" finished="${state[1]}"
+  index="${state[2]}" total="${state[3]}" target="${state[4]}"
+  [[ -n $target ]] || target="/mnt"
+
+  if (( finished > 0 )) || [[ $phase == "Installation complete" ]]; then
+    POS=1000
+    PROGRESS_PM=1000
+    return 0
+  fi
+
+  # Transitions are observed here rather than read from the state file, which
+  # keeps wall clock out of the dashboard entirely.
+  if [[ $phase != "$PHASE_NAME" ]]; then
+    PHASE_NAME="$phase"
+    PHASE_T0=$NOW
+    PHASE_LO=$POS
+    PKG_BASE=-1
+    PKG_SEEN=0
+    PKG_BONUS=0
+    PKG_LAST_CHANGE=$NOW
+  fi
+
+  # Bands in per-mille, plus tau. The tail bands are wide relative to what they
+  # cost on NVMe: run_system_finalizer can DKMS-build a driver and
+  # finalize_limine_boot rebuilds every UKI, so they vary most on real hardware.
+  # Over-allotting costs a step at a boundary; under-allotting costs a stall.
+  case "$phase" in
+    "Starting installation")      lo=10  hi=25   tau=5   ;;
+    "Preparing live environment") lo=25  hi=50   tau=25  ;;
+    "Preparing install target")   lo=50  hi=65   tau=20  ;;
+    "Installing Arch + Omarchy")  lo=65  hi=700  tau=150 pkg_signal=1 ;;
+    "Configuring hibernation")    lo=700 hi=720  tau=10  ;;
+    "Configuring system")         lo=720 hi=850  tau=120 ;;
+    "Staging provisioning")          lo=850 hi=855  tau=5   ;;
+    "Finalizing Limine boot")     lo=855 hi=950  tau=90  ;;
+    "Finalizing user")            lo=950 hi=978  tau=30  ;;
+    "Configuring login")          lo=978 hi=988  tau=5   ;;
+    "Configuring DNS resolver")   lo=988 hi=994  tau=5   ;;
+    "Validating boot setup")      lo=994 hi=998  tau=5   ;;
+    "Creating factory snapshot")  lo=998 hi=1000 tau=5   ;;
+    *)
+      # Unknown names used to inherit a 1->99 sweep. Derive an even band from
+      # the published index instead; with no index, a bounded slice, so a
+      # renamed phase degrades to one cell rather than a runaway.
+      if (( total >= 2 && index >= 0 && index < total )); then
+        lo=$(( 10 + 990 * index / total ))
+        hi=$(( 10 + 990 * (index + 1) / total ))
+      else
+        lo=$PHASE_LO
+        hi=$(( PHASE_LO + 30 ))
+      fi
+      tau=60
+      ;;
+  esac
+
+  (( pkg_signal && PKG_TOTAL > 0 )) || pkg_signal=0
+  (( pkg_signal )) && tau=$PKG_FLOOR_TAU
+
+  t=$(( NOW - PHASE_T0 ))
+  (( t < 0 )) && t=0
+  span=$(( hi - lo ))
+  (( span < 2 )) && span=2
+  (( tau < 1 )) && tau=1
+
+  pos=$(( lo + (span - 1) * t / (t + tau) ))
+
+  if (( pkg_signal )); then
+    PKG_DB_DIR="$target/var/lib/pacman/local"
+    count_packages
+    # Baseline on first sight: a target that already holds packages would
+    # otherwise pin the bar at the band ceiling for the whole phase.
+    (( PKG_BASE < 0 )) && PKG_BASE=$PKG_COUNT
+    n=$(( PKG_COUNT - PKG_BASE ))
+    (( n < 0 )) && n=0
+    # Running max: a reinstalled package briefly drops its version-stamped dir.
+    if (( n > PKG_SEEN )); then
+      PKG_SEEN=$n
+      PKG_LAST_CHANGE=$NOW
+    fi
+    gap=$(( NOW - PKG_LAST_CHANGE ))
+    (( gap < 0 )) && gap=0
+    (( gap > PKG_BONUS_MAX_PM )) && gap=$PKG_BONUS_MAX_PM
+    (( gap > PKG_BONUS )) && PKG_BONUS=$gap
+    work=$(( lo + (span - 1 - PKG_TAIL_PM) * PKG_SEEN / PKG_TOTAL + PKG_BONUS ))
+    (( work > pos )) && pos=$work
+  fi
+
+  (( pos > hi - 1 )) && pos=$(( hi - 1 ))
+  (( pos > POS )) && POS=$pos
+  (( POS > 1000 )) && POS=1000
+  PROGRESS_PM=$POS
+  return 0
+}
+
+# One tip per 8 seconds, in order. On elapsed time, not a frame counter: a frame
+# is 0.5s of sleep plus a render, which stretches under pacstrap I/O — on the
+# machine where the tips, not the bar, are carrying liveness.
+current_tip() {
+  printf '%s' "${tips[$(( (NOW - DASH_T0) / 8 % ${#tips[@]} ))]}"
+}
+
+# Vertically center a block of the given height, echoing the row it starts on.
+# Both screens here center the way the configurator's greeter centers its
+# welcome, so the install opens, runs, and closes on the same composition
+# rather than stacking each frame from row one.
+centered_top_row() {
+  local height="$1" rows top
+  rows="$(term_size)"
+  rows="${rows%% *}"
+  [[ $rows =~ ^[0-9]+$ ]] || rows=24
+  top=$(( (rows - height) / 2 ))
+  (( top < 0 )) && top=0
+  printf '%d' "$(( top + 1 ))"
+}
+
+measure_progress_layout() {
+  LAST_SIZE="$(term_size)"
+  TOP_ROW="$(centered_top_row "$PROGRESS_HEIGHT")"
+  DYNAMIC_ROW=$(( TOP_ROW + LOGO_HEIGHT + 1 ))
+}
+
+render_static() {
+  measure_progress_layout
+  printf '%s%s%d;1H' "$CLEAR" "$CSI" "$TOP_ROW"
+  render_logo
+  blank_line
+}
+
+render_dynamic() {
+  local pm
+  # The console can still resize under us (the framebuffer settles late in VMs).
+  # Horizontal padding is recomputed every frame anyway, but the logo is drawn
+  # once, so redraw the static half at the new center rather than leave the
+  # centered layout stranded against a stale geometry.
+  [[ "$(term_size)" == "$LAST_SIZE" ]] || render_static
+  set_now
+  install_progress
+  pm=$PROGRESS_PM
+  [[ $pm =~ ^[0-9]+$ ]] || pm=$LAST_PM
+  (( pm > 1000 )) && pm=1000
+  # POS is monotone by construction; this is a guard, not the mechanism.
+  (( pm < LAST_PM )) && pm=$LAST_PM
+  LAST_PM=$pm
+
+  printf '%s%d;1H' "$CSI" "$DYNAMIC_ROW"
+  center "Installing Omarchy" "$CONTENT_WIDTH"
+  blank_line
+  line_at "$CONTENT_WIDTH" $(( (CONTENT_WIDTH - 34) / 2 )) ""
+  progress_bar "$pm" 34
+  printf '\n'
+  blank_line
+  center "${DIM}Tip:${RESET} ${GREEN}$(current_tip)${RESET}" "$CONTENT_WIDTH"
+  printf '%s' "$CLEAR_TO_END"
+}
+
+install_duration() {
+  local path line duration
+
+  if [[ -f $STATE_FILE ]]; then
+    duration="$(jq -r '
+      ((.started_at // 0) | tonumber? // 0) as $started
+      | ((.finished_at // 0) | tonumber? // 0) as $finished
+      | if $started <= 0 or $finished <= 0 or $finished < $started then empty
+        else (($finished - $started) | round) as $secs
+          | if $secs >= 3600 then "\($secs / 3600 | floor)h \($secs % 3600 / 60 | floor)m \($secs % 60)s"
+            else "\($secs / 60 | floor)m \($secs % 60)s"
+            end
+        end
+    ' "$STATE_FILE" 2>/dev/null || true)"
+    [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
+  fi
+
+  for path in /mnt/var/log/omarchy-install.log "$LOG_FILE"; do
+    [[ -f $path ]] || continue
+    for prefix in Total Omarchy; do
+      line="$(grep "^$prefix:" "$path" 2>/dev/null | tail -n 1 || true)"
+      [[ -n $line ]] || continue
+      duration="${line#*:}"
+      duration="${duration#${duration%%[![:space:]]*}}"
+      [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
+    done
+  done
+  return 0
+}
+
+render_finish() {
+  local duration effect_canvas_width
+  duration="$(install_duration || true)"
+  duration="${duration:-Complete}"
+  # ttfx centers its text two columns right of plain centering, so hand it a
+  # canvas two columns narrower and the animated logo lands exactly on the
+  # static one left_padding already drew. Otherwise the logo jumps a column
+  # sideways when the effect starts and again when it ends.
+  effect_canvas_width="$(term_cols)"
+  (( effect_canvas_width > 2 )) && effect_canvas_width=$((effect_canvas_width - 2))
+
+  # Set before anything that can fail, so reboot_prompt still lands on the
+  # button row even if the logo or the effect below never renders.
+  FINISH_TOP_ROW="$(centered_top_row "$FINISH_HEIGHT")"
+
+  {
+    printf '%s%s%s%d;1H' "$SHOW_CURSOR" "$CLEAR" "$CSI" "$FINISH_TOP_ROW"
+    render_logo
+    blank_line
+    center "Installed Omarchy in ${duration}" "$CONTENT_WIDTH"
+    blank_line
+  } >"$TTY_PATH"
+
+  if [[ -f $LOGO_PATH ]]; then
+    # Reuse mode restores a saved cursor before moving up over its input. Save
+    # this anchor so the effect redraws the same logo rows shown above.
+    printf '%s%d;1H\0337' "$CSI" "$((FINISH_TOP_ROW + LOGO_HEIGHT))" >"$TTY_PATH"
+    # Laseretch runs ~4s at 260fps, so the 8s cap is a stuck-process guard rather
+    # than a trim. --xterm-colors keeps the whole effect in the 256-index palette
+    # the way the greeter does, since the console reduces indexed codes well and
+    # truecolor ones badly, and it settles on indexed 2 — the green gum already
+    # drew the logo in above, so the send-off ends on the frame it started from
+    # instead of recoloring it. The laser and sparks keep their own hot palette.
+    timeout 8s ttfx -i "$LOGO_PATH" \
+      --canvas-width "$effect_canvas_width" \
+      --anchor-text c \
+      --frame-rate 260 \
+      --reuse-canvas \
+      --xterm-colors \
+      laseretch \
+      --final-gradient-stops 2 \
+      >"$TTY_PATH" 2>/dev/null || dashboard_log "logo effect skipped (ttfx exited $?)"
+    printf '%s%d;1H' "$CSI" "$((FINISH_TOP_ROW + LOGO_HEIGHT + 5))" >"$TTY_PATH"
+  fi
+}
+
+reboot_prompt() {
+  local prompt_pad
+
+  # Nobody to confirm; the OMARCHY_UI_AUTO_REBOOT check at the call site still
+  # applies, so setting both stops on the finish screen without a keyboard.
+  interactive || return 0
+
+  # gum paints its prompt row at the cursor and the button two rows under it, so
+  # anchor on the row right below the title to put the button as close to it as
+  # gum allows. FINISH_HEIGHT budgets for the same three rows.
+  printf '%s%d;1H%s' "$CSI" "$((FINISH_TOP_ROW + LOGO_HEIGHT + 2))" "$CLEAR_LINE" >"$TTY_PATH"
+
+  prompt_pad=$(( ( $(term_cols) - 18 ) / 2 ))
+  (( prompt_pad < 0 )) && prompt_pad=0
+  gum confirm \
+    --padding "0 0 0 $prompt_pad" \
+    --show-help=false \
+    --default \
+    --affirmative "Reboot Now" \
+    --negative "" \
+    "" <"$TTY_PATH" >"$TTY_PATH" 2>&1
+}
+
+truncate_for_width() {
+  local text="$1" width="$2"
+  if (( ${#text} > width )); then
+    printf '%s…' "${text:0:$((width - 1))}"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+render_failure_log_tail() {
+  # The caller passes the rows it spent above this point that the constant below
+  # does not know about, so the tail gives way rather than pushing the top of
+  # the screen off a short console.
+  local reserved="${1:-0}" rows lines width line tail_log label
+  rows=$(term_size)
+  rows=${rows%% *}
+  lines=$((rows - LOGO_HEIGHT - 18 - reserved))
+  (( lines < 6 )) && lines=6
+  (( lines > 14 )) && lines=14
+  width=$((CONTENT_WIDTH - 4))
+  (( width < 40 )) && width=40
+
+  tail_log="${OMARCHY_FAILURE_TAIL_LOG:-}"
+  if [[ -z $tail_log ]]; then
+    if [[ -f /mnt/var/log/omarchy-install.log ]]; then
+      tail_log=/mnt/var/log/omarchy-install.log
+    else
+      tail_log="$LOG_FILE"
+    fi
+  fi
+  [[ -f $tail_log ]] || return 0
+
+  label="Last log lines:"
+  [[ $tail_log == /mnt/* ]] && label="Last target log lines:"
+  line_at "$CONTENT_WIDTH" 2 "${DIM}${label}${RESET}"
+  printf '\n'
+  tail -n "$lines" "$tail_log" 2>/dev/null | while IFS= read -r line; do
+    line_at "$CONTENT_WIDTH" 2 "$(truncate_for_width "$line" "$width")"
+    printf '\n'
+  done
+}
+
+find_log_uploader() {
+  local candidate
+  for candidate in omarchy-upload-log /usr/local/bin/omarchy-upload-log /usr/bin/omarchy-upload-log /mnt/usr/bin/omarchy-upload-log; do
+    if [[ $candidate == */* ]]; then
+      [[ -x $candidate ]] && { printf '%s' "$candidate"; return 0; }
+    elif command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+prompt_enter() {
+  printf '\nPress Enter to continue…' >"$TTY_PATH"
+  IFS= read -r _ <"$TTY_PATH" || true
+}
+
+upload_failure_log() {
+  local uploader
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  if uploader=$(find_log_uploader); then
+    "$uploader" install >"$TTY_PATH" 2>&1 || true
+  else
+    {
+      echo "No log uploader is available in this environment."
+      echo "Install log: $LOG_FILE"
+      [[ -f /mnt/var/log/omarchy-install.log ]] && echo "Target log: /mnt/var/log/omarchy-install.log"
+    } >"$TTY_PATH"
+  fi
+  prompt_enter
+}
+
+view_failure_log() {
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  if command -v less >/dev/null 2>&1 && [[ -f $LOG_FILE ]]; then
+    less "$LOG_FILE" <"$TTY_PATH" >"$TTY_PATH" 2>&1 || true
+  else
+    tail -n 200 "$LOG_FILE" >"$TTY_PATH" 2>&1 || true
+    prompt_enter
+  fi
+}
+
+# A failure the medium explains is worth saying before the log tail, because
+# the tail is where "invalid or corrupted package" already scrolled past
+# without ever naming the USB stick it came off.
+diagnose_media() {
+  local logs=("$LOG_FILE")
+
+  [[ -f /mnt/var/log/omarchy-install.log ]] && logs+=(/mnt/var/log/omarchy-install.log)
+  [[ -n ${OMARCHY_FAILURE_TAIL_LOG:-} ]] && logs+=("$OMARCHY_FAILURE_TAIL_LOG")
+
+  omarchy-install-diagnose-media "${logs[@]}" 2>/dev/null
+}
+
+# Rows the diagnosis occupies, its leading blank included.
+media_diagnosis_rows() {
+  local diagnosis="$1"
+
+  if [[ -z $diagnosis ]]; then
+    printf '0\n'
+  else
+    printf '%s\n' "$(( $(grep -c '' <<<"$diagnosis") + 1 ))"
+  fi
+}
+
+render_media_diagnosis() {
+  local diagnosis="$1" line first=1
+
+  [[ -n $diagnosis ]] || return 0
+  blank_line
+  while IFS= read -r line; do
+    # A blank line inside the diagnosis is deliberate: it separates what
+    # happened from what to do about it, so it is drawn rather than skipped.
+    if [[ -z $line ]]; then
+      blank_line
+      continue
+    fi
+    if (( first )); then
+      center "${RED}$(truncate_for_width "$line" "$CONTENT_WIDTH")${RESET}" "$CONTENT_WIDTH"
+      first=0
+    else
+      center "$(truncate_for_width "$line" "$CONTENT_WIDTH")" "$CONTENT_WIDTH"
+    fi
+  done <<<"$diagnosis"
+}
+
+render_failure() {
+  local status="$1" state_summary="${2:-}" media_diagnosis="${3:-}" line
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
+  blank_line
+  render_logo
+  blank_line
+  center "${RED}Omarchy installation stopped${RESET}" "$CONTENT_WIDTH"
+  center "Installer exited with status $status" "$CONTENT_WIDTH"
+
+  render_media_diagnosis "$media_diagnosis"
+
+  if [[ -n $state_summary ]]; then
+    blank_line
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      center "${DIM}$(truncate_for_width "$line" "$CONTENT_WIDTH")${RESET}" "$CONTENT_WIDTH"
+    done <<<"$state_summary"
+  fi
+
+  blank_line
+  render_failure_log_tail "$(media_diagnosis_rows "$media_diagnosis")"
+  blank_line
+  center "${DIM}Get help at https://omarchy.org/discord${RESET}" "$CONTENT_WIDTH"
+  blank_line
+}
+
+failure_menu() {
+  local choice uploader
+
+  [[ ${OMARCHY_UI_FAILURE_ACTION:-} == "exit" ]] && return 0
+  # The failure screen and log tail have already rendered; exit with the
+  # installer's status instead of blocking on a menu nobody can answer.
+  interactive || return 0
+
+  while true; do
+    uploader=""
+    uploader=$(find_log_uploader || true)
+    if [[ -n $uploader ]]; then
+      choice=$(gum choose \
+        --height 6 \
+        --header "What would you like to do?" \
+        "Upload log for support" \
+        "View full log" \
+        "Drop to shell" \
+        "Reboot" \
+        "Power off" \
+        <"$TTY_PATH" 2>"$TTY_PATH") || choice="Drop to shell"
+    else
+      choice=$(gum choose \
+        --height 5 \
+        --header "What would you like to do?" \
+        "View full log" \
+        "Drop to shell" \
+        "Reboot" \
+        "Power off" \
+        <"$TTY_PATH" 2>"$TTY_PATH") || choice="Drop to shell"
+    fi
+
+    case "$choice" in
+      "Upload log for support")
+        upload_failure_log
+        render_failure "${failure_status:-1}" "${failure_summary:-}" "${failure_media_diagnosis:-}" >"$TTY_PATH" 2>/dev/null || true
+        ;;
+      "View full log")
+        view_failure_log
+        render_failure "${failure_status:-1}" "${failure_summary:-}" "${failure_media_diagnosis:-}" >"$TTY_PATH" 2>/dev/null || true
+        ;;
+      "Reboot")
+        reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+        ;;
+      "Power off")
+        poweroff 2>/dev/null || systemctl poweroff 2>/dev/null || true
+        ;;
+      "Drop to shell"|"")
+        return 0
+        ;;
+    esac
+  done
+}
+
+sanitize_child_output() {
+  # Archinstall is only a library subsystem in Omarchy's installer. Its own
+  # post-install success/reboot banner can be buffered until process exit and
+  # appear after an Omarchy failure, which makes the unified log contradictory.
+  # Keep that third-party banner out of Omarchy's support log; the raw
+  # archinstall log is still uploaded separately by omarchy-upload-log.
+  sed -u \
+    -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' \
+    -e '/^Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \
+    -e '/^Enabling service systemd-timesyncd$/d' \
+    -e '/^Setting password for root$/d' \
+    -e '/^Updating \/mnt\/etc\/fstab$/d' \
+    -e '/^Syncing the system\.\.\.$/d' \
+    -e '/^Installation completed without any errors\.$/d' \
+    -e '/^Log files temporarily available at \/var\/log\/archinstall\.$/d' \
+    -e '/^You may reboot when ready\.$/d'
+}
+
+launch_child() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  # Child is non-interactive. All visible UI belongs to this supervisor.
+  PYTHONUNBUFFERED=1 setsid "${INSTALL_CMD[@]}" </dev/null > >(sanitize_child_output >>"$LOG_FILE") 2>&1 &
+  child_pid=$!
+  child_pgid=$child_pid
+}
+
+[[ -e $TTY_PATH ]] || exit 2
+printf '%s' "$HIDE_CURSOR" >"$TTY_PATH"
+render_static >"$TTY_PATH"
+set_now
+DASH_T0=$NOW
+PHASE_T0=$NOW
+PKG_LAST_CHANGE=$NOW
+launch_child
+
+while jobs -pr | grep -qx "$child_pid"; do
+  render_dynamic >"$TTY_PATH" 2>/dev/null || true
+  sleep 0.5
+done
+
+set +e
+wait "$child_pid"
+status=$?
+set -e
+child_pid=""
+child_pgid=""
+
+dashboard_log "installer child exited with status $status"
+
+if (( status == 0 )); then
+  # finished_at lands microseconds before the child exits, so the 0.5s poll
+  # rarely renders a full bar before the finish screen replaces it.
+  render_dynamic >"$TTY_PATH" 2>/dev/null || true
+  sleep 0.4
+fi
+
+if (( status != 0 )); then
+  failure_status="$status"
+  failure_summary=""
+  if [[ -f $STATE_FILE ]]; then
+    failure_summary="$(jq -r '
+      (.current_phase // empty | "last installer phase: \(.)"),
+      ((.phases // []) | map(select(.status == "failed")) | last // empty
+        | "failed phase: \(.name): \(.error)")
+    ' "$STATE_FILE" 2>/dev/null || true)"
+    if [[ -n $failure_summary ]]; then
+      while IFS= read -r line; do
+        [[ -n $line ]] && dashboard_log "$line"
+      done <<<"$failure_summary"
+    fi
+  fi
+  if [[ ${OMARCHY_DASHBOARD_TRY:-} == "yes" ]]; then
+    printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+    exit "$failure_status"
+  fi
+  failure_media_diagnosis="$(diagnose_media || true)"
+  render_failure "$failure_status" "$failure_summary" "$failure_media_diagnosis" >"$TTY_PATH" 2>/dev/null || true
+  # Recorded after the screen is drawn, not before: the log tail on that screen
+  # reads this same file, and the diagnosis printed twice reads as two findings.
+  if [[ -n $failure_media_diagnosis ]]; then
+    while IFS= read -r line; do
+      [[ -n $line ]] && dashboard_log "$line"
+    done <<<"$failure_media_diagnosis"
+  fi
+  failure_menu
+  exit "$failure_status"
+fi
+
+# Try Omarchy reuses this dashboard for its install-and-setup phase, but the
+# session — not a reboot — comes next, so it exits cleanly here rather than
+# showing the install celebration or a reboot prompt. omarchy-try drives the
+# session from the greeter VT once this returns.
+if [[ ${OMARCHY_DASHBOARD_TRY:-} == "yes" ]]; then
+  printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  exit 0
+fi
+
+# Deferred-provisioning installs finish silently and reboot on their own — the
+# owner completes setup (and sees the send-off) at first boot, so the "Installed
+# Omarchy in ..." celebration and the Reboot Now prompt belong to a direct
+# install only.
+if [[ ${OMARCHY_UI_DEFER_PROVISIONING:-} == "yes" ]]; then
+  printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]] && exit 0
+  reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+  exit 0
+fi
+
+set +e
+render_finish
+finish_render_status=$?
+set -e
+if (( finish_render_status != 0 )); then
+  dashboard_log "finish screen render failed with status $finish_render_status; using fallback"
+  {
+    printf '%s%s' "$SHOW_CURSOR" "$CLEAR"
+    printf '\nFinished installing\n\n'
+  } >"$TTY_PATH" 2>/dev/null || true
+fi
+
+if reboot_prompt; then
+  if [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]]; then
+    exit 0
+  fi
+  printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
+  reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+fi
+
+exit 0

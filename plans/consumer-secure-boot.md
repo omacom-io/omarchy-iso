@@ -6,6 +6,17 @@ Support Omarchy installs on consumer laptops that ship with UEFI Secure Boot ena
 
 This plan targets normal consumer hardware, especially Windows dual-boot machines. OEM-controlled hardware with Omarchy-owned firmware keys is a separate path.
 
+## Current State (August 2026)
+
+Where the repo stands today, and what that changes about this plan:
+
+- The ISO builds with `bootmodes=('bios.syslinux' 'uefi.grub')` (`configs/profiledef.sh`): an unsigned GRUB as `BOOTX64.EFI` loading an unsigned kernel and initramfs. Firmware that trusts only the Microsoft UEFI CA rejects the ISO at the first stage, so Secure Boot must be disabled today.
+- The vendored mkarchiso already supports a `uefi.systemd-boot` bootmode (mutually exclusive with `uefi.grub`), so the live-ISO half of `shim -> systemd-boot -> UKI` needs no archiso surgery — a bootmode switch plus signing.
+- The installed system already boots a UKI: the orchestrator's `finalize_limine_boot` phase has mkinitcpio build the UKI onto the ESP, and `validate_boot` asserts it exists. "Build an installed UKI" is no longer new work; the new work is signing that UKI and choosing a second stage that enforces signatures.
+- Kernel updates already regenerate the UKI through the target's mkinitcpio pacman hooks. The update flow below reduces to adding a signing step and fallback retention to machinery that exists.
+
+The critical path is external: the Microsoft-signed shim. That requires an EV code-signing certificate for the Omarchy org, a shim built from a reviewed upstream release with Omarchy SBAT identity and NX compatibility, and a `shim-review` submission — historically weeks to months of calendar time, with standing obligations afterward (SBAT revocation response, resubmission when the embedded cert or shim version changes). Start it first; every phase below except release signing can proceed in parallel on dev test keys in QEMU.
+
 ## Core Architecture
 
 Use a Microsoft-signed first-stage shim, then boot only signed Omarchy-controlled artifacts.
@@ -51,7 +62,7 @@ This preserves offline tamper resistance for `/boot` while avoiding any central 
 
 ## Bootloader Decision
 
-Signing Limine as an EFI binary is not sufficient if Limine can then boot unsigned kernels, initrds, or configs. For v1 Secure Boot support, use a boot path with a small, enforceable verification surface:
+Installed systems already boot a UKI through Limine, so the boot *artifact* needs no change. But signing Limine as an EFI binary is not sufficient if Limine will then load unsigned payloads or take direction from an unsigned `limine.conf`. For v1 Secure Boot support, use a boot path with a small, enforceable verification surface:
 
 ```text
 shim -> systemd-boot -> signed UKI
@@ -104,12 +115,13 @@ bin/omarchy-iso-make --secure-boot
 
 Build behavior:
 
-1. Add Microsoft-signed Omarchy shim artifacts to the ISO UEFI boot path.
-2. Build the live environment boot payload as a UKI.
-3. Sign the live UKI with the Omarchy release key in official builds.
-4. Sign any second-stage EFI binary with the Omarchy release key.
-5. Assert that every Secure Boot UEFI entry uses the signed shim path.
-6. Assert that no unsigned kernel/initramfs path is offered in Secure Boot UEFI mode.
+1. Switch the UEFI bootmode from `uefi.grub` to `uefi.systemd-boot` in `configs/profiledef.sh` (mkarchiso forbids running both). BIOS syslinux stays as-is; Secure Boot is UEFI-only.
+2. Add Microsoft-signed Omarchy shim artifacts to the ISO UEFI boot path.
+3. Build the live environment boot payload as a UKI.
+4. Sign the live UKI with the Omarchy release key in official builds.
+5. Sign any second-stage EFI binary with the Omarchy release key.
+6. Assert that every Secure Boot UEFI entry uses the signed shim path.
+7. Assert that no unsigned kernel/initramfs path is offered in Secure Boot UEFI mode.
 
 Local developer builds should support a dev-signing mode for QEMU validation:
 
@@ -124,7 +136,7 @@ Dev mode creates local test keys and is only expected to boot in QEMU firmware e
 When the live installer detects Secure Boot enabled:
 
 1. Show a Secure Boot explanation before disk mutation.
-2. If Windows is detected, warn the user to suspend BitLocker and have the recovery key available.
+2. If Windows is detected, follow the shipped dual-boot BitLocker policy (decrypt, not suspend — see the configurator's existing checks) and warn the user to have the recovery key available.
 3. Install Omarchy's shim to its own ESP directory, for example `EFI/Omarchy`.
 4. Do not modify `EFI/Microsoft`.
 5. Generate a machine-local MOK keypair under the installed encrypted root.
@@ -145,13 +157,11 @@ Firmware -> Omarchy shim -> MokManager -> user enrolls Omarchy machine key -> re
 
 Secure Boot installs need deterministic UKI regeneration and signing after kernel or initramfs changes.
 
-Add a target-system hook that:
+The regeneration half already exists: the target's mkinitcpio pacman hooks rebuild the UKI on kernel or initramfs changes. Add the signing half — a hook ordered after the UKI build that:
 
-1. Regenerates the initramfs.
-2. Rebuilds the UKI.
-3. Signs the UKI with the machine-local MOK private key.
-4. Writes it atomically to the ESP.
-5. Keeps at least one previously booted signed UKI as fallback.
+1. Signs the freshly built UKI with the machine-local MOK private key.
+2. Writes it atomically to the ESP.
+3. Keeps at least one previously booted signed UKI as fallback.
 
 Failure policy:
 
@@ -199,10 +209,9 @@ Do not store private keys in this directory.
 Add Secure Boot detection and UX:
 
 - Detect UEFI Secure Boot state through efivars and/or `mokutil --sb-state`.
-- Detect Windows through ESP vendor paths and partition metadata.
-- Warn about BitLocker recovery risk when Windows is present.
+- Detect Windows through ESP vendor paths and partition metadata (the dual-boot path's `detect_windows_esp` and BitLocker checks already exist — extend, don't duplicate).
 - Explain one-time MokManager enrollment.
-- Write `secure_boot.sh` with simple shell state for `.automated_script.sh`.
+- Write `secure_boot.sh` with simple shell state for the install orchestrator.
 
 Example state:
 
@@ -214,17 +223,18 @@ SECURE_BOOT_UKI=true
 SECURE_BOOT_MOK_COMMON_NAME="Omarchy Machine Owner Key"
 ```
 
-### `configs/airootfs/root/.automated_script.sh`
+### `configs/airootfs/usr/share/omarchy-iso/orchestrator/`
 
-Add Secure Boot install support:
+Add Secure Boot install support to the install phases:
 
-- Source `secure_boot.sh` after configurator runs.
-- Install the Secure Boot boot path when `SECURE_BOOT_INSTALL=true`.
-- Generate machine-local MOK keypair in the installed encrypted root.
-- Build and sign UKI.
+- Read the `secure_boot.sh` state the configurator wrote.
+- When `SECURE_BOOT_INSTALL=true`, install the shim boot path and the enforcing second stage instead of (or in front of) the plain Limine setup in `_configure_limine_boot`.
+- Generate the machine-local MOK keypair on the installed encrypted root.
+- Sign the UKI that `finalize_limine_boot` already builds.
 - Schedule MOK enrollment with `mokutil --import`.
-- Install kernel-update hooks for UKI rebuild/signing.
+- Install the UKI signing hook alongside the existing mkinitcpio hooks.
 - Preserve dual-boot firmware boot order unless explicitly promoted.
+- Extend `validate_boot` to assert the UKI on the ESP carries a valid signature.
 
 ### Target System Files
 
@@ -275,7 +285,7 @@ On Windows dual-boot machines:
 - Never change BitLocker protectors.
 - Preserve existing firmware default boot order by default.
 - Warn that adding a boot entry or changing ESP contents can trigger BitLocker recovery.
-- Recommend suspending BitLocker from Windows before install and resuming it after both OSes boot.
+- Follow the shipped dual-boot policy: tell users to turn BitLocker off in Windows and let the drive finish decrypting before installing (the configurator already enforces this; suspending alone proved insufficient — see #105).
 
 If the user chooses to make Omarchy first in boot order, capture the old `BootOrder` and provide rollback guidance.
 
@@ -326,7 +336,7 @@ Minimum hardware tests:
 
 1. Microsoft Secure Boot enabled laptop boots official Secure Boot ISO.
 2. Windows dual-boot install preserves Windows boot.
-3. BitLocker-suspended install avoids recovery prompt after resuming BitLocker.
+3. BitLocker-decrypted install boots both OSes cleanly afterward.
 4. BitLocker-active install warning is visible before any disk mutation.
 5. Installed Omarchy boots only after MOK enrollment.
 6. Secure Boot remains enabled after install.
@@ -338,11 +348,13 @@ Minimum hardware tests:
 
 ### Phase 1: Research And Decisions
 
+- Kick off the EV certificate purchase and `shim-review` submission prep immediately — this is the calendar-bound item that gates Phase 4, and nothing else depends on it being done first.
 - Confirm shim submission requirements and timeline.
-- Confirm selected second-stage boot manager.
-- Confirm UKI generation mechanism on Arch.
+- Confirm selected second-stage boot manager (systemd-boot unless Limine's signature enforcement is proven).
+- ~~Confirm UKI generation mechanism on Arch~~ — resolved: mkinitcpio already builds the installed UKI today.
 - Confirm package availability for signing and MOK workflows.
 - Decide local MOK key storage and update-hook policy.
+- Decide the DKMS/out-of-tree module signing story (see Open Questions — this is a v1 blocker, not a nice-to-have).
 
 ### Phase 2: Dev Secure Boot In QEMU
 
@@ -387,9 +399,9 @@ Minimum hardware tests:
 
 ## Open Questions
 
-- Whether v1 should use systemd-boot, GRUB, or a verified Limine configuration as the second stage.
+- Whether Limine can enforce signature verification on the UKIs and config it loads; if not proven, Secure Boot installs use systemd-boot as the second stage while non-Secure-Boot installs keep Limine.
 - Whether the local MOK private key should be encrypted with a user-supplied passphrase or stored root-only on encrypted root.
-- How to support signed out-of-tree kernel modules, especially proprietary GPU drivers or DKMS packages.
-- How snapshot booting should work when each bootable kernel must be a signed UKI.
+- How to support signed out-of-tree kernel modules, especially proprietary GPU drivers or DKMS packages. **This must be answered for v1:** once Secure Boot is enforcing, unsigned modules will not load, and NVIDIA laptops are exactly the consumer hardware this plan targets. The module signing hook must sign with the machine-local MOK alongside the UKI.
+- How snapshot booting (factory reset restores from Btrfs snapshots) should work when each bootable kernel must be a signed UKI.
 - Whether official builds should always be Secure Boot-capable or ship a separate Secure Boot ISO flavor.
 - What user-facing recovery path should exist if MOK enrollment is skipped or fails.

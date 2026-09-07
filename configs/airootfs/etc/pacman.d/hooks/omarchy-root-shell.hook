@@ -1,0 +1,21 @@
+# remove from airootfs!
+#
+# Mirror omarchy-settings' /etc/skel shell defaults into /root so the live ISO
+# console has the same bashrc, starship prompt, and aliases as an installed
+# Omarchy system. Fires during airootfs pacstrap (when omarchy-settings is
+# installed); the "remove from airootfs" magic string causes
+# zzzz99-remove-custom-hooks-from-airootfs.hook to delete this file before
+# the squashfs is built, so no runtime hook remains.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = omarchy-settings
+
+[Action]
+Description = Mirroring /etc/skel shell defaults into /root for the live ISO...
+When = PostTransaction
+Depends = coreutils
+Depends = omarchy-settings
+Exec = /bin/sh -c 'install -d -m 0700 /root/.config && for f in .bashrc .bash_profile; do [ -f "/etc/skel/$f" ] && install -m 0644 "/etc/skel/$f" "/root/$f"; done; [ -f /etc/skel/.config/starship.toml ] && install -m 0644 /etc/skel/.config/starship.toml /root/.config/starship.toml; true'
