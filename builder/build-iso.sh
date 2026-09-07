@@ -397,15 +397,14 @@ echo "Try Omarchy installs $(( $(printf '%s\n' "$try_packages" | awk '{ kib += $
 # The NVIDIA opt-in installs from the same mirror, so the driver, its utils and
 # the DKMS toolchain have to be on the stick too — a machine on wifi that has
 # not joined a network yet still gets an accelerated session. These come from
-# omarchy-other.packages rather than try.packages (they are installed only when
-# the user asks), so nothing else here would notice them going missing: without
-# this check a dropped driver package would surface as a silent fall back to
-# the software preview, on the one path that cannot be tested without an
-# NVIDIA GPU. Both driver generations are resolved, exactly as
-# omarchy-try-nvidia picks between them.
-verify_try_nvidia_packages() {
+# omarchy-other.packages rather than try.packages, so this warns rather than
+# failing: retiring a driver branch upstream must not break the nightly ISO
+# build over an opt-in extra, and the session already falls back to the
+# software preview and says so when the install does not complete. Both
+# generations are checked, exactly as omarchy-try-nvidia picks between them.
+warn_missing_try_nvidia_packages() {
   local resolve_root=/tmp/omarchy-try-nvidia
-  local kernel_headers branch
+  local kernel_headers branch missing
   local -a targets
 
   # The live root's kernel, whose headers DKMS builds against. The same pattern
@@ -419,23 +418,20 @@ verify_try_nvidia_packages() {
     read -ra targets <<<"$branch"
     pacman --config "$build_cache_dir/pacman-offline.conf" \
       --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
-      --noconfirm -Sy >/dev/null || return 1
-    pacman --config "$build_cache_dir/pacman-offline.conf" \
+      --noconfirm -Sy >/dev/null 2>&1 || true
+    missing=$(pacman --config "$build_cache_dir/pacman-offline.conf" \
       --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
       --noconfirm -S --print --print-format '%n' \
       --assume-installed limine --assume-installed limine-mkinitcpio-hook \
       --assume-installed limine-snapper-sync --assume-installed snapper \
-      "${targets[@]}" "$kernel_headers" >/dev/null || { echo "  $branch + $kernel_headers" >&2; return 1; }
+      "${targets[@]}" "$kernel_headers" 2>&1 >/dev/null) && continue
+    echo "WARNING: Try Omarchy cannot set up '$branch $kernel_headers' from the mirror." >&2
+    echo "         $missing" >&2
+    echo "         Machines on that driver get the software preview instead." >&2
   done
 }
-
-if ! verify_try_nvidia_packages; then
-  echo "ERROR: the NVIDIA driver Try Omarchy offers is not fully in the offline mirror." >&2
-  echo "       The branch printed above did not resolve. Try's NVIDIA step installs" >&2
-  echo "       from the stick, so every part of it must ship in the mirror." >&2
-  exit 1
-fi
-echo "Try Omarchy can set up either NVIDIA driver generation from the mirror."
+warn_missing_try_nvidia_packages
+echo "Try Omarchy checked both NVIDIA driver generations against the mirror."
 
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
