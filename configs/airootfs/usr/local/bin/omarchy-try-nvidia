@@ -37,9 +37,12 @@ kernel_pkg=$(pacman -Qqs '^linux(-zen|-lts|-hardened|-t2|-ptl)?$' | head -1 || t
 [[ -n $kernel_pkg ]] && packages+=("$kernel_pkg-headers")
 
 # modeset=1 has to be set before nvidia_drm first loads, so the KMS driver takes
-# the panel over from simpledrm.
+# the panel over from simpledrm. fbdev=1 alongside it because the greeter this
+# session returns to lives on VT1, and a driver whose fbdev default is 0 leaves
+# that console dark; 610.x already defaults it on, so this pins the behaviour
+# rather than trusting a default to stay put.
 mkdir -p "$root/etc/modprobe.d"
-printf 'options nvidia_drm modeset=1\n' >"$root/etc/modprobe.d/nvidia.conf"
+printf 'options nvidia_drm modeset=1 fbdev=1\n' >"$root/etc/modprobe.d/nvidia.conf"
 
 # -Sy for the same reason omarchy-try uses it: the live pacman sync db is empty
 # (mkarchiso clears it), and the only repo is the offline file:// mirror.

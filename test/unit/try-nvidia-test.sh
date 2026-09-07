@@ -60,7 +60,10 @@ run >/dev/null 2>&1 || fail "gsp: exits zero when nvidia binds"
 line=$(grep '^pacman -Sy' "$TEST_LOG")
 [[ $line == *nvidia-open-dkms* && $line == *nvidia-utils* ]] || fail "gsp: installs nvidia-open" "$line"
 [[ $line == *linux-t2-headers* ]] || fail "gsp: installs matching kernel headers" "$line"
-[[ $(<"$sandbox/etc/modprobe.d/nvidia.conf") == 'options nvidia_drm modeset=1' ]] || fail "gsp: writes modeset config"
+# fbdev=1 as well as modeset=1: the greeter we return to lives on VT1, and a
+# driver whose fbdev default is 0 leaves that console dark. It is the current
+# default in 610.x, so this pins it rather than trusting it.
+[[ $(<"$sandbox/etc/modprobe.d/nvidia.conf") == 'options nvidia_drm modeset=1 fbdev=1' ]] || fail "gsp: writes modeset and fbdev config" "$(<"$sandbox/etc/modprobe.d/nvidia.conf")"
 # Without -a, modprobe loads only the first name and passes the rest as module
 # parameters ("nvidia: unknown parameter 'nvidia_drm' ignored") — nvidia_drm
 # then never loads and no NVIDIA DRM device appears. Seen on real hardware.

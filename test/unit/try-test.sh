@@ -93,8 +93,15 @@ pass "cleanup does not block restoring the installer's network"
 # off the card, so the parameter that does it is load-bearing for every NVIDIA
 # machine. It belongs on the UEFI cmdline and nowhere else: a BIOS boot has no
 # firmware framebuffer to fall back to, so it must keep nouveau and its console.
+# Both GRUB configs: grub.cfg is the UEFI medium, loopback.cfg is the same ISO
+# loop-mounted (Ventoy and friends). Both set gfxpayload=keep, so both have a
+# firmware framebuffer to fall back to, and a machine booted either way needs
+# the same treatment.
+for GRUB in "$ROOT/configs/grub/grub.cfg" "$ROOT/configs/grub/loopback.cfg"; do
+  n=$(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB" || true)
+  (( n == 2 )) || fail "blacklists nouveau on both Linux entries of $(basename "$GRUB")" "$n found"
+done
 GRUB="$ROOT/configs/grub/grub.cfg"
-(( $(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") == 2 )) || fail "blacklists nouveau on both UEFI boot entries" "$(grep -c '^\s*linux .*modprobe.blacklist=nouveau' "$GRUB") found"
 grep -q 'set gfxmode="auto"' "$GRUB" || fail "leaves the boot resolution as upstream set it"
 [[ ! -e $ROOT/configs/airootfs/etc/modprobe.d/omarchy-try-nouveau.conf ]] || fail "does not blacklist nouveau for BIOS boots too"
 for f in "$ROOT"/configs/syslinux/*; do
