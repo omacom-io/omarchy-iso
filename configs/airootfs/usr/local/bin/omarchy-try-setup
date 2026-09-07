@@ -113,8 +113,14 @@ phase "$idx" "Setting up your session"
 # Omarchy's shell drives NetworkManager; the live root boots iwd/networkd.
 systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket || true
 systemctl start NetworkManager.service || fail "could not start NetworkManager"
-# The other daemons the shell talks to, which an installed system enables.
-systemctl start bluetooth.service power-profiles-daemon.service || true
+# The other daemons the shell's panels talk to, which an installed system
+# enables. --no-block, and not because it is tidier: power-profiles-daemon
+# orders after time-sync.target, so on a machine with no network — a laptop
+# that has not joined wifi yet — systemd-time-wait-sync never finishes, the
+# start job waits behind it forever, and a blocking systemctl never returns.
+# The install would sit at the progress bar and the desktop would never come
+# up. Neither daemon is needed for the session, so queue them and move on.
+systemctl start --no-block bluetooth.service power-profiles-daemon.service || true
 
 # The bar's clock should read local time — the installed system asks tzupdate
 # the same question. Only when the network is already up; never wait for a

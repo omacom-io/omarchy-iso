@@ -102,7 +102,11 @@ for p in limine limine-mkinitcpio-hook limine-snapper-sync snapper; do
 done
 grep -q '^systemctl stop iwd.service systemd-networkd.service systemd-networkd.socket$' "$TEST_LOG" || fail "stops iwd/networkd"
 grep -q '^systemctl start NetworkManager.service$' "$TEST_LOG" || fail "starts NetworkManager"
-grep -q '^systemctl start bluetooth.service power-profiles-daemon.service$' "$TEST_LOG" || fail "starts the shell's daemons"
+# --no-block is load-bearing: power-profiles-daemon orders after
+# time-sync.target, and on a machine with no network systemd-time-wait-sync
+# never finishes, so a blocking start never returns and the install hangs
+# forever at the progress bar. Seen air-gapped in QEMU.
+grep -q '^systemctl start --no-block bluetooth.service power-profiles-daemon.service$' "$TEST_LOG" || fail "starts the shell's daemons without waiting on them" "$(<"$TEST_LOG")"
 grep -q '^systemctl daemon-reload$' "$TEST_LOG" || fail "reloads so the zram generator runs"
 grep -q '^systemctl start systemd-zram-setup@zram0.service$' "$TEST_LOG" || fail "starts zram"
 # zram has to be up before the install fills the overlay, not after.

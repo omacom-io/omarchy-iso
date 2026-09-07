@@ -77,10 +77,16 @@ pass "propagates a setup failure"
 # swapoff would only pull the overlay back into RAM) must be stopped here.
 SETUP="$ROOT/configs/airootfs/usr/local/bin/omarchy-try-setup"
 stops=$(sed -n '/^cleanup() {/,/^}/p' "$TRY" | grep 'systemctl stop')
-for unit in $(grep -oE '^systemctl start [^|&]*' "$SETUP" | cut -d' ' -f3- | tr ' ' '\n' | grep -v zram | sort -u); do
+for unit in $(grep -oE '^systemctl start [^|&]*' "$SETUP" | sed 's/^systemctl start //; s/--no-block //' | tr ' ' '\n' | grep -v zram | sort -u); do
   grep -q -- "$unit" <<<"$stops" || fail "cleanup stops $unit" "$stops"
 done
 pass "cleanup stops every service the setup started"
+
+# Nothing on the way back to the installer may block: a queued start job that
+# waits on an unreachable dependency (time-sync on an offline machine) would
+# strand the user instead of returning them to the greeter.
+sed -n '/^cleanup() {/,/^}/p' "$TRY" | grep -q 'systemctl start --no-block' || fail "cleanup restores the installer's network without waiting"
+pass "cleanup does not block restoring the installer's network"
 
 # --- GPU selection helpers, sourced against sysfs fixtures -------------------
 eval "$(sed -n '/^is_firmware_fb() {/,/^}/p' "$TRY")"

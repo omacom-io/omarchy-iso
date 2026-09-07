@@ -126,7 +126,10 @@ cleanup() {
   systemctl stop "$session_unit.service" 2>/dev/null
   chvt 1 2>/dev/null
   systemctl stop bluetooth.service power-profiles-daemon.service NetworkManager.service 2>/dev/null
-  systemctl start systemd-networkd.socket systemd-networkd.service iwd.service 2>/dev/null
+  # --no-block for the same reason the setup uses it: a start job that queues
+  # behind an unreachable dependency must not strand the user on their way
+  # back to the installer.
+  systemctl start --no-block systemd-networkd.socket systemd-networkd.service iwd.service 2>/dev/null
 }
 
 # --- Guards ------------------------------------------------------------------
