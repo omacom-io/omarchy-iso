@@ -419,6 +419,164 @@ detect_kernel() {
   fi
 }
 
+t1_missing_efi_stop() {
+  step "Apple system data is missing"
+  say "This Mac uses an Apple T1 chip, but Omarchy could not read the Apple hardware partition."
+  say "Without its machine-specific data, Omarchy cannot use:"
+  say "  • The Touch Bar, including Esc and the function-key row"
+  say "  • Touch ID"
+  say "  • The FaceTime camera"
+  say "  • The ambient-light sensor"
+  echo
+  say "Omarchy has not changed your disk. Restore the Apple data before installing:"
+  say "  1. Back up anything you need from the internal disk."
+  say "  2. Quit the Omarchy installer."
+  say "  3. Connect the Mac to power."
+  say "  4. Restart and immediately hold Option-Command-R to enter Internet Recovery."
+  say "  5. In Disk Utility, choose View → Show All Devices."
+  say "  6. Select the internal physical disk and erase it using APFS and GUID Partition Map."
+  say "  7. Quit Disk Utility and reinstall macOS."
+  say "  8. Let macOS finish installing and boot once, then retry Omarchy."
+  echo
+  say --foreground 1 "Erasing the physical disk deletes everything currently stored on it."
+  exit 1
+}
+
+t1_efi_inspection_stop() {
+  step "Apple EFI safety check could not finish"
+  say "Omarchy could not safely inspect every EFI partition on the selected disk."
+  say "Your disk has not been changed. Check the disk for filesystem errors, disconnect any unrelated damaged drive, and retry the installation."
+  say "Do not erase or replace an Apple EFI partition to work around this check."
+  exit 1
+}
+
+# A supported T1 machine may use Apple data from any attached disk. Only a
+# candidate on the selected target becomes a protected layout range; other
+# disks are read-only discovery sources and never constrain target geometry.
+t1_prepare_selected_disk() {
+  local scan_status
+  t1_install=false
+  if ! t1_supported_machine; then
+    t1_snapshot_disk=""
+    t1_target_snapshot_ready=false
+    t1_target_has_candidates=false
+    t1_efi_clear_snapshot
+    return 0
+  fi
+
+  if [[ $t1_snapshot_disk == "$disk" ]] && $t1_target_snapshot_ready; then
+    t1_install=true
+    return 0
+  fi
+
+  step "Checking Apple hardware data"
+  if t1_efi_any_candidate_available; then
+    :
+  else
+    scan_status=$?
+    (( scan_status == 2 )) && t1_efi_inspection_stop
+    t1_missing_efi_stop
+  fi
+  if t1_efi_capture_optional_snapshot "$disk" false; then
+    :
+  else
+    scan_status=$?
+    (( scan_status == 2 )) && t1_efi_inspection_stop
+    t1_missing_efi_stop
+  fi
+  t1_snapshot_disk="$disk"
+  t1_target_snapshot_ready=true
+  if (( ${#t1_efi_preserved_devices[@]} > 0 )); then
+    t1_target_has_candidates=true
+  else
+    t1_target_has_candidates=false
+  fi
+  t1_install=true
+}
+
+t1_revalidate_available_data() {
+  t1_efi_any_candidate_available ||
+    disk_abort_hook "Apple hardware data is no longer readable"
+  if (( ${#t1_efi_preserved_devices[@]} > 0 )); then
+    t1_efi_revalidate_snapshot "$disk" ||
+      disk_abort_hook "Apple hardware data changed during partitioning"
+  fi
+}
+
+t1_guard_destructive_partition() {
+  local number="$1" action="$2"
+  $t1_install || return 0
+  t1_efi_destructive_partition_is_safe "$disk" "$number" ||
+    disk_abort_hook "Refusing to $action because it could change preserved Apple hardware data"
+}
+
+# Plan Omarchy's dedicated 2 GiB ESP and root inside the largest contiguous
+# range left after all non-Apple partitions are removed. Nothing is written by
+# this function; it runs before the confirmation screen.
+t1_prepare_whole_disk_layout() {
+  local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
+  local align=$mib efi_size=$((2 * gib)) minimum=$((32 * gib)) available pt_type
+
+  t1_efi_find_largest_safe_region "$disk" || return 1
+  EFI_START_B=$(( (t1_efi_safe_region_start + align - 1) / align * align ))
+  EFI_END_B=$((EFI_START_B + efi_size))
+  # parted's end coordinate is inclusive. Keep the same aligned gap used by
+  # the existing free-space path, and leave an aligned margin before the next
+  # preserved range (or the backup GPT area).
+  ROOT_START_B=$(( (EFI_END_B + 1 + align - 1) / align * align ))
+  ROOT_END_B=$(( (t1_efi_safe_region_end - align) / align * align ))
+  available=$((ROOT_END_B - EFI_START_B))
+
+  (( ROOT_END_B > ROOT_START_B && available >= minimum )) || return 1
+  t1_efi_destructive_range_is_safe "$EFI_START_B" "$EFI_END_B" || return 1
+  t1_efi_destructive_range_is_safe "$ROOT_START_B" "$ROOT_END_B" || return 1
+
+  if (( ${#t1_efi_preserved_devices[@]} > 0 )); then
+    needs_mklabel=false
+  else
+    pt_type=$(lsblk -dno PTTYPE "$disk" 2>/dev/null) || return 1
+    [[ ${pt_type,,} == gpt ]] && needs_mklabel=false || needs_mklabel=true
+  fi
+  protected_enable_fallback=true
+  esp_mount_in_target=/boot
+  kernel_choice=$(detect_kernel)
+  efi_part_num=""
+  root_part_num=""
+  efi_dev="<assigned at creation>"
+  root_partition_device="<assigned at creation>"
+  root_mapper="/dev/mapper/omarchy_root"
+  return 0
+}
+
+t1_delete_nonpreserved_partitions() {
+  local number
+
+  omarchy-iso-cleanup-disk "$disk" ||
+    disk_abort_hook "Could not release existing users of the install disk"
+  t1_efi_any_candidate_available ||
+    disk_abort_hook "Apple hardware data is no longer readable"
+  t1_efi_capture_optional_snapshot "$disk" ||
+    disk_abort_hook "Could not verify Apple hardware data on the install disk"
+  if (( ${#t1_efi_preserved_devices[@]} > 0 )); then
+    t1_target_has_candidates=true
+  else
+    t1_target_has_candidates=false
+  fi
+  t1_prepare_whole_disk_layout ||
+    disk_abort_hook "Could not create a safe layout around the Apple hardware partition(s)"
+
+  while IFS= read -r number; do
+    [[ -n $number ]] || continue
+    t1_efi_partition_number_is_preserved "$number" && continue
+    t1_guard_destructive_partition "$number" "delete partition $number"
+    disk_step "deleting partition $number" parted --script "$disk" rm "$number"
+  done < <(partition_numbers "$disk")
+
+  partprobe "$disk" 2>/dev/null || true
+  udevadm settle 2>/dev/null || true
+  sync
+}
+
 # wait_for_device lives in disk-partitioning.sh: it now reports failure, and
 # every caller here aborts on it.
 
@@ -431,25 +589,45 @@ disk_abort_hook() {
   umount /mnt/btrfs-root 2>/dev/null || true
   rmdir /mnt/btrfs-root 2>/dev/null || true
   cryptsetup close omarchy_root 2>/dev/null || true
-  rollback_created_parts "$disk"
+  rollback_created_parts "$disk" || true
   abort "$1"
 }
 
 # Save the configurator answers the installer consumes: git identity and
 # encryption choice as plain files, account details as archinstall credentials.
-# Deferred-provisioning installs defer the user to first boot: no credentials, and on encrypted
-# targets the orchestrator generates a throwaway LUKS passphrase itself.
+# Deferred-provisioning installs defer the user to first boot. The ordinary
+# full-disk path lets the orchestrator generate its temporary LUKS key; the T1
+# protected path must generate it here because this process formats LUKS.
 write_user_files() {
   echo "$full_name" >user_full_name.txt
   echo "$email_address" >user_email_address.txt
   printf '%s\n' "$encrypt_installation" >user_encrypt_installation.txt
 
   if $defer_provisioning; then
-    cat <<-_EOF_ >user_credentials.json
+    if $t1_install && [[ $encrypt_installation == true ]]; then
+      if [[ ${1:-} == dry ]]; then
+        password="<generated during installation>"
+      else
+        password=$(openssl rand -base64 32 | tr -d '\n') ||
+          abort "Could not generate the temporary disk-encryption key"
+        [[ -n $password ]] || abort "Could not generate the temporary disk-encryption key"
+      fi
+      local encryption_password_escaped
+      encryption_password_escaped=$(printf '%s' "$password" | jq -Rsa)
+      cat <<-_EOF_ >user_credentials.json
+{
+    "encryption_password": $encryption_password_escaped,
+    "users": []
+}
+_EOF_
+      chmod 600 user_credentials.json
+    else
+      cat <<-_EOF_ >user_credentials.json
 {
     "users": []
 }
 _EOF_
+    fi
     return
   fi
 
@@ -506,6 +684,14 @@ not_enough_space() {
   local available="${1:-0}"
   step "Not enough free space on $disk"
   say --foreground 1 "$disk has $(to_gb $available) of usable free space; Omarchy needs at least 32GB."
+  if $t1_install; then
+    say "Choose whole-disk installation or a different disk."
+    say "The partition editor is disabled on this T1 Mac so it cannot remove Apple hardware data."
+    echo
+    gum confirm --affirmative "Back" "Return to installation mode?" || true
+    return 1
+  fi
+
   say "Open the partition tool to free at least 32GB on $disk, then try again."
   echo
   if ! gum confirm --affirmative "Back" --negative "Open partition tool" "Return to installation mode?"; then
@@ -599,6 +785,13 @@ run_partition_decide() {
   ROOT_START_B=$(( (EFI_END_B + 1 + ALIGN - 1) / ALIGN * ALIGN ))
   ROOT_END_B=$((FREE_END_B / ALIGN * ALIGN))
 
+  if $t1_install; then
+    t1_efi_destructive_range_is_safe "$EFI_START_B" "$EFI_END_B" ||
+      abort "The selected free space overlaps preserved Apple hardware data"
+    t1_efi_destructive_range_is_safe "$ROOT_START_B" "$ROOT_END_B" ||
+      abort "The selected free space overlaps preserved Apple hardware data"
+  fi
+
   if (( ROOT_END_B <= ROOT_START_B )); then
     not_enough_space "$FREE_SIZE_B"
     return $?
@@ -663,6 +856,7 @@ run_partition_decide() {
   fi
 
   kernel_choice=$(detect_kernel)
+  protected_enable_fallback=false
 
   # Partition numbers are not knowable until parted assigns them (it fills the
   # lowest free GPT slot, and freeing space by deleting a partition leaves one
@@ -692,7 +886,20 @@ run_partition_execute() {
     say "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
   else
     step "Creating partitions on $disk"
+    if $t1_install && [[ $install_target == "free_space" ]]; then
+      t1_efi_any_candidate_available ||
+        disk_abort_hook "Apple hardware data is no longer readable"
+      t1_efi_capture_optional_snapshot "$disk" ||
+        disk_abort_hook "Could not verify Apple hardware data on the install disk"
+      t1_efi_destructive_range_is_safe "$EFI_START_B" "$EFI_END_B" ||
+        disk_abort_hook "The selected free space overlaps preserved Apple hardware data"
+      t1_efi_destructive_range_is_safe "$ROOT_START_B" "$ROOT_END_B" ||
+        disk_abort_hook "The selected free space overlaps preserved Apple hardware data"
+    fi
     if $needs_mklabel; then
+      if $t1_install && (( ${#t1_efi_preserved_devices[@]} > 0 )); then
+        disk_abort_hook "Refusing to replace a partition table that contains Apple hardware data"
+      fi
       disk_step "initializing GPT on $disk" parted --script "$disk" mklabel gpt
       partprobe "$disk" 2>/dev/null || true
       sleep 1
@@ -709,6 +916,7 @@ run_partition_execute() {
       disk_abort_hook "Could not create the root partition on $disk"
     root_part_num="$created_partition_number"
 
+    t1_guard_destructive_partition "$efi_part_num" "flag the new EFI partition"
     disk_step "flagging partition $efi_part_num as ESP" \
       parted --script "$disk" set "$efi_part_num" esp on
 
@@ -725,7 +933,9 @@ run_partition_execute() {
 
     # Both partitions are ours and brand new, but the space they occupy may
     # carry signatures from whatever was deleted to free it.
+    t1_guard_destructive_partition "$efi_part_num" "clear the new EFI partition"
     disk_step "clearing stale signatures on $efi_dev" wipefs -af "$efi_dev"
+    t1_guard_destructive_partition "$root_part_num" "clear the new root partition"
     disk_step "clearing stale signatures on $root_partition_device" wipefs -af "$root_partition_device"
 
     if [[ "$encrypt_installation" == "true" ]]; then
@@ -733,6 +943,7 @@ run_partition_execute() {
       # Kept as pipes rather than routed through disk_step: the passphrase must
       # not become an argv the process table can show. Folding stderr into
       # stdout still lands any error in the install log.
+      t1_guard_destructive_partition "$root_part_num" "format the encrypted root partition"
       if ! printf "%s" "$password" |
         cryptsetup luksFormat --type luks2 --batch-mode "$root_partition_device" - 2>&1; then
         disk_abort_hook "Formatting LUKS2 on $root_partition_device failed"
@@ -747,6 +958,7 @@ run_partition_execute() {
     fi
 
     step "Creating Btrfs filesystem and subvolumes"
+    t1_guard_destructive_partition "$root_part_num" "format the root filesystem"
     disk_step "creating the Btrfs filesystem on $root_mapper" \
       mkfs.btrfs -f -L OMARCHY "$root_mapper"
     wait_for_device "$root_mapper" || disk_abort_hook "Root device $root_mapper never appeared"
@@ -769,6 +981,7 @@ run_partition_execute() {
     disk_step "mounting the package cache" \
       mount -o noatime,compress=zstd,subvol=@pkg "$root_mapper" /mnt/var/cache/pacman/pkg
 
+    t1_guard_destructive_partition "$efi_part_num" "format the new EFI filesystem"
     disk_step "creating the ESP filesystem on $efi_dev" mkfs.fat -F32 -n OMARCHY_EFI "$efi_dev"
     disk_step "mounting the ESP" mount "$efi_dev" /mnt"$esp_mount_in_target"
 
@@ -779,6 +992,13 @@ run_partition_execute() {
       disk_abort_hook "Target /mnt is not mounted; not starting the installer"
     mountpoint -q "/mnt$esp_mount_in_target" ||
       disk_abort_hook "ESP is not mounted at /mnt$esp_mount_in_target"
+
+    # This is the last disk-integrity check before handing the mounted target
+    # to the orchestrator. It covers the full raw contents and GPT identity of
+    # every preserved Apple source.
+    if $t1_install; then
+      t1_revalidate_available_data
+    fi
   fi
 
   local luks_uuid_json="null" luks_uuid
@@ -801,12 +1021,13 @@ run_partition_execute() {
     "custom_commands": [],
     "omarchy_install": {
         "mode": "protected",
+        "defer_provisioning": $defer_provisioning,
         "target_mount": "/mnt",
         "boot": {
             "esp_mount": "$esp_mount_in_target",
             "esp_path": "/EFI/limine",
             "efi_binary": "limine_x64.efi",
-            "enable_fallback": false
+            "enable_fallback": $protected_enable_fallback
         },
         "storage": {
             "esp_device": "$efi_dev",
@@ -895,6 +1116,12 @@ disk_form() {
 # STEP 4: INSTALL MODE
 
 open_partition_tool() {
+  if $t1_install; then
+    step "Partition editor unavailable"
+    say "The partition editor is disabled on this T1 Mac so it cannot remove Apple hardware data."
+    return 0
+  fi
+
   step "Partition tool for $disk"
   gum style "Create unallocated free space for Omarchy, then write changes and quit."
   gum style --foreground 8 "Do not create an Omarchy partition here — leave the target area as Free space."
@@ -953,9 +1180,20 @@ confirm_disk_overwrite() {
   while true; do
     clear_logo
     echo
-    say "Everything will be overwritten. There is no recovery possible."
+    if $t1_install; then
+      if $t1_target_has_candidates; then
+        say "All data except the preserved Apple hardware partition(s) will be erased."
+      else
+        say "All data on the selected disk will be erased. Apple hardware data on other disks will be left untouched."
+      fi
+      say "Omarchy will use its own separate 2GB EFI partition."
+    else
+      say "Everything will be overwritten. There is no recovery possible."
+    fi
 
-    if [[ $mode == "encrypted" ]]; then
+    if $t1_install; then
+      affirmative="Yes, install"
+    elif [[ $mode == "encrypted" ]]; then
       say --foreground 8 "Press Ctrl+C for unencrypted install."
       affirmative="Yes, install"
     else
@@ -968,14 +1206,20 @@ confirm_disk_overwrite() {
 
     case $confirm_status in
       0)
-        [[ $mode == "encrypted" ]] && encrypt_installation=true || encrypt_installation=false
+        if $t1_install || [[ $mode == "encrypted" ]]; then
+          encrypt_installation=true
+        else
+          encrypt_installation=false
+        fi
         return 0
         ;;
       1)
         return 1
         ;;
       130)
-        [[ $mode == "encrypted" ]] && mode="unencrypted" || mode="encrypted"
+        if ! $t1_install; then
+          [[ $mode == "encrypted" ]] && mode="unencrypted" || mode="encrypted"
+        fi
         ;;
       *)
         abort
@@ -993,6 +1237,8 @@ select_installation() {
   local full_disk_only
 
   while true; do
+    t1_prepare_selected_disk
+
     if requires_full_disk_install; then
       full_disk_only=true
     else
@@ -1009,7 +1255,17 @@ select_installation() {
 
     case "$install_mode" in
       "Full disk install")
+        if $t1_install && ! t1_prepare_whole_disk_layout; then
+          step "Not enough safe disk space"
+          say "Omarchy needs at least 32GB outside the preserved Apple hardware partition(s)."
+          disk_form
+          continue
+        fi
         if confirm_disk_overwrite; then
+          if $t1_install; then
+            t1_prepare_whole_disk_layout ||
+              abort "Could not create a safe layout around the Apple hardware partition(s)"
+          fi
           install_target="full_disk"
           return 0
         fi
@@ -1030,10 +1286,21 @@ select_installation() {
   done
 }
 
+# Unit tests source the functions above without starting the interactive
+# installer. This has no effect when the configurator is executed normally.
+if [[ ${OMARCHY_CONFIGURATOR_LIBRARY_ONLY:-false} == true ]]; then
+  return 0
+fi
+
 # STEP 1: KEYBOARD (Ctrl+C here arms deferred provisioning and jumps to disk selection)
 
 defer_provisioning=false
 install_target="full_disk"
+t1_install=false
+t1_snapshot_disk=""
+t1_target_snapshot_ready=false
+t1_target_has_candidates=false
+protected_enable_fallback=false
 
 # Let the live VT reach its settled width before the first screen so the logo
 # isn't measured against the transient 80-column boot console.
@@ -1069,9 +1336,21 @@ if $defer_provisioning; then
   # Jump straight to disk selection + overwrite confirmation (encrypted by
   # default, Ctrl+C toggles unencrypted). deferred provisioning is always a full-disk install.
   disk_form
+  t1_prepare_selected_disk
+  if $t1_install && ! t1_prepare_whole_disk_layout; then
+    abort "Omarchy needs at least 32GB outside the preserved Apple hardware partition(s)"
+  fi
   until confirm_disk_overwrite; do
     disk_form
+    t1_prepare_selected_disk
+    if $t1_install && ! t1_prepare_whole_disk_layout; then
+      abort "Omarchy needs at least 32GB outside the preserved Apple hardware partition(s)"
+    fi
   done
+  if $t1_install; then
+    t1_prepare_whole_disk_layout ||
+      abort "Could not create a safe layout around the Apple hardware partition(s)"
+  fi
   install_target="full_disk"
 else
   disk_form
@@ -1080,9 +1359,13 @@ fi
 
 clear
 
-write_user_files
+write_user_files "$@"
 
-if [[ $install_target == "free_space" ]]; then
+if [[ $install_target == "free_space" ]] || { $t1_install && [[ $install_target == "full_disk" ]]; }; then
+  if $t1_install && [[ $install_target == "full_disk" ]] && [[ ${1:-} != "dry" ]]; then
+    step "Preparing disk while preserving Apple hardware data"
+    t1_delete_nonpreserved_partitions
+  fi
   run_partition_execute "$@"
 
   if [[ ${1:-} == "dry" ]]; then

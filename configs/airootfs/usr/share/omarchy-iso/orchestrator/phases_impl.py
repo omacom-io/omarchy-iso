@@ -36,6 +36,7 @@ from . import archinstall_adapter as arch
 from .command import capture, capture_identifier, require_text
 from .context import InstallContext
 from .keyboard import configure_keyboard
+from .t1_efi import validate_t1_efi_preservation
 from .ui import error, info
 
 
@@ -176,6 +177,10 @@ def _early_packages() -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
+    # This must run before cleanup or archinstall sees the configuration.
+    # It also protects unattended/cidata inputs that bypass the wizard.
+    validate_t1_efi_preservation(ctx)
+
     if ctx.is_protected:
         info("› protected mode: skipping whole-disk cleanup")
     else:
@@ -221,6 +226,10 @@ def arch_install_system(ctx: InstallContext) -> None:
     a pre-mounted target, and Omarchy derives boot/fstab details from that same
     input.
     """
+    # Recheck both the plan and live Apple data at the filesystem-operation
+    # boundary rather than trusting the earlier probe.
+    validate_t1_efi_preservation(ctx)
+
     handler = ctx.state["arch_config_handler"]
     mirror_handler = ctx.state["mirror_handler"]
     config = handler.config

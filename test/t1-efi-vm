@@ -1,0 +1,117 @@
+#!/bin/bash
+# Exercise production preservation helpers against real GPT/FAT block devices
+# in a disposable QEMU guest. No host root, mounts, disks, or network are used.
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+QEMU=${QEMU:-qemu-system-x86_64}
+KERNEL_VERSION=${KERNEL_VERSION:-$(uname -r)}
+KERNEL_IMAGE=${KERNEL_IMAGE:-/usr/lib/modules/$KERNEL_VERSION/vmlinuz}
+[[ -r $KERNEL_IMAGE ]] || { echo "Kernel image is not readable: $KERNEL_IMAGE" >&2; exit 1; }
+command -v "$QEMU" >/dev/null || { echo "QEMU is not available: $QEMU" >&2; exit 1; }
+mkdir -p "$ROOT/test-runs"
+RUN_DIR=$(mktemp -d "$ROOT/test-runs/t1-efi-vm.XXXXXX")
+GUEST_ROOT="$RUN_DIR/root"
+mkdir -p "$GUEST_ROOT"/{usr/bin,usr/lib,dev,proc,sys,run,tmp,probe,etc,fixture}
+ln -s usr/bin "$GUEST_ROOT/bin"
+ln -s usr/bin "$GUEST_ROOT/sbin"
+ln -s usr/lib "$GUEST_ROOT/lib"
+ln -s usr/lib "$GUEST_ROOT/lib64"
+printf 'root:x:0:0:root:/root:/bin/bash\n' >"$GUEST_ROOT/etc/passwd"
+
+copy_binary() {
+  local binary library
+  binary=$(command -v "$1") || { echo "Missing guest build dependency: $1" >&2; exit 1; }
+  cp -L "$binary" "$GUEST_ROOT/usr/bin/$1"
+  while IFS= read -r library; do
+    cp --parents -L "$library" "$GUEST_ROOT"
+  done < <(ldd "$binary" | awk '$2 == "=>" && $3 ~ /^\// {print $3} $1 ~ /^\// {print $1}')
+}
+
+for command in bash mount umount lsblk blkid parted partprobe mkfs.fat mkfs.btrfs \
+  sha256sum find findmnt mkdir mktemp rmdir rm ln cat awk sed grep sort comm head tail cut \
+  sync sleep seq stty tr timeout blockdev swapoff udevadm kmod wipefs lspci \
+  cryptsetup dmsetup python3; do
+  copy_binary "$command"
+done
+python_stdlib=$(python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
+tar -C / --exclude=site-packages --exclude=__pycache__ --exclude=test \
+  -cf - "${python_stdlib#/}" | tar -C "$GUEST_ROOT" -xf -
+ln -s kmod "$GUEST_ROOT/usr/bin/modprobe"
+ln -s udevadm "$GUEST_ROOT/usr/bin/systemd-udevd"
+mkdir -p "$GUEST_ROOT/usr/lib/udev/rules.d"
+cp /usr/lib/udev/rules.d/{10-dm,13-dm-disk,60-persistent-storage,95-dm-notify}.rules \
+  "$GUEST_ROOT/usr/lib/udev/rules.d/"
+
+for module in virtio_pci virtio_blk virtio_rng vfat nls_cp437 nls_iso8859_1 btrfs dm_crypt xts; do
+  while read -r action file rest; do
+    [[ $action == insmod ]] || continue
+    cp --parents -L "$file" "$GUEST_ROOT"
+  done < <(modprobe -S "$KERNEL_VERSION" --show-depends "$module")
+done
+cp /usr/lib/modules/"$KERNEL_VERSION"/modules.{builtin,builtin.modinfo,order} \
+  "$GUEST_ROOT/usr/lib/modules/$KERNEL_VERSION/"
+depmod -b "$GUEST_ROOT" "$KERNEL_VERSION"
+
+cp "$ROOT/configs/airootfs/root/configurator" "$GUEST_ROOT/fixture/"
+cp "$ROOT/configs/airootfs/usr/share/omarchy-iso/disk-partitioning.sh" "$GUEST_ROOT/fixture/"
+cp "$ROOT/configs/airootfs/usr/local/bin/omarchy-iso-cleanup-disk" "$GUEST_ROOT/usr/bin/"
+cp "$ROOT/test/vm/t1-efi-guest.sh" "$GUEST_ROOT/fixture/"
+cp "$ROOT/test/vm/t1-efi-guard.py" "$GUEST_ROOT/fixture/"
+mkdir -p "$GUEST_ROOT/fixture/orchestrator"
+cp "$ROOT/configs/airootfs/usr/share/omarchy-iso/orchestrator/"{__init__,command,t1_efi}.py \
+  "$GUEST_ROOT/fixture/orchestrator/"
+touch "$GUEST_ROOT/fixture/setup-form.sh"
+printf 'Omarchy\n' >"$GUEST_ROOT/fixture/logo.txt"
+cat >"$GUEST_ROOT/init" <<'INIT'
+#!/bin/bash
+export PATH=/usr/bin
+mount -t devtmpfs devtmpfs /dev
+exec </dev/console >/dev/console 2>&1
+mount -t proc proc /proc
+ln -s /proc/self/fd /dev/fd
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+for module in virtio_pci virtio_blk virtio_rng vfat nls_cp437 nls_iso8859_1 btrfs dm_crypt xts; do
+  modprobe "$module" || exit 1
+done
+systemd-udevd --daemon
+udevadm trigger --subsystem-match=block
+udevadm settle
+export OMARCHY_T1_VM_TEST=1
+if bash /fixture/t1-efi-guest.sh; then
+  echo 'T1_EFI_VM_EXIT=0'
+else
+  echo "T1_EFI_VM_EXIT=$?"
+fi
+sync
+echo b >/proc/sysrq-trigger
+while true; do sleep 1; done
+INIT
+chmod +x "$GUEST_ROOT/init"
+(cd "$GUEST_ROOT" && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null) | gzip -1 >"$RUN_DIR/initramfs.gz"
+truncate -s 40G "$RUN_DIR/target.raw"
+truncate -s 40G "$RUN_DIR/external.raw"
+qemu_args=(
+  -nodefaults -no-reboot -nographic -monitor none -serial stdio
+  -m 768 -smp 2
+  -kernel "$KERNEL_IMAGE" -initrd "$RUN_DIR/initramfs.gz"
+  -append 'console=ttyS0 rdinit=/init panic=-1 quiet'
+  -smbios 'type=1,manufacturer=Apple Inc.,product=MacBookPro13,,3'
+  -drive "file=$RUN_DIR/target.raw,format=raw,if=none,id=target"
+  -device virtio-blk-pci,drive=target,serial=T1_TEST_DISK_A
+  -drive "file=$RUN_DIR/external.raw,format=raw,if=none,id=external"
+  -device virtio-blk-pci,drive=external,serial=T1_TEST_DISK_B
+  -object rng-random,id=entropy,filename=/dev/urandom
+  -device virtio-rng-pci,rng=entropy
+)
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+  qemu_args+=(-machine q35,accel=kvm -cpu host)
+else
+  qemu_args+=(-machine q35,accel=tcg -cpu max)
+fi
+[[ -z ${QEMU_FIRMWARE_PATH:-} ]] || qemu_args+=(-L "$QEMU_FIRMWARE_PATH")
+printf 'Running isolated preservation VM. Evidence: %s\n' "$RUN_DIR/serial.log"
+timeout 600 "$QEMU" "${qemu_args[@]}" | tee "$RUN_DIR/serial.log"
+grep -qx 'T1_EFI_VM_EXIT=0' <(tr -d '\r' <"$RUN_DIR/serial.log")
+grep -qx 'T1_EFI_VM_PASS' <(tr -d '\r' <"$RUN_DIR/serial.log")
