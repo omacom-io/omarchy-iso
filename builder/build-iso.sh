@@ -408,8 +408,10 @@ verify_try_nvidia_packages() {
   local kernel_headers branch
   local -a targets
 
-  # The live root's kernel, whose headers DKMS builds against.
-  kernel_headers=$(grep -oE '^linux(-[a-z0-9]+)*$' "$build_cache_dir/packages.x86_64" | head -1)-headers
+  # The live root's kernel, whose headers DKMS builds against. The same pattern
+  # omarchy-try-nvidia matches at run time, and deliberately not a looser one:
+  # linux-firmware sorts first in this list and has no -headers package.
+  kernel_headers=$(grep -oE '^linux(-zen|-lts|-hardened|-t2|-ptl)?$' "$build_cache_dir/packages.x86_64" | head -1)-headers
 
   for branch in "nvidia-open-dkms nvidia-utils" "nvidia-580xx-dkms nvidia-580xx-utils"; do
     rm -rf "$resolve_root"

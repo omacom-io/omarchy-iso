@@ -27,7 +27,9 @@ exit 0
 STUB
 chmod +x "$work/stubs/pacman"
 : >"$work/cache/pacman-offline.conf"
-printf 'base\nlinux-t2\nplymouth\n' >"$work/cache/packages.x86_64"
+# The real live root carries linux-firmware* alongside the kernel, and only one
+# of these is a kernel whose -headers exist.
+printf 'base\nlinux-firmware\nlinux-firmware-marvell\nlinux-t2\nplymouth\n' >"$work/cache/packages.x86_64"
 export TEST_LOG="$work/calls.log"
 
 eval "$(sed -n '/^verify_try_nvidia_packages() {/,/^}/p' "$BUILD")"
