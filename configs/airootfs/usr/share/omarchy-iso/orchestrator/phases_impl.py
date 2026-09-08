@@ -756,7 +756,15 @@ def _boot_intent(ctx: InstallContext) -> dict:
     boot.setdefault("esp_mount", "/boot")
     boot.setdefault("esp_path", "/EFI/limine")
     boot.setdefault("efi_binary", "limine_x64.efi")
-    boot.setdefault("enable_fallback", not ctx.is_protected)
+    # Protected installs used to default this off, from a time when a
+    # free-space install could adopt the Windows ESP and claiming
+    # EFI/BOOT/BOOTX64.EFI there would have displaced the Windows loader.
+    # The configurator stopped adopting that ESP in "Always create our own
+    # ESP" (ef3b0e4): protected mode now formats a dedicated FAT32 ESP in
+    # free space, where the removable path is unused and ours to claim. It
+    # is also the only path left when firmware refuses or discards the
+    # "Limine" boot variable, so both modes take it.
+    boot.setdefault("enable_fallback", True)
     return boot
 
 
@@ -1682,15 +1690,59 @@ def validate_boot(ctx: InstallContext) -> None:
         if not any(uki.exists() and uki.stat().st_size for uki in ukis):
             raise RuntimeError(f"{' / '.join(str(uki) for uki in ukis)} missing or empty")
 
-        post = _read_efibootmgr()
-        if not _find_label_entries(post["entries"], "Limine"):
-            raise RuntimeError("no 'Limine' entry registered in efibootmgr")
+        _validate_uefi_boot_routes(esp_mount)
 
     if ctx.is_protected:
         _validate_pre_mounted_filesystems(ctx)
 
     if ctx.defer_provisioning:
         _validate_provisioning_state(ctx)
+
+
+def _validate_uefi_boot_routes(esp_mount: Path) -> None:
+    """Check the two ways firmware can reach this install, and insist on one.
+
+    The named "Limine" boot variable is the route we prefer and the one
+    _register_limine_efi_entry created and read back. The removable path
+    EFI/BOOT/BOOTX64.EFI is the one every UEFI implementation tries when
+    nothing in NVRAM matches, and limine-install deploys it from
+    ENABLE_LIMINE_FALLBACK during finalize_limine_boot.
+
+    Either alone boots the machine, so neither is fatal by itself. Losing
+    both is: that install reboots into whatever else is on the disk with no
+    way back. Firmware that takes the variable at registration and discards
+    it before the install ends is the case worth naming, because nothing
+    else in the install notices.
+    """
+    fallback_binary = esp_mount / "EFI" / "BOOT" / "BOOTX64.EFI"
+    has_fallback = fallback_binary.exists() and fallback_binary.stat().st_size > 0
+    has_entry = bool(_find_label_entries(_read_efibootmgr()["entries"], "Limine"))
+
+    if not has_entry and not has_fallback:
+        raise RuntimeError(
+            "no bootable route to this install: efibootmgr has no 'Limine' entry "
+            f"and {fallback_binary} is missing or empty"
+        )
+
+    if not has_entry:
+        error(
+            "Warning: this firmware discarded the 'Limine' UEFI boot entry during "
+            f"the install. Omarchy still boots from {fallback_binary.name} on its "
+            "own EFI partition. If the machine starts another OS instead, pick the "
+            "Omarchy disk from the firmware boot menu (F11, F12 or Esc on most "
+            "boards), then move it to the top of the firmware's own boot priority "
+            "list. Some AMI/MSI boards ignore the UEFI BootOrder and honour only "
+            "that list."
+        )
+        return
+
+    if not has_fallback:
+        error(
+            f"Warning: {fallback_binary} was not deployed, so this install depends "
+            "on the 'Limine' UEFI boot entry alone. It boots now. If firmware "
+            "later clears NVRAM, reinstall the loader from a live session with "
+            "'limine-install --fallback'."
+        )
 
 
 def _validate_provisioning_state(ctx: InstallContext) -> None:
