@@ -66,10 +66,8 @@
       "boot": {
         "hardware_description": "firmware",
         "kernel_cmdline": [
-          "plymouth.enable=0",
-          "nvidia_drm.fbdev=1",
           "console=tty0",
-          "loglevel=7"
+          "plymouth.ignore-serial-consoles"
         ]
       },
       "kernel": {

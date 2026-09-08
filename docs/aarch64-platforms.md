@@ -48,10 +48,10 @@ needed between kernel entry and encrypted-root unlock must be made explicit.
 | Platform | Hardware description | Declared coverage | Physical validation |
 | --- | --- | --- | --- |
 | Lenovo Yoga Slim 7x (83ED) | Explicit `x1e80100` DTB | DTB, Qualcomm package, pre-LUKS display/input/watchdog/retimer modules, dynamic GPU firmware | Full encrypted installation validated: the corrected initramfs renders the Plymouth LUKS prompt, Limine finalization completes, and the installed OS boots successfully |
-| NVIDIA DGX Spark | Firmware | NVIDIA runtime and DKMS packages only | Early-boot dependency audit and physical installation are not complete |
+| NVIDIA DGX Spark | Firmware | NVIDIA packages and graphical unlock boot arguments | September 5 ISO installed to an external SSD; graphical unlock and desktop boot validated with edited boot arguments, including a boot without debug logging. A fresh ISO with this manifest change has not been tested |
 | ASUS Ascent GX10 | Firmware | NVIDIA runtime and DKMS packages only | Early-boot dependency audit and physical installation are not complete |
 
-Package-only entries for Spark and GX10 are intentional bring-up entries. They
+The GX10 package-only entry and Spark support remain bring-up work. They
 must not be described as complete platform support until their storage,
 display, input, watchdog, firmware, and encrypted-boot paths have been tested.
 
@@ -237,6 +237,16 @@ declared DTB is absent from the exact kernel package used for that image.
   Linux entry because `limine-update` rewrites `limine.conf`.
 - `test/unit/test_aarch64_platforms.py` checks manifest safety, matching,
   persistent DTB injection, and early-boot configuration.
+
+## NVIDIA DGX Spark graphical unlock
+
+Plymouth's boot log detected `ttyS0` alongside the local console and reported
+"serial consoles detected, managing them with details forced". Setting
+`console=tty0` made the text unlock prompt visible; adding
+`plymouth.ignore-serial-consoles` allowed the Omarchy graphical unlock theme.
+The Spark entry retains Plymouth and the normal quiet boot settings. The
+installer writes these arguments to the target's Limine configuration drop-in
+so future boot-image generation includes them.
 
 ## Lenovo Yoga Slim 7x (83ED) findings
 
