@@ -178,10 +178,10 @@ class Aarch64LiminePlatformHookTests(unittest.TestCase):
             if platform["id"] == "lenovo-yoga-slim7x"
         )
 
-    def configure(self):
+    def configure(self, platform_config=None):
         with (
             mock.patch.object(
-                phases_impl, "_current_aarch64_platform", return_value=self.yoga
+                phases_impl, "_current_aarch64_platform", return_value=platform_config or self.yoga
             ),
             mock.patch.object(phases_impl, "AARCH64_PLATFORM_MANIFEST", MANIFEST),
             mock.patch.object(phases_impl, "info"),
@@ -237,6 +237,29 @@ class Aarch64LiminePlatformHookTests(unittest.TestCase):
         hook = self.target / "etc/boot/hooks/post.d/80-omarchy-aarch64-platform"
         self.assertTrue(hook.stat().st_mode & 0o111)
         subprocess.run(["bash", "-n", str(hook)], check=True)
+
+    def test_spark_persists_graphical_unlock_arguments(self):
+        spark = next(
+            platform
+            for platform in json.loads(MANIFEST.read_text())["platforms"]
+            if platform["id"] == "nvidia-dgx-spark"
+        )
+        self.configure(spark)
+        dropin = self.target / "etc/limine-entry-tool.d/80-omarchy-aarch64-platform.conf"
+        result = subprocess.run(
+            [
+                "bash", "-c",
+                'declare -A KERNEL_CMDLINE=([default]="quiet splash"); '
+                'source "$1"; printf "%s\\n" "${KERNEL_CMDLINE[default]}"',
+                "bash", str(dropin),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        self.assertEqual(
+            result.stdout.strip().split(),
+            ["quiet", "splash", "console=tty0", "plymouth.ignore-serial-consoles"],
+        )
+        self.assertFalse((self.target / "etc/boot/hooks/post.d/80-omarchy-aarch64-platform").exists())
 
     def test_hook_adds_dtb_to_every_linux_entry_idempotently(self):
         self.configure()
