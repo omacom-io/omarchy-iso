@@ -64,6 +64,9 @@ for config in "$ROOT/configs/grub/grub.cfg" "$ROOT/configs/grub/loopback.cfg"; d
   [[ -n $safe_linux && -n $(kernel_line initrd <<< "$safe") ]] || fail "$(basename "$config") has a bootable safe entry"
   [[ ! $normal_linux =~ (^|[[:space:]])nomodeset([[:space:]]|$) ]] || fail "$(basename "$config") leaves normal boot graphics unchanged"
   [[ $safe_linux =~ (^|[[:space:]])nomodeset([[:space:]]|$) ]] || fail "$(basename "$config") gives safe graphics its own kernel mode"
+  # The hotkey is the only way in when gfxterm never paints the menu.
+  [[ $(head -1 <<< "$safe") =~ (^|[[:space:]])--hotkey[[:space:]]+g([[:space:]]|$) ]] ||
+    fail "$(basename "$config") gives safe graphics a hotkey"
   [[ $(wc -l <<<"$ids") == $(sort -u <<<"$ids" | wc -l) ]] ||
     fail "$(basename "$config") gives every menu entry a unique ID"
   [[ $(grep -ow 'nomodeset' "$config" | wc -l) == 1 ]] ||
