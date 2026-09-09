@@ -143,3 +143,15 @@ Run `./bin/omarchy-iso-upload [release/omarchy.iso]`. This requires rclone confi
 ## Full release of the ISO
 
 Run `./bin/omarchy-iso-release VERSION` to create, test, sign, and upload the ISO in one flow. Add `--rc` to release an RC build instead.
+
+### BitTorrent downloads
+
+Releases also publish `omarchy-VERSION.iso.torrent` beside the ISO, signature and checksum. Open the `.torrent` in a BitTorrent client with HTTPS web-seed support. It can download from `iso.omarchy.org` even before other peers join, and share downloaded pieces with other users. Verify the finished ISO using the same `.sha256` or `.sig` as an HTTPS download.
+
+To help seed, keep the torrent running after downloading. If you already have the ISO, add the torrent paused, point the client's download location at the ISO's directory, force a recheck, and start seeding once verification finishes.
+
+Release operators need `mktorrent` on the host (`sudo pacman -S mktorrent`). The release command generates a single-file torrent with 2 MiB pieces after the ISO receives its final versioned filename, then uploads it only after the ISO, signature and checksum succeed. Generation or upload errors fail the release. To regenerate metadata for an existing local release, run `./bin/omarchy-iso-torrent release/omarchy-VERSION.iso`; this does not upload anything.
+
+Published versioned ISO files must not be replaced with different bytes: existing torrents refer to the original content. Use a new version or numbered RC for a rebuild. Generated torrents stay in the ignored `release/` directory with the other artifacts. Nightly GitHub artifacts do not get torrents because they expire and have no matching public web-seed URL.
+
+Following [Arch Linux's distribution model](https://archlinux.org/download/#bittorrent-download), torrents contain no trackers and are not private. Use a DHT-capable client for peer discovery; PEX can discover additional peers after connecting. The existing HTTPS download is the web seed, so clients with HTTPS web-seed support can download even when no peers are available. No tracker service or external tracker-list fetch is needed.
