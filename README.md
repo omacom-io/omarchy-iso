@@ -7,6 +7,15 @@
 
 ---
 
+## Credits & Attribution
+
+- **Original Architecture, Feature Design & Codebase:**  
+  Designed, architected, and implemented by **John Sideserf** ([@johnsideserf](https://github.com/johnsideserf)) on the [`try-omarchy`](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) branch of `omarchy-iso`. All core logic, including just-in-time offline mirror resolution, `omarchy-try-setup`, NVIDIA card fallback detection, and the unit test suite, are the work of John Sideserf and the Omarchy project contributors.
+- **ISO Compilation, Community Testing Setup & Maintenance:**  
+  Built and maintained by **Aarav Tank** ([@aaravtank](https://github.com/aaravtank)).
+
+---
+
 ## What is "Try Omarchy"?
 
 "Try Omarchy" lets you boot the Omarchy ISO on the machine you are about to wipe and experience the real Hyprland desktop on your actual hardware before committing — the x86 counterpart of the `try-omarchy` Mac app.
@@ -84,14 +93,12 @@ sha256sum omarchy-2026.09.09-x86_64.iso
 
 ---
 
-## Author & License
+## License
 
-- **Compiled & Maintained by:** Aarav Tank ([@aaravtank](https://github.com/aaravtank))
-- **Based on original work by:** John Sideserf ([@johnsideserf](https://github.com/johnsideserf)) and the Omarchy project contributors.
-- **License:** [MIT License](LICENSE)
+This project is distributed under the [MIT License](LICENSE).
 
 ```text
-Copyright (c) 2026 Aarav Tank
+Copyright (c) 2026 John Sideserf, Aarav Tank, and Omarchy Project Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
