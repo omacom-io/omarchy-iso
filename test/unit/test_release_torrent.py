@@ -118,17 +118,29 @@ class TorrentTests(unittest.TestCase):
         self.run_cmd('omarchy-iso-release', '--no-make', '9.9.9', ok=False)
         self.assertFalse(self.log.exists())
 
-    def test_missing_generator_stops_before_build(self):
-        # The preflight must run before make, even with no ISO on disk.
-        for name in ('realpath',):
-            (self.bin / name).symlink_to(shutil.which(name))
+    def test_missing_generator_is_installed_before_build(self):
+        (self.bin / 'realpath').symlink_to(shutil.which('realpath'))
+        self.script('sudo', 'echo "sudo $*" >> "$TEST_LOG"\nexit 0')
+        # Stop at make: this case tests dependency setup and its ordering.
+        self.script('omarchy-iso-make', 'echo make >> "$TEST_LOG"\nexit 19')
         result = self.run_cmd('omarchy-iso-release', '9.9.9',
                               ok=False, PATH=str(self.bin))
-        self.assertIn('mktorrent is required', result.stderr)
-        self.assertFalse(self.log.exists())
+        self.assertEqual(result.returncode, 19)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            'sudo pacman -S --noconfirm --needed --quiet mktorrent', 'make'])
+
+    def test_failed_dependency_install_stops_before_build(self):
+        (self.bin / 'realpath').symlink_to(shutil.which('realpath'))
+        self.script('sudo', 'echo "sudo $*" >> "$TEST_LOG"\nexit 23')
+        result = self.run_cmd('omarchy-iso-release', '9.9.9',
+                              ok=False, PATH=str(self.bin))
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            'sudo pacman -S --noconfirm --needed --quiet mktorrent'])
 
     @unittest.skipUnless(shutil.which('mktorrent'), 'install mktorrent for release tests')
     def test_stable_and_rc_release(self):
+        self.script('sudo', 'echo unexpected-sudo >> "$TEST_LOG"\nexit 1')
         for args, ref, name in [
             (['9.9.9'], 'quattro', 'omarchy-9.9.9.iso'),
             (['--rc', '9.9.9'], 'rc', 'omarchy-9.9.9-rc.iso'),
