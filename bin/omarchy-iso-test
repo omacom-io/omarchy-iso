@@ -734,7 +734,7 @@ drive_provision_owner() {
   # layout — UK leaves every letter identical to US, so the typed password (sent
   # as raw keycodes) still matches the literal one the harness pipes to sudo.
   # A greeter (animated logo + tagline) opens first boot; Return begins.
-  wait_for_screen "Opinionated" 600
+  wait_for_screen "Beautiful.*Linux by DHH\|Press Return to Start Setup" 600
   capture_console "success-provision-00-greeter"
   press ret
 
@@ -809,7 +809,7 @@ wait_for_install() {
     # Deferred-provisioning installs skip the celebration and reboot on their own
     # (no Reboot Now prompt); the first-boot greeter tagline appearing means the
     # install finished and rebooted into setup.
-    if $PROVISION && grep -qi "Opinionated" <<<"$text"; then
+    if $PROVISION && grep -qi "Beautiful.*Linux by DHH\|Press Return to Start Setup" <<<"$text"; then
       log "Install finished and auto-rebooted into first-boot setup."
       capture_console "success-installer-15-autoreboot"
       return 0
