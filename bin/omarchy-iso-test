@@ -280,7 +280,10 @@ press() {
     json+="{\"type\":\"qcode\",\"data\":\"$part\"},"
   done
 
-  qmp "\"send-key\", \"arguments\": {\"keys\": [${json%,}]}" >/dev/null
+  qmp "\"send-key\", \"arguments\": {\"keys\": [${json%,}], \"hold-time\": 50}" >/dev/null
+  # QMP acknowledges before releasing the chord. Wait for release so the next
+  # shortcut cannot inherit Ctrl/Shift/Super from the previous one.
+  sleep 0.1
 }
 
 type_text() {
@@ -614,7 +617,7 @@ drive_configurator() {
   log "Driving the installer wizard"
 
   # A greeter (animated logo + tagline) opens the installer; Return begins.
-  wait_for_screen "Opinionated" 300
+  wait_for_screen "Beautiful.*Linux by DHH\|Press Return to Start Install" 300
   capture_console "success-installer-00-greeter"
   press ret
 
@@ -664,7 +667,7 @@ drive_configurator() {
   capture_console "success-installer-03-password"
   press ret
 
-  wait_for_screen "Must match" 60
+  wait_for_screen "match the password" 60
   type_text "$GUEST_PASSWORD"
   capture_console "success-installer-04-password-confirmation"
   press ret
