@@ -8,6 +8,17 @@ start_vm_from_base
 wait_for_ssh "$BOOT_TIMEOUT"
 ssh_sudo "printf '%s\n' '$GUEST_USER ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/90-container-test; chmod 440 /etc/sudoers.d/90-container-test"
 
+# Reproduce both legacy ufw-docker blocks from the recorded installed system.
+# Installing Docker alone on a fresh Podman ISO does not recreate this state.
+python3 - "$ROOT/manifests/fresh-4.json" <<'PY' | ssh_guest 'cat >/tmp/legacy-firewall.json'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    files = json.load(source)['files']['system_config']
+json.dump({path: files[path]['text'] for path in ('/etc/ufw/after.rules', '/etc/ufw/after6.rules')}, sys.stdout)
+PY
+
 ssh_guest 'cat >/tmp/podman-migration-fixture.sh' <<'GUEST'
 #!/bin/bash
 set -euo pipefail
@@ -20,6 +31,15 @@ unset DOCKER_HOST
 sudo pacman -Sy --noconfirm
 omarchy-pkg-drop podman-docker
 omarchy-pkg-add docker
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+for path, contents in json.loads(Path('/tmp/legacy-firewall.json').read_text()).items():
+    Path(path).write_text(contents)
+PY
+sudo ufw reload
+sudo ip6tables-save | grep -q DOCKER-USER
 sudo systemctl start docker.socket
 sudo docker run -d --name redis --restart unless-stopped \
   -p 127.0.0.1:6379:6379 \
@@ -113,6 +133,14 @@ printf 'INTERRUPTED BATCH AND SOURCE RESTART SAFEGUARDS VERIFIED\n'
 
 CONTAINER_HOST=unix:///tmp/do-not-contact-podman.sock bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
 [[ $(pacman -Qq docker) == "podman-docker" ]]
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+for path, original in json.loads(Path('/tmp/legacy-firewall.json').read_text()).items():
+    assert '# BEGIN UFW AND DOCKER' not in Path(path).read_text()
+    assert Path(path + '.before-podman').read_text() == original
+PY
 [[ $(podman exec redis redis-cli GET migration-proof) == "preserved" ]]
 [[ $(podman exec redis cat /migration-proof) == "writable-layer" ]]
 [[ $(podman inspect postgres16 --format '{{.State.Running}}') == "false" ]]
@@ -173,7 +201,7 @@ check "guest rebooted" ssh_guest "test \"\$(cat /proc/sys/kernel/random/boot_id)
 check "running Redis resumed with data" ssh_guest 'for attempt in {1..30}; do [[ $(podman exec redis redis-cli GET migration-proof 2>/dev/null) == preserved ]] && exit 0; sleep 1; done; exit 1'
 check "deliberately stopped PostgreSQL remains stopped" ssh_guest "test \"\$(podman inspect postgres16 --format '{{.State.Running}}')\" = false"
 check "custom worker resumes as its original non-root user" ssh_guest "test \"\$(podman exec project-worker id -u)\" = 1000"
-check "Docker bridge and firewall chains are gone" ssh_sudo '! ip link show docker0 2>/dev/null && ! iptables-save | grep -q DOCKER'
+check "Docker bridge and IPv4/IPv6 firewall chains are gone" ssh_sudo '! ip link show docker0 2>/dev/null && ! iptables-save | grep -q DOCKER && ! ip6tables-save | grep -q DOCKER'
 check "rootless API responds after reboot" ssh_guest 'curl -fsS --max-time 10 --unix-socket "$XDG_RUNTIME_DIR/podman/podman.sock" http://localhost/_ping'
 capture_console success-podman-migration-reboot
 finish
