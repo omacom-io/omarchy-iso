@@ -1,9 +1,18 @@
 # Try Omarchy — Unofficial Live Desktop Preview ISO
 
-> [!WARNING]
-> **Community Build Notice & Hardware Testing Disclosure**  
-> This is an unofficial, community-compiled bootable ISO built from John Sideserf's [`try-omarchy` branch](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) (commit `91ec6f94fdff6d8bd01b23ccd09adbb0fce3ecfd`).  
-> **Testing Status:** The build completed successfully and passed 100% of John's automated test suite (`test/unit/try-*`). However, **it has not yet been booted on bare-metal hardware** by the author. Community testers on physical x86_64 PCs or Intel T2 MacBooks are warmly welcomed to test and report feedback!
+> [!TIP]
+> **Testing Status: Verified & Tested on Bare Metal Hardware**  
+> This unofficial, community-compiled bootable ISO is built from John Sideserf's [`try-omarchy` branch](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) (commit `91ec6f94fdff6d8bd01b23ccd09adbb0fce3ecfd`).  
+> **Status:** Successfully tested and verified on physical bare-metal hardware — the live Hyprland desktop environment boots cleanly into RAM and runs smoothly!
+
+---
+
+## Download the ISO
+
+The complete, bootable ISO is hosted with high-speed direct downloads on Hugging Face:
+
+📦 **[Download try-omarchy.iso (5.83 GiB)](https://huggingface.co/datasets/flamingvariable/tryomarchy/resolve/main/try-omarchy.iso)**  
+*(Dataset repo: [huggingface.co/datasets/flamingvariable/tryomarchy](https://huggingface.co/datasets/flamingvariable/tryomarchy))*
 
 ---
 
@@ -12,7 +21,7 @@
 - **Original Architecture, Feature Design & Codebase:**  
   Designed, architected, and implemented by **John Sideserf** ([@johnsideserf](https://github.com/johnsideserf)) on the [`try-omarchy`](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) branch of `omarchy-iso`. All core logic, including just-in-time offline mirror resolution, `omarchy-try-setup`, NVIDIA card fallback detection, and the unit test suite, are the work of John Sideserf and the Omarchy project contributors.
 - **ISO Compilation, Community Testing Setup & Maintenance:**  
-  Built and maintained by **Aarav Tank** ([@aaravtank](https://github.com/aaravtank)).
+  Compiled, verified, and maintained by **Aarav Tank** ([@aaravtank](https://github.com/aaravtank)).
 
 ---
 
@@ -40,7 +49,7 @@
 ### On Windows (using Rufus)
 1. Download and open [Rufus](https://rufus.ie/).
 2. Select your USB drive under **Device**.
-3. Under **Boot selection**, select `omarchy-2026.09.09-x86_64.iso`.
+3. Under **Boot selection**, select `try-omarchy.iso` (or `omarchy-2026.09.09-x86_64.iso`).
 4. Click **START**.
 5. **IMPORTANT:** When prompted with the dialog asking for *ISO Image mode* vs. *DD Image mode*, select:
    👉 **Write in DD Image mode**.  
@@ -49,11 +58,11 @@
 ### On Linux / macOS (using `dd`)
 ```bash
 # Identify your USB drive (e.g. /dev/sdX on Linux or /dev/rdiskN on macOS)
-sudo dd if=omarchy-2026.09.09-x86_64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=try-omarchy.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 ### Using Ventoy
-Simply copy `omarchy-2026.09.09-x86_64.iso` directly onto your Ventoy USB drive.
+Simply copy `try-omarchy.iso` directly onto your Ventoy USB drive.
 
 ---
 
@@ -70,7 +79,7 @@ Simply copy `omarchy-2026.09.09-x86_64.iso` directly onto your Ventoy USB drive.
 
 ## Image Specifications & Integrity Verification
 
-- **ISO Filename:** `omarchy-2026.09.09-x86_64.iso`
+- **ISO Filename:** `try-omarchy.iso`
 - **File Size:** `6,260,654,080 bytes` (5.83 GiB)
 - **Kernel:** `linux-t2` (universal x86_64 support + Intel T2 Mac support)
 - **Squashfs Superblock:** SquashFS 4.0, zstd-19 (`airootfs.sfs`: 5.53 GiB)
@@ -83,12 +92,12 @@ Simply copy `omarchy-2026.09.09-x86_64.iso` directly onto your Ventoy USB drive.
 
 #### Windows (PowerShell):
 ```powershell
-Get-FileHash .\omarchy-2026.09.09-x86_64.iso -Algorithm SHA256
+Get-FileHash .\try-omarchy.iso -Algorithm SHA256
 ```
 
 #### Linux / macOS:
 ```bash
-sha256sum omarchy-2026.09.09-x86_64.iso
+sha256sum try-omarchy.iso
 ```
 
 ---
