@@ -281,12 +281,14 @@ user_step() {
   while true; do
     user_form && status=0 || status=$?
     if ((status != 0)); then
-      # Esc unwinds to the start of the form. Ctrl+C has no side channel in the
-      # user step (only the keyboard and disk screens give it a meaning), so it
-      # keeps its long-standing behaviour of ending the install.
+      # Esc unwinds to the start of the flow: keyboard, then edition, then the
+      # form again. Ctrl+C has no side channel in the user step (only the
+      # keyboard and disk screens give it a meaning), so it keeps its
+      # long-standing behaviour of ending the install.
       ((status == OMARCHY_FORM_BACK)) || abort
       keyboard_form
       $defer_provisioning && return 0
+      edition_step
       continue
     fi
 
@@ -308,6 +310,7 @@ Keyboard,$keyboard" |
     else
       keyboard_form
       $defer_provisioning && return 0
+      edition_step
     fi
   done
 }
@@ -948,8 +951,8 @@ install_mode_form() {
   install_mode=$(gum choose --header "Select installation mode on $disk" "${choices[@]}") || abort
 }
 
-# Which Omarchy this machine becomes. Asked once, never toggled afterwards:
-# taking a compositor off an installed machine, or putting one on, is a
+# Which Omarchy this machine becomes. Settled at install, never toggled on an
+# installed machine: taking a compositor off, or putting one on, is a
 # migration in both directions, so the answer is a reinstall.
 edition_step() {
   local choice
