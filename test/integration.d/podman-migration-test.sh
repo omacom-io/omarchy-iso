@@ -78,6 +78,39 @@ grep -q device-required /tmp/preflight.log
 ! podman container exists redis
 ! podman container exists project-worker
 sudo docker rm review-required device-required
+
+# Complete one transfer while Docker is still needed by the remaining batch.
+# Its old always policy must not revive a stale source after a daemon restart.
+# Uppercase and repeated dots are valid container names, but not image paths.
+sudo docker run -d --name Always..Worker --restart always docker.io/library/alpine:3 \
+  sh -c 'echo original >/retry-proof; trap "exit 0" TERM; while :; do sleep 1 & wait $!; done'
+retry_source=$(sudo docker inspect Always..Worker --format '{{.Id}}')
+python3 "$OMARCHY_PATH/default/podman/migrate-databases.py" Always..Worker
+[[ $(sudo docker inspect Always..Worker --format '{{.HostConfig.RestartPolicy.Name}}') == "no" ]]
+[[ $(podman inspect Always..Worker --format '{{.HostConfig.RestartPolicy.Name}}') == "always" ]]
+sudo systemctl restart docker
+[[ $(sudo docker inspect Always..Worker --format '{{.State.Running}}') == "false" ]]
+python3 "$OMARCHY_PATH/default/podman/migrate-databases.py" Always..Worker
+
+# Explicitly resuming the recovery copy invalidates its receipt, even when it
+# is stopped again. Never silently choose the stale target after new writes.
+sudo docker start Always..Worker
+sudo docker exec Always..Worker sh -c 'echo changed >/retry-proof'
+for source_state in running stopped; do
+  if [[ $source_state == "stopped" ]]; then sudo docker stop Always..Worker; fi
+  if python3 "$OMARCHY_PATH/default/podman/migrate-databases.py" Always..Worker >/tmp/retry.log 2>&1; then
+    echo 'Restarted Docker source incorrectly reused its old receipt' >&2; exit 1
+  fi
+  grep -q 'no completed transfer' /tmp/retry.log
+  [[ $(podman exec Always..Worker cat /retry-proof) == "original" ]]
+done
+# These conflicting copies are disposable test data; production leaves both
+# for review. Remove this fixture so the ordinary batch can proceed below.
+sudo docker rm Always..Worker
+podman rm -f Always..Worker
+rm "$HOME/.local/state/omarchy/podman-migration/$retry_source"
+printf 'INTERRUPTED BATCH AND SOURCE RESTART SAFEGUARDS VERIFIED\n'
+
 CONTAINER_HOST=unix:///tmp/do-not-contact-podman.sock bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
 [[ $(pacman -Qq docker) == "podman-docker" ]]
 [[ $(podman exec redis redis-cli GET migration-proof) == "preserved" ]]
