@@ -1482,12 +1482,14 @@ def configure_login(ctx: InstallContext) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def configure_ssh_access(ctx: InstallContext) -> None:
-    if ctx.authorized_keys_path is None:
+    # A server without SSH is unreachable, so the door opens even when no keys
+    # were given; password auth over the console-set password remains.
+    if ctx.authorized_keys_path is None and ctx.edition != "server":
         return
 
-    keys = _authorized_keys(ctx.authorized_keys_path)
+    keys = [] if ctx.authorized_keys_path is None else _authorized_keys(ctx.authorized_keys_path)
 
-    if ctx.defer_provisioning:
+    if keys and ctx.defer_provisioning:
         # No user to authorize yet. Stage the keys in provisioning state for
         # omarchy-provision-owner to install once first boot creates the owner, and
         # still open the door (sshd + ufw) below.
@@ -1497,7 +1499,7 @@ def configure_ssh_access(ctx: InstallContext) -> None:
         staged = provisioning_dir / "authorized_keys"
         staged.write_text("".join(f"{key}\n" for key in keys))
         staged.chmod(0o600)
-    else:
+    elif keys:
         info(f"› installing {len(keys)} SSH key(s) for {ctx.username}")
 
         ssh_dir = ctx.target / "home" / ctx.username / ".ssh"
