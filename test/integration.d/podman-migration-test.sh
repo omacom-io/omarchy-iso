@@ -37,8 +37,7 @@ sudo docker exec redis redis-cli SET migration-proof preserved
 sudo docker exec redis sh -c 'echo writable-layer >/migration-proof'
 sudo docker stop postgres16
 
-# Stock installers rely on the image's anonymous VOLUME. Explicit -v/--mount
-# configuration is deliberately outside automatic migration's accepted scope.
+# Stock installers rely on the image's anonymous VOLUME.
 volume_name=$(sudo docker inspect postgres16 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
 volume=$(sudo docker volume inspect "$volume_name" --format '{{.Mountpoint}}')
 sudo python3 - "$volume" <<'PY'
@@ -51,15 +50,34 @@ os.link(f,p/'hardlink-proof');(p/'symlink-proof').symlink_to('metadata-proof')
 os.utime(f,ns=(1720000000123456789,1720000000123456789))
 PY
 sudo setfacl -m u:1234:r "$volume/metadata-proof"
-# One unsupported workload must reject the entire batch while Redis stays up.
-sudo docker run -d --name custom-project docker.io/library/redis:7 sleep infinity
-if bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"; then
+
+# A custom image/name, private named volume, non-root application user and
+# explicit resource/confinement settings should migrate without gaining access.
+sudo docker volume create --label fixture=secure-migration project-state
+sudo docker run --rm -v project-state:/data docker.io/library/alpine:3 \
+  sh -c 'chown 1000:1000 /data; chmod 0750 /data'
+sudo docker run -d --name project-worker --restart unless-stopped \
+  --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+  --cpus 0.5 --memory 128m --memory-swap 256m --pids-limit 64 --shm-size 128m \
+  -e WORKER_MESSAGE=retained -v project-state:/data docker.io/library/alpine:3 \
+  sh -c 'echo preserved >/data/proof; trap "exit 0" TERM; while :; do sleep 1 & wait $!; done'
+
+# Review-required records are never started, even in this disposable fixture.
+# Both must be reported while all ordinary source workloads stay running.
+sudo docker create --name review-required --privileged docker.io/library/alpine:3 sleep infinity
+sudo docker create --name device-required --device /dev/null docker.io/library/alpine:3 sleep infinity
+if bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh" >/tmp/preflight.log 2>&1; then
   echo 'Unsupported container incorrectly passed migration' >&2; exit 1
 fi
+cat /tmp/preflight.log
+grep -q review-required /tmp/preflight.log
+grep -q device-required /tmp/preflight.log
 [[ $(sudo docker inspect redis --format '{{.State.Running}}') == "true" ]]
+[[ $(sudo docker inspect project-worker --format '{{.State.Running}}') == "true" ]]
 ! podman container exists redis
-sudo docker rm -f custom-project
-bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
+! podman container exists project-worker
+sudo docker rm review-required device-required
+CONTAINER_HOST=unix:///tmp/do-not-contact-podman.sock bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
 [[ $(pacman -Qq docker) == "podman-docker" ]]
 [[ $(podman exec redis redis-cli GET migration-proof) == "preserved" ]]
 [[ $(podman exec redis cat /migration-proof) == "writable-layer" ]]
@@ -70,6 +88,18 @@ for attempt in {1..30}; do
   sleep 1
 done
 [[ $(podman inspect redis --format '{{.State.Health.Status}}') == "healthy" ]]
+[[ $(podman exec project-worker cat /data/proof) == "preserved" ]]
+[[ $(podman exec project-worker printenv WORKER_MESSAGE) == "retained" ]]
+[[ $(podman exec project-worker id -u) == "1000" ]]
+podman exec project-worker sh -c 'grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/1/status; grep -Eq "^Seccomp:[[:space:]]+2$" /proc/1/status; grep -Eq "^CapBnd:[[:space:]]+0+$" /proc/1/status'
+[[ $(podman inspect project-worker --format '{{.HostConfig.Privileged}}') == "false" ]]
+[[ $(podman inspect project-worker --format '{{.HostConfig.Memory}}') == "134217728" ]]
+[[ $(podman inspect project-worker --format '{{.HostConfig.PidsLimit}}') == "64" ]]
+[[ $(podman volume inspect project-state --format '{{index .Labels "fixture"}}') == "secure-migration" ]]
+worker_volume=$(podman volume inspect project-state --format '{{.Mountpoint}}')
+[[ $(podman unshare stat -c '%u:%g:%a' "$worker_volume") == "1000:1000:750" ]]
+[[ -z $(sudo podman ps -aq) ]]
+printf 'CUSTOM ROOTLESS CONFINEMENT VERIFIED\n'
 target=$(podman volume inspect "omarchy-migrated-$volume_name" --format '{{.Mountpoint}}')
 podman unshare python3 - "$target" <<'PY'
 import os,sys
@@ -104,8 +134,11 @@ ssh_sudo 'systemctl reboot' || true
 sleep 10
 wait_for_ssh "$BOOT_TIMEOUT"
 check "guest rebooted" ssh_guest "test \"\$(cat /proc/sys/kernel/random/boot_id)\" != '$old_boot'"
-check "running Redis resumed with data" ssh_guest "test \"\$(podman exec redis redis-cli GET migration-proof)\" = preserved"
+# SSH login starts the user manager; its container restart service and Redis
+# readiness can finish later. Wait for the actual data response, with a bound.
+check "running Redis resumed with data" ssh_guest 'for attempt in {1..30}; do [[ $(podman exec redis redis-cli GET migration-proof 2>/dev/null) == preserved ]] && exit 0; sleep 1; done; exit 1'
 check "deliberately stopped PostgreSQL remains stopped" ssh_guest "test \"\$(podman inspect postgres16 --format '{{.State.Running}}')\" = false"
+check "custom worker resumes as its original non-root user" ssh_guest "test \"\$(podman exec project-worker id -u)\" = 1000"
 check "Docker bridge and firewall chains are gone" ssh_sudo '! ip link show docker0 2>/dev/null && ! iptables-save | grep -q DOCKER'
 check "rootless API responds after reboot" ssh_guest 'curl -fsS --max-time 10 --unix-socket "$XDG_RUNTIME_DIR/podman/podman.sock" http://localhost/_ping'
 capture_console success-podman-migration-reboot

@@ -132,7 +132,7 @@ The first scenario is `factory-reset`: it proves `omarchy-system-factory-reset` 
 
 Artifacts — screenshots, the fixtured/staged/final `limine.conf`, the reset typescript, and the factory-reset log — land under `test-runs/<iso>-integration/runs/<timestamp>-<scenario>/`, and `--no-preview` skips the `imv` review just like the acceptance harness.
 
-The `podman-migration` scenario installs Docker only inside its disposable guest, creates legacy Redis and PostgreSQL data, proves unsupported workloads stop preflight, and checks volume metadata, writable layers, health checks, migration retries and running/stopped state after reboot:
+The `podman-migration` scenario installs Docker only inside its disposable guest and creates legacy Redis/PostgreSQL data plus a custom UID-1000 worker with a private named volume, resource limits, all capabilities dropped and no-new-privileges. Privileged/device container definitions must stop preflight before any ordinary workload changes. The scenario checks volume metadata, writable layers, health checks, rootless confinement, migration retries and running/stopped state after reboot:
 
 ```bash
 ./test/integration release/omarchy.iso podman-migration --no-preview
