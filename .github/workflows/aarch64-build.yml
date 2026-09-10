@@ -9,6 +9,13 @@ on:
         description: "omarchy-pkgs branch, tag or SHA to build the [omarchy] repo from"
         type: string
         default: master
+      media_target:
+        description: "ARM live-media boot path"
+        type: choice
+        default: aarch64/snapdragon
+        options:
+          - aarch64/snapdragon
+          - aarch64/generic
       iso_make_args:
         description: "Extra bin/omarchy-iso-make arguments (e.g. --edge)"
         type: string
@@ -34,6 +41,7 @@ jobs:
     timeout-minutes: 330
     env:
       ISO_MAKE_ARGS: ${{ inputs.iso_make_args }}
+      MEDIA_TARGET: ${{ inputs.media_target || 'aarch64/snapdragon' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,6 +63,9 @@ jobs:
           bash test/unit/arch-package-filter-test.sh
           bash test/unit/aarch64-initramfs-test.sh
           python3 -m unittest discover -s test/unit -p test_local_repo_config.py
+          python3 -m unittest discover -s test/unit -p test_iso_architecture.py
+          python3 -m unittest discover -s test/unit -p test_hardware_platforms.py
+          python3 -m unittest discover -s test/unit -p test_keyboard.py
 
       # The hosted runner's root disk is too small for both build stages.
       - name: Free Disk Space
@@ -81,7 +92,7 @@ jobs:
           re='^[A-Za-z0-9 ._=/-]*$'
           [[ $ISO_MAKE_ARGS =~ $re ]] || { echo "invalid iso_make_args" >&2; exit 1; }
           start=$(date +%s)
-          NO_BOOT_OFFER=1 ./bin/omarchy-iso-make --keep-pkg-cache --local-repo "$PWD/omarchy-repo" $ISO_MAKE_ARGS
+          NO_BOOT_OFFER=1 ./bin/omarchy-iso-make --keep-pkg-cache --local-repo "$PWD/omarchy-repo" $ISO_MAKE_ARGS --arch aarch64 --media-target "$MEDIA_TARGET"
           echo "ISO build wall-clock: $(( $(date +%s) - start ))s"
 
       - name: Inspect ISO
@@ -93,9 +104,12 @@ jobs:
             sha256sum "$iso"
             xorriso -indev "$iso" -ls /EFI/BOOT/ 2>/dev/null
             xorriso -indev "$iso" -lsl /arch/boot/aarch64/ 2>/dev/null
-            # The default Snapdragon boot target must carry its device trees.
-            xorriso -indev "$iso" -ls /arch/boot/aarch64/omarchy-live.efi 2>/dev/null \
-              || { echo "ISO is missing the DTB-carrying live UKI" >&2; exit 1; }
+            if [[ $MEDIA_TARGET == aarch64/snapdragon ]]; then
+              xorriso -indev "$iso" -ls /arch/boot/aarch64/omarchy-live.efi 2>/dev/null \
+                || { echo "ISO is missing the DTB-carrying live UKI" >&2; exit 1; }
+            else
+              [[ $iso == release/omarchy-generic-*-aarch64-*.iso ]]
+            fi
           done
           df -h
 

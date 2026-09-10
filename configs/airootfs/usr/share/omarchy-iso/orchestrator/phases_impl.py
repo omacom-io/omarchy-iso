@@ -34,6 +34,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import archinstall_adapter as arch
+from . import hardware
 from .command import capture, capture_identifier, require_text
 from .context import InstallContext, _LIMINE_EFI_BINARY, _LIMINE_SOURCE_EFI
 from .keyboard import configure_keyboard
@@ -206,6 +207,10 @@ def _copy_firmware_stage_into_target(ctx: InstallContext) -> None:
 
 
 def prepare_live(ctx: InstallContext) -> None:
+    # Reject malformed/ambiguous profiles or the wrong media before disk cleanup.
+    ctx.state["hardware_platform"] = hardware.detect_platform()
+    if entry := ctx.state["hardware_platform"]:
+        info(f"› hardware profile: {entry['name']}")
     _stage_qualcomm_firmware()
     if ctx.is_protected:
         info("› protected mode: skipping whole-disk cleanup")
@@ -767,7 +772,8 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
         "omarchy-settings",
         "omarchy-nvim",
     }
-    for raw in base_pkgs_file.read_text().splitlines():
+    entry = ctx.state.get("hardware_platform") or {}
+    for raw in base_pkgs_file.read_text().splitlines() + entry.get("packages", []):
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
@@ -1317,6 +1323,7 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
     if "@@CMDLINE@@" in default_text:
         raise RuntimeError(f"{default_limine} still contains @@CMDLINE@@")
 
+    hardware.configure_boot(ctx.target, ctx.state.get("hardware_platform"))
     config_text = _limine_combined_config_text(ctx, default_text)
     cmdline = _limine_kernel_cmdline(config_text)
     if not cmdline.strip():

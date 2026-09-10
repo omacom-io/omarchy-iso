@@ -51,14 +51,8 @@ libusb-compat
 linux-atm
 linux-firmware
 linux-firmware-marvell
-# Qualcomm GPU, Wi-Fi and Bluetooth firmware.
-linux-firmware-qcom
 # Kernel metadata required by mkinitcpio and Limine.
 linux-aarch64-pkgbase-shim
-# Vulkan for Adreno GPUs.
-vulkan-freedreno
-# Extract vendor-signed Qualcomm firmware from Windows.
-qcom-firmware-extract
 livecd-sounds
 lsscsi
 lvm2

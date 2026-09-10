@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 
-iso_name="omarchy"
+iso_name="${OMARCHY_ISO_NAME:-omarchy}"
 iso_label="OMARCHY_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
 iso_publisher="Omarchy <https://omarchy.org>"
 iso_application="Omarchy Installer"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
 buildmodes=('iso')
-case "$(uname -m)" in
+case "${OMARCHY_ARCH:-$(uname -m)}" in
   aarch64)
     arch="aarch64"
     # ARM has no legacy BIOS; syslinux is x86-only.
     bootmodes=('uefi.grub')
     ;;
-  *)
+  x86_64)
     arch="x86_64"
     bootmodes=('bios.syslinux' 'uefi.grub')
+    ;;
+  *)
+    echo "Unsupported ISO architecture" >&2
+    return 1
     ;;
 esac
 pacman_conf="pacman-offline.conf"

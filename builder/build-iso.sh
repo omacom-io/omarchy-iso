@@ -5,19 +5,11 @@ set -e
 OMARCHY_ISO_REF="${OMARCHY_ISO_REF:-quattro}"
 OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
-# Build for the host architecture.
-case "$(uname -m)" in
-  aarch64)
-    ISO_ARCH=aarch64
-    ISO_NODE_ARCH=arm64
-    ISO_KERNEL=linux-aarch64
-    ;;
-  *)
-    ISO_ARCH=x86_64
-    ISO_NODE_ARCH=x64
-    ISO_KERNEL=linux-t2
-    ;;
-esac
+source /builder/architecture.sh
+if [[ $(uname -m) != "$ISO_ARCH" ]]; then
+  echo "Build container architecture does not match $ISO_ARCH" >&2
+  exit 1
+fi
 
 # Edge, dev, and local-source ISOs install the dev packages explicitly. Those
 # package recipes track the quattro branch. This avoids relying on pacman's
@@ -76,7 +68,7 @@ if [[ $ISO_ARCH == aarch64 ]] && ! grep -q _filter_grubmodules "$(command -v mka
   echo "or use an archiso that already filters the list." >&2
   exit 1
 fi
-if [[ $ISO_ARCH == aarch64 ]] && ! grep -q 'Unified kernel images built into /boot' "$(command -v mkarchiso)"; then
+if [[ $OMARCHY_MEDIA_TARGET == aarch64/snapdragon ]] && ! grep -q 'Unified kernel images built into /boot' "$(command -v mkarchiso)"; then
   echo "This mkarchiso does not copy the DTB-carrying live UKI out of /boot." >&2
   echo "Apply builder/patches/archiso-copy-boot-efi.patch before installing it." >&2
   exit 1
@@ -184,6 +176,9 @@ done
 
 # Stage aarch64 initramfs and UKI setup before pacstrap runs mkinitcpio.
 if [[ $ISO_ARCH == aarch64 ]]; then
+  if [[ $OMARCHY_MEDIA_TARGET == aarch64/snapdragon ]]; then
+    cat /configs/aarch64/packages.snapdragon >> "$build_cache_dir/packages.$ISO_ARCH"
+  fi
   install -Dm644 /configs/aarch64/zz-aarch64-live.conf \
     "$build_cache_dir/airootfs/etc/mkinitcpio.conf.d/zz-aarch64-live.conf"
   install -Dm644 /configs/aarch64/linux.preset \
@@ -192,6 +187,11 @@ if [[ $ISO_ARCH == aarch64 ]]; then
     "$build_cache_dir/airootfs/root/customize_airootfs.sh"
   install -Dm755 /configs/aarch64/live-uki.sh \
     "$build_cache_dir/airootfs/root/live-uki.sh"
+  printf '%s\n' "$OMARCHY_MEDIA_TARGET" > "$build_cache_dir/airootfs/root/omarchy_media_target"
+  install -Dm644 /configs/aarch64/platforms.json \
+    "$build_cache_dir/airootfs/usr/share/omarchy-iso/platforms.json"
+  python /configs/airootfs/usr/share/omarchy-iso/orchestrator/hardware.py \
+    /configs/aarch64/platforms.json "$OMARCHY_MEDIA_TARGET" > /tmp/platform.packages
   # The T2 kernel image is absent on aarch64.
   rm -f "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux-t2.preset"
   echo "aarch64: staged live-ISO mkinitcpio overrides"
@@ -333,7 +333,7 @@ filter_shipped_package_list() {
   mv "$tmp" "$file"
 }
 
-if [[ $(uname -m) == aarch64 ]]; then
+if [[ $ISO_ARCH == aarch64 ]]; then
   ARCHINSTALL_PACKAGES="$build_cache_dir/builder/archinstall.packages"
   # mkarchiso installs this list directly into the live environment.
   filter_shipped_package_list "$build_cache_dir/packages.$ISO_ARCH"
@@ -358,6 +358,15 @@ mapfile -t all_packages < <(
     printf '%s\n' "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" "$OMARCHY_NVIM_PACKAGE"
   } | filter_arch_packages | sort -u
 )
+
+# Platform packages are opt-ins, not part of the shared ARM list. In
+# particular, Spark's ARM NVIDIA drivers must not be dropped by the filter
+# that removes NVIDIA packages from the common x86 package lists.
+if [[ $ISO_ARCH == aarch64 ]]; then
+  mapfile -t all_packages < <(
+    { printf '%s\n' "${all_packages[@]}"; cat /tmp/platform.packages; } | sort -u
+  )
+fi
 
 # With --local-source we already built these omarchy* packages directly into
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch
@@ -491,6 +500,9 @@ resolve_expected_packages() {
       # install time, not the build-time source it came from.
       grep -hv '^#\|^$' \
         "$build_cache_dir/airootfs/usr/share/omarchy-iso/omarchy-base.packages"
+      # The estimate includes the union of platform extras; an unknown
+      # generic guest installs none of them and can have a lower total.
+      [[ $ISO_ARCH != aarch64 ]] || cat /tmp/platform.packages
       printf '%s\n' "$OMARCHY_RUNTIME_PACKAGE" "$OMARCHY_SETTINGS_PACKAGE" \
         "$OMARCHY_NVIM_PACKAGE"
     } | sort -u

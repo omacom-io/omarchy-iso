@@ -53,7 +53,22 @@ if [[ ! -s /boot/initramfs-linux-aarch64.img ]]; then
 fi
 echo "customize_airootfs: initramfs present ($(stat -c %s /boot/initramfs-linux-aarch64.img) bytes)"
 
-# Build the DTB-carrying UKI before mkarchiso clears /boot.
-/root/live-uki.sh || exit 1
+# Inspect the image, not just the source configuration. A package hook can
+# successfully build an installed-system initramfs that cannot boot live media.
+contents=$(lsinitcpio /boot/initramfs-linux-aarch64.img)
+for hook in archiso archiso_loop_mnt; do
+  if ! grep -Eq "(^|/)hooks/$hook$" <<<"$contents"; then
+    echo "customize_airootfs: live initramfs is missing $hook" >&2
+    exit 1
+  fi
+done
+
+# Generic UEFI media uses the hardware description supplied by firmware.
+# Snapdragon media keeps its tested DTB-carrying UKI path.
+case "$(cat /root/omarchy_media_target)" in
+  aarch64/snapdragon) /root/live-uki.sh ;;
+  aarch64/generic) ;;
+  *) echo "customize_airootfs: unsupported media target" >&2; exit 1 ;;
+esac
 
 exit 0
