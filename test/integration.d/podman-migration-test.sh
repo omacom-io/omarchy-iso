@@ -31,6 +31,12 @@ unset DOCKER_HOST
 sudo pacman -Sy --noconfirm
 omarchy-pkg-drop podman-docker
 omarchy-pkg-add docker
+# A Docker-dependent package must survive the engine/shim replacement.
+omarchy-pkg-add once-bin
+if sudo pacman -Rns --noconfirm docker >/tmp/docker-dependency.log 2>&1; then
+  echo 'Docker removal unexpectedly ignored the ONCE dependency' >&2; exit 1
+fi
+grep -q 'required by once-bin' /tmp/docker-dependency.log
 sudo python3 - <<'PY'
 import json
 from pathlib import Path
@@ -133,8 +139,13 @@ podman rm -f Always..Worker
 rm "$HOME/.local/state/omarchy/podman-migration/$retry_source"
 printf 'INTERRUPTED BATCH AND SOURCE RESTART SAFEGUARDS VERIFIED\n'
 
-CONTAINER_HOST=unix:///tmp/do-not-contact-podman.sock bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
+# Match sudo-run upgrades, which do not pass the graphical session variables.
+sudo -u "$USER" -H env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS \
+  OMARCHY_PATH="$OMARCHY_PATH" PATH="$PATH" CONTAINER_HOST=unix:///tmp/do-not-contact-podman.sock \
+  bash -euo pipefail "$OMARCHY_PATH/migrations/1788886195.sh"
 [[ $(pacman -Qq docker) == "podman-docker" ]]
+pacman -Q once-bin
+[[ -z $(pacman -T docker) ]]
 sudo python3 - <<'PY'
 import json
 from pathlib import Path
