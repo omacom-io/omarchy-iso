@@ -15,6 +15,9 @@ set -euo pipefail
 export OMARCHY_PATH=/usr/share/omarchy
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 unset DOCKER_HOST
+# Fresh offline installs intentionally omit synchronized repository databases.
+# Refresh only this disposable fixture's indexes; keep the built runtime pinned.
+sudo pacman -Sy --noconfirm
 omarchy-pkg-drop podman-docker
 omarchy-pkg-add docker
 sudo systemctl start docker.socket
