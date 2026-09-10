@@ -19,11 +19,11 @@ omarchy-pkg-drop podman-docker
 omarchy-pkg-add docker
 sudo systemctl start docker.socket
 sudo docker run -d --name redis --restart unless-stopped \
-  -p 127.0.0.1:6379:6379 -v migration-redis:/data \
+  -p 127.0.0.1:6379:6379 \
   --health-cmd 'redis-cli ping' --health-interval 1s --health-timeout 1s --health-retries 5 \
   docker.io/library/redis:7
 sudo docker run -d --name postgres16 --restart unless-stopped \
-  -p 127.0.0.1:5432:5432 -v migration-postgres:/var/lib/postgresql/data \
+  -p 127.0.0.1:5432:5432 \
   -e POSTGRES_PASSWORD=fixture-only docker.io/library/postgres:16
 for attempt in {1..60}; do
   sudo docker exec postgres16 pg_isready -U postgres && break
@@ -34,7 +34,10 @@ sudo docker exec redis redis-cli SET migration-proof preserved
 sudo docker exec redis sh -c 'echo writable-layer >/migration-proof'
 sudo docker stop postgres16
 
-volume=$(sudo docker volume inspect migration-postgres --format '{{.Mountpoint}}')
+# Stock installers rely on the image's anonymous VOLUME. Explicit -v/--mount
+# configuration is deliberately outside automatic migration's accepted scope.
+volume_name=$(sudo docker inspect postgres16 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+volume=$(sudo docker volume inspect "$volume_name" --format '{{.Mountpoint}}')
 sudo python3 - "$volume" <<'PY'
 from pathlib import Path
 import os,sys
@@ -64,7 +67,7 @@ for attempt in {1..30}; do
   sleep 1
 done
 [[ $(podman inspect redis --format '{{.State.Health.Status}}') == "healthy" ]]
-target=$(podman volume inspect omarchy-migrated-migration-postgres --format '{{.Mountpoint}}')
+target=$(podman volume inspect "omarchy-migrated-$volume_name" --format '{{.Mountpoint}}')
 podman unshare python3 - "$target" <<'PY'
 import os,sys
 from pathlib import Path
