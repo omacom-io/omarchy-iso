@@ -39,7 +39,9 @@ for path, contents in json.loads(Path('/tmp/legacy-firewall.json').read_text()).
     Path(path).write_text(contents)
 PY
 sudo ufw reload
-sudo ip6tables-save | grep -q DOCKER-USER
+# Consume the complete dump: grep -q closes early and makes ip6tables-save
+# fail with SIGPIPE under pipefail when the rules exceed the pipe buffer.
+sudo ip6tables-save | grep DOCKER-USER >/dev/null
 sudo systemctl start docker.socket
 sudo docker run -d --name redis --restart unless-stopped \
   -p 127.0.0.1:6379:6379 \
