@@ -133,7 +133,7 @@ OMARCHY_ARCH_DROP=(
   vulkan-intel vulkan-radeon
   nvidia-dkms nvidia-open-dkms nvidia-utils nvidia-580xx-dkms nvidia-580xx-utils
   libva-nvidia-driver lib32-nvidia-utils lib32-nvidia-580xx-utils
-  broadcom-wl yt6801-dkms qmk-hid xpadneo-dkms
+  broadcom-wl broadcom-wl-dkms yt6801-dkms qmk-hid xpadneo-dkms
   edk2-shell memtest86+ memtest86+-efi syslinux refind
 
   # x86 virtualization guests
@@ -367,6 +367,16 @@ if [[ $ISO_ARCH == aarch64 ]]; then
     { printf '%s\n' "${all_packages[@]}"; cat /tmp/platform.packages; } | sort -u
   )
 fi
+
+# Arch dropped the prebuilt broadcom-wl on 2026-09-02 and rebuilt broadcom-wl-dkms
+# with replaces=(broadcom-wl). A replaces entry only helps upgrades of an already
+# installed package; as an explicit pacman target the old name now fails with
+# "target not found". Published Omarchy runtime packages that predate the rename
+# still list it in omarchy-other.packages, so map it here until every channel
+# ships a runtime that names broadcom-wl-dkms itself.
+mapfile -t all_packages < <(
+  printf '%s\n' "${all_packages[@]}" | sed 's/^broadcom-wl$/broadcom-wl-dkms/' | sort -u
+)
 
 # With --local-source we already built these omarchy* packages directly into
 # the mirror; strip them from the pacman -Syw list so it doesn't try to fetch

@@ -28,9 +28,9 @@ done
 
 # Exercise the shipped exclusions, not only the synthetic list above.
 eval "$(sed -n '/^OMARCHY_ARCH_DROP=(/,/^)/p' "$ROOT/builder/build-iso.sh")"
-input=$'dell-xps13-sidecar-amps\nlinux-aarch64'
+input=$'dell-xps13-sidecar-amps\nbroadcom-wl\nbroadcom-wl-dkms\nlinux-aarch64'
 ISO_ARCH=aarch64
 [[ $(printf '%s' "$input" | filter_arch_packages) == linux-aarch64 ]]
 ISO_ARCH=x86_64
 [[ $(printf '%s' "$input" | filter_arch_packages) == "$input" ]]
-echo "ok - Dell amplifier exclusion is ARM-only"
+echo "ok - Dell amplifier and both Broadcom package exclusions are ARM-only"
