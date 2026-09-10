@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -33,11 +34,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import archinstall_adapter as arch
+from . import hardware
 from .command import capture, capture_identifier, require_text
-from .context import InstallContext
+from .context import InstallContext, _LIMINE_EFI_BINARY, _LIMINE_SOURCE_EFI
 from .keyboard import configure_keyboard
 from .ui import error, info
-
 
 # Package targets are written by builder/build-iso.sh. Stable ISOs use the
 # stable package names, while dev/local-source ISOs install the dev package
@@ -141,8 +142,17 @@ EARLY_LUAROCKS_PACKAGES = [
 ]
 
 
+# Supply kernel metadata required by mkinitcpio and Limine on Arch Linux ARM.
+EARLY_BOOTSTRAP_AARCH64_PACKAGES = [
+    "linux-aarch64-pkgbase-shim",
+]
+
+
 def _early_bootstrap_packages() -> list[str]:
-    return [*EARLY_BOOTSTRAP_BASE_PACKAGES, _omarchy_settings_package()]
+    packages = [*EARLY_BOOTSTRAP_BASE_PACKAGES, _omarchy_settings_package()]
+    if platform.machine() == "aarch64":
+        packages.extend(EARLY_BOOTSTRAP_AARCH64_PACKAGES)
+    return packages
 
 
 def _early_user_seed_packages() -> list[str]:
@@ -175,7 +185,33 @@ def _early_packages() -> list[str]:
 # imports it, so no patching happens here.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Stage vendor-signed Qualcomm firmware before the Windows partition is removed.
+LIVE_FIRMWARE_STAGE = Path("/run/omarchy/firmware")
+TARGET_FIRMWARE_STAGE = Path("var/lib/omarchy/firmware-stage")
+
+
+def _stage_qualcomm_firmware() -> None:
+    tool = shutil.which("qcom-firmware-extract")
+    if not tool:
+        return
+    info("› saving Qualcomm firmware from Windows before the disk is written")
+    # Firmware extraction is idempotent and optional.
+    subprocess.run([tool, "--stage", str(LIVE_FIRMWARE_STAGE)], check=False)
+
+
+def _copy_firmware_stage_into_target(ctx: InstallContext) -> None:
+    if not (LIVE_FIRMWARE_STAGE / "manifest").is_file():
+        return
+    dst = ctx.target / TARGET_FIRMWARE_STAGE
+    shutil.copytree(LIVE_FIRMWARE_STAGE, dst, dirs_exist_ok=True)
+
+
 def prepare_live(ctx: InstallContext) -> None:
+    # Reject malformed/ambiguous profiles or the wrong media before disk cleanup.
+    ctx.state["hardware_platform"] = hardware.detect_platform()
+    if entry := ctx.state["hardware_platform"]:
+        info(f"› hardware profile: {entry['name']}")
+    _stage_qualcomm_firmware()
     if ctx.is_protected:
         info("› protected mode: skipping whole-disk cleanup")
     else:
@@ -387,7 +423,7 @@ def _install_pre_mounted_limine(ctx: InstallContext) -> None:
         disk=Path(disk),
         part=part,
         esp_path=boot.get("esp_path", "/EFI/limine"),
-        efi_binary=boot.get("efi_binary", "limine_x64.efi"),
+        efi_binary=boot.get("efi_binary", _LIMINE_EFI_BINARY),
         pre_state=pre_state,
     )
 
@@ -405,15 +441,15 @@ def _install_limine_efi(
     part: int,
     removable: bool = False,
     esp_path: str = "/EFI/limine",
-    efi_binary: str = "limine_x64.efi",
+    efi_binary: str = _LIMINE_EFI_BINARY,
     pre_state: dict | None = None,
 ) -> None:
     if removable:
         esp_path = "/EFI/BOOT"
-        efi_binary = "BOOTX64.EFI"
+        efi_binary = _LIMINE_SOURCE_EFI
 
     limine_path = ctx.target / "usr" / "share" / "limine"
-    source_name = "BOOTX64.EFI"
+    source_name = _LIMINE_SOURCE_EFI
     target_dir = Path(esp_mount) / esp_path.lstrip("/")
     target_path = target_dir / efi_binary
     _copy_required(limine_path / source_name, ctx.target / target_path.relative_to("/"))
@@ -736,7 +772,8 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
         "omarchy-settings",
         "omarchy-nvim",
     }
-    for raw in base_pkgs_file.read_text().splitlines():
+    entry = ctx.state.get("hardware_platform") or {}
+    for raw in base_pkgs_file.read_text().splitlines() + entry.get("packages", []):
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
@@ -755,7 +792,7 @@ def _boot_intent(ctx: InstallContext) -> dict:
     boot = dict(ctx.omarchy_install.get("boot") or {})
     boot.setdefault("esp_mount", "/boot")
     boot.setdefault("esp_path", "/EFI/limine")
-    boot.setdefault("efi_binary", "limine_x64.efi")
+    boot.setdefault("efi_binary", _LIMINE_EFI_BINARY)
     boot.setdefault("enable_fallback", not ctx.is_protected)
     return boot
 
@@ -1023,6 +1060,8 @@ def _prepare_target_setup(ctx: InstallContext) -> None:
             ctx.state["bind_mounts"].append(str(target_dst))
             mounted.add(str(target_dst))
 
+    _copy_firmware_stage_into_target(ctx)
+
     ctx.state["target_setup_prepared"] = True
 
 
@@ -1160,6 +1199,9 @@ def run_system_finalizer(ctx: InstallContext) -> None:
 PROVISION_STATE_DIR = "var/lib/omarchy/provisioning"
 PROVISION_KEYFILE = "etc/omarchy/provisioning.key"
 NODE_PACKAGES_DIR = Path("/opt/packages")
+# Select the bundled Node archive for the target architecture.
+_NODE_ARCH = {"x86_64": "x64", "aarch64": "arm64"}.get(platform.machine(), "x64")
+NODE_TARBALL_GLOB = f"node-v*-linux-{_NODE_ARCH}.tar.gz"
 
 
 def stage_provisioning_state(ctx: InstallContext) -> None:
@@ -1200,7 +1242,7 @@ def stage_provisioning_state(ctx: InstallContext) -> None:
 
 
 def _stage_node_tarball(ctx: InstallContext, provisioning_dir) -> None:
-    tarballs = sorted(NODE_PACKAGES_DIR.glob("node-v*-linux-x64.tar.gz"))
+    tarballs = sorted(NODE_PACKAGES_DIR.glob(NODE_TARBALL_GLOB))
     if not tarballs:
         # Hard error on every install, not just deferred-provisioning installs: the stash is what lets a
         # later factory reset finalize the next owner offline, and an ISO
@@ -1281,6 +1323,7 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
     if "@@CMDLINE@@" in default_text:
         raise RuntimeError(f"{default_limine} still contains @@CMDLINE@@")
 
+    hardware.configure_boot(ctx.target, ctx.state.get("hardware_platform"))
     config_text = _limine_combined_config_text(ctx, default_text)
     cmdline = _limine_kernel_cmdline(config_text)
     if not cmdline.strip():
@@ -1669,7 +1712,7 @@ def validate_boot(ctx: InstallContext) -> None:
     kernel = storage.get("kernel") or (ctx.user_configuration.get("kernels") or ["linux"])[0]
 
     if arch.has_uefi():
-        limine_binary = esp_mount / boot.get("esp_path", "/EFI/limine").lstrip("/") / boot.get("efi_binary", "limine_x64.efi")
+        limine_binary = esp_mount / boot.get("esp_path", "/EFI/limine").lstrip("/") / boot.get("efi_binary", _LIMINE_EFI_BINARY)
         if not limine_binary.exists() or limine_binary.stat().st_size == 0:
             raise RuntimeError(f"{limine_binary} missing or empty")
 

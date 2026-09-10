@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 
-iso_name="omarchy"
+iso_name="${OMARCHY_ISO_NAME:-omarchy}"
 iso_label="OMARCHY_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
 iso_publisher="Omarchy <https://omarchy.org>"
 iso_application="Omarchy Installer"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
 buildmodes=('iso')
-bootmodes=('bios.syslinux' 'uefi.grub')
-arch="x86_64"
+case "${OMARCHY_ARCH:-$(uname -m)}" in
+  aarch64)
+    arch="aarch64"
+    # ARM has no legacy BIOS; syslinux is x86-only.
+    bootmodes=('uefi.grub')
+    ;;
+  x86_64)
+    arch="x86_64"
+    bootmodes=('bios.syslinux' 'uefi.grub')
+    ;;
+  *)
+    echo "Unsupported ISO architecture" >&2
+    return 1
+    ;;
+esac
 pacman_conf="pacman-offline.conf"
 airootfs_image_type="squashfs"
 # Package archives in the offline mirror are already zstd-compressed. Storing
@@ -22,9 +35,14 @@ airootfs_image_type="squashfs"
 # cold on every boot: kernel, plymouth, systemd, python, archinstall, gum. The
 # whole ISO grows well under a percent for it, and dropping the x86 BCJ filter
 # also removes one of the blockers listed in plans/aarch64-support.md.
+# linux-aarch64 cannot mount a zstd-compressed SquashFS image.
+if [[ $arch == aarch64 ]]; then
+  _airootfs_comp=('-comp' 'xz' '-Xbcj' 'arm')
+else
+  _airootfs_comp=('-comp' 'zstd' '-Xcompression-level' '19')
+fi
 airootfs_image_tool_options=(
-  '-comp' 'zstd'
-  '-Xcompression-level' '19'
+  "${_airootfs_comp[@]}"
   '-b' '1M'
   '-action' 'uncompressed@subpathname(var/cache/omarchy/mirror/offline)'
 )
@@ -44,3 +62,14 @@ file_permissions=(
   ["/usr/local/bin/omarchy-upload-log"]="0:0:755"
   ["/var/cache/omarchy/mirror/offline/"]="0:0:775"
 )
+
+# Staged into the airootfs by build-iso.sh on aarch64 only.
+if [[ $arch == aarch64 ]]; then
+  file_permissions["/etc/mkinitcpio.conf.d/zz-aarch64-live.conf"]="0:0:644"
+  file_permissions["/etc/mkinitcpio.d/linux.preset"]="0:0:644"
+  file_permissions["/root/customize_airootfs.sh"]="0:0:755"
+  file_permissions["/root/live-uki.sh"]="0:0:755"
+  if [[ ${OMARCHY_MEDIA_TARGET:-aarch64/snapdragon} == aarch64/snapdragon ]]; then
+    file_permissions["/usr/local/bin/omarchy-live-dsp"]="0:0:755"
+  fi
+fi
