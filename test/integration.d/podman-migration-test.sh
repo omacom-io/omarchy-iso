@@ -57,10 +57,11 @@ sudo docker volume create --label fixture=secure-migration project-state
 sudo docker run --rm -v project-state:/data docker.io/library/alpine:3 \
   sh -c 'chown 1000:1000 /data; chmod 0750 /data'
 sudo docker run -d --name project-worker --restart unless-stopped \
-  --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+  --user 1000:1000 --cap-drop NET_RAW --security-opt no-new-privileges \
   --cpus 0.5 --memory 128m --memory-swap 256m --pids-limit 64 --shm-size 128m \
   -e WORKER_MESSAGE=retained -v project-state:/data docker.io/library/alpine:3 \
   sh -c 'echo preserved >/data/proof; trap "exit 0" TERM; while :; do sleep 1 & wait $!; done'
+sudo docker exec project-worker sh -c 'grep -Eq "^CapEff:[[:space:]]+0+$" /proc/1/status'
 
 # Review-required records are never started, even in this disposable fixture.
 # Both must be reported while all ordinary source workloads stay running.
@@ -91,7 +92,7 @@ done
 [[ $(podman exec project-worker cat /data/proof) == "preserved" ]]
 [[ $(podman exec project-worker printenv WORKER_MESSAGE) == "retained" ]]
 [[ $(podman exec project-worker id -u) == "1000" ]]
-podman exec project-worker sh -c 'grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/1/status; grep -Eq "^Seccomp:[[:space:]]+2$" /proc/1/status; grep -Eq "^CapBnd:[[:space:]]+0+$" /proc/1/status'
+podman exec project-worker sh -ec 'grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/1/status; grep -Eq "^Seccomp:[[:space:]]+2$" /proc/1/status; for field in CapBnd CapEff CapAmb; do grep -Eq "^$field:[[:space:]]+0+$" /proc/1/status; done'
 [[ $(podman inspect project-worker --format '{{.HostConfig.Privileged}}') == "false" ]]
 [[ $(podman inspect project-worker --format '{{.HostConfig.Memory}}') == "134217728" ]]
 [[ $(podman inspect project-worker --format '{{.HostConfig.PidsLimit}}') == "64" ]]
