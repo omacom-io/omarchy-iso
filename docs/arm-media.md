@@ -59,11 +59,21 @@ to the live boot arguments. Read its decisions with
 validates the guards without loading a driver. Failed checks skip startup,
 and a driver-load failure is logged without requiring the installer to fail.
 
-A manual late-load test on the Yoga with kernel 7.2.4 restored USB at
-5000 Mbit/s and battery status. One subsequent unplug/replug and full ISO
-readback passed. This does not yet validate automatic startup on a new boot.
-CDSP remained offline because its firmware DTB was missing; the successful
-ADSP test does not establish camera, compute-DSP or audio support.
+The September 10 Yoga live boot with kernel 7.2.4 verified automatic startup.
+The service checked the RAM-backed filesystem and loaded the driver before
+any manual SSH intervention. ADSP started, USB returned at 5000 Mbit/s with
+UAS, and battery status became readable. One physical unplug/replug cycle on
+the same port passed. Direct-I/O reads of the entire 4,290,398,208-byte ISO
+matched its SHA256 before and after replug, at 193 and 204 MB/s respectively.
+The USB and internal NVMe partitions remained unmounted, with the internal
+encrypted root closed throughout.
+
+The initial USB link was already SuperSpeed before the service ran. It
+disconnected during early boot and returned after ADSP started, so this test
+demonstrates safe recovery, not prevention of every early USB reset. CDSP
+remained offline because its firmware DTB was missing; the successful ADSP
+test does not establish camera, compute-DSP or audio support. Other boards
+and repeated boot cycles remain untested with this automatic sequence.
 
 ## Installed hardware setup
 
@@ -126,10 +136,17 @@ pre-install rejection and persistent boot configuration. The live-root
 customization also inspects the generated initramfs for `archiso` and
 `archiso_loop_mnt`, rejecting an installed-system image before wrapping a UKI.
 
-Previous Yoga live-USB tests validate the earlier Snapdragon build. Matt's
-and Jim's fresh-install reports apply to their source branch, not automatically
-to this consolidation. A newly built image, live boot, fresh install onto a
-disposable drive, update and reboot are still required for the combined path.
-Do not use an existing installation containing valuable files as that test
-target. Camera, fan, suspend and hibernation support are separate from these
-installer changes.
+The September 10 consolidated Snapdragon image built from `4d47dd6` passed
+all ISO shell checks and 97 Python tests in a native ARM container, followed
+by finished-image inspection and the physical Yoga live test above. The
+installed runtime and package prerequisites were combined in isolated test
+checkouts; this was not a build from already-merged upstream branches.
+
+Matt's and Jim's fresh-install reports apply to their source branch, not
+automatically to this consolidation. A fresh install onto a disposable drive,
+update and reboot are still required for the combined path, followed by
+validation with the landed and published prerequisites. Do not use an
+existing installation containing valuable files as that test target. Generic
+ARM media and other hardware have not received the same physical validation.
+Camera, fan, suspend and hibernation support are separate from these installer
+changes.
