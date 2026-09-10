@@ -36,6 +36,35 @@ Snapdragon image names remain `omarchy-<date>-aarch64-<ref>.iso`; generic image
 names start with `omarchy-generic-`. The manual ARM workflow has a matching
 media-target selector. Neither workflow enables production package publishing.
 
+## Live DSP startup
+
+Snapdragon media keeps `qcom_q6v5_pas` blacklisted during the initramfs phase
+because starting the DSP can reset USB-C installation media. On the tested
+Yoga Slim 7x, leaving it disabled also prevents USB hotplug and battery status
+from working in the live session.
+
+`omarchy-live-dsp.service` starts the driver before the installer welcome
+screen only when the active device tree identifies `lenovo,yoga-slim7x` and
+the helper verifies the archiso overlay, its loop backing file and both
+writable directories are in RAM. It refuses disk-backed or unfamiliar
+layouts, mounted installation media, other mounted block devices and active
+swap. Archiso normally copies sufficiently small images to RAM when memory
+allows; if it does not, the driver stays disabled. No extra RAM copy is forced.
+
+This service is staged only into Snapdragon live media, not generic ARM media
+or the installed system. Other boards remain unchanged pending validation.
+To disable it while investigating a boot problem, add `omarchy.live_dsp=0`
+to the live boot arguments. Read its decisions with
+`journalctl -b -u omarchy-live-dsp.service`; the helper's `--check` option
+validates the guards without loading a driver. Failed checks skip startup,
+and a driver-load failure is logged without requiring the installer to fail.
+
+A manual late-load test on the Yoga with kernel 7.2.4 restored USB at
+5000 Mbit/s and battery status. One subsequent unplug/replug and full ISO
+readback passed. This does not yet validate automatic startup on a new boot.
+CDSP remained offline because its firmware DTB was missing; the successful
+ADSP test does not establish camera, compute-DSP or audio support.
+
 ## Installed hardware setup
 
 `configs/aarch64/platforms.json` records exact SMBIOS vendor/product matches,

@@ -69,4 +69,7 @@ if [[ $arch == aarch64 ]]; then
   file_permissions["/etc/mkinitcpio.d/linux.preset"]="0:0:644"
   file_permissions["/root/customize_airootfs.sh"]="0:0:755"
   file_permissions["/root/live-uki.sh"]="0:0:755"
+  if [[ ${OMARCHY_MEDIA_TARGET:-aarch64/snapdragon} == aarch64/snapdragon ]]; then
+    file_permissions["/usr/local/bin/omarchy-live-dsp"]="0:0:755"
+  fi
 fi

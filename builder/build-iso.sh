@@ -178,6 +178,13 @@ done
 if [[ $ISO_ARCH == aarch64 ]]; then
   if [[ $OMARCHY_MEDIA_TARGET == aarch64/snapdragon ]]; then
     cat /configs/aarch64/packages.snapdragon >> "$build_cache_dir/packages.$ISO_ARCH"
+    install -Dm755 /configs/aarch64/omarchy-live-dsp \
+      "$build_cache_dir/airootfs/usr/local/bin/omarchy-live-dsp"
+    install -Dm644 /configs/aarch64/omarchy-live-dsp.service \
+      "$build_cache_dir/airootfs/etc/systemd/system/omarchy-live-dsp.service"
+    mkdir -p "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants"
+    ln -s ../omarchy-live-dsp.service \
+      "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/omarchy-live-dsp.service"
   fi
   install -Dm644 /configs/aarch64/zz-aarch64-live.conf \
     "$build_cache_dir/airootfs/etc/mkinitcpio.conf.d/zz-aarch64-live.conf"

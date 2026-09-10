@@ -64,6 +64,7 @@ jobs:
           bash test/unit/aarch64-initramfs-test.sh
           python3 -m unittest discover -s test/unit -p test_local_repo_config.py
           python3 -m unittest discover -s test/unit -p test_iso_architecture.py
+          python3 -m unittest discover -s test/unit -p test_live_dsp.py
           python3 -m unittest discover -s test/unit -p test_hardware_platforms.py
           python3 -m unittest discover -s test/unit -p test_keyboard.py
 
