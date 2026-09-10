@@ -132,6 +132,12 @@ The first scenario is `factory-reset`: it proves `omarchy-system-factory-reset` 
 
 Artifacts — screenshots, the fixtured/staged/final `limine.conf`, the reset typescript, and the factory-reset log — land under `test-runs/<iso>-integration/runs/<timestamp>-<scenario>/`, and `--no-preview` skips the `imv` review just like the acceptance harness.
 
+The `podman-migration` scenario installs Docker only inside its disposable guest, creates legacy Redis and PostgreSQL data, proves unsupported workloads stop preflight, and checks volume metadata, writable layers, health checks, migration retries and running/stopped state after reboot:
+
+```bash
+./test/integration release/omarchy.iso podman-migration --no-preview
+```
+
 ## Signing the ISO
 
 Run `./bin/omarchy-iso-sign [release/omarchy.iso]`. The signing key is retrieved from the shared Omarchy vault with the 1Password CLI.
