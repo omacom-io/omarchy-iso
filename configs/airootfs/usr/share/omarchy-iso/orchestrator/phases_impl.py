@@ -1428,10 +1428,21 @@ def _read_omarchy_mirror() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def configure_login(ctx: InstallContext) -> None:
-    # A server has no display manager to theme and no session to autologin into.
-    # It boots to a getty, and the BBS greeting is what meets the caller there.
+    # A server boots to a getty, so its equivalent of the desktop's encrypted
+    # autologin is an agetty --autologin drop-in on tty1.
     if ctx.edition == "server":
-        info("› server edition: no display manager to configure")
+        autologin = ctx.target / "etc" / "systemd" / "system" / "getty@tty1.service.d" / "autologin.conf"
+        if ctx.encrypt and not ctx.defer_provisioning:
+            info(f"› autologin {ctx.username} on tty1 behind the LUKS prompt")
+            autologin.parent.mkdir(parents=True, exist_ok=True)
+            autologin.write_text(
+                "[Service]\n"
+                "ExecStart=\n"
+                f"ExecStart=-/sbin/agetty -o '-p -f -- \\\\u' --noclear --autologin {ctx.username} %I $TERM\n"
+            )
+        else:
+            info("› server edition: getty login stays the auth screen")
+            autologin.unlink(missing_ok=True)
         return
 
     sddm_dir = ctx.target / "etc" / "sddm.conf.d"
