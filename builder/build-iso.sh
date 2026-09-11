@@ -62,6 +62,18 @@ rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/ref
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
+# Switch live environment networking to NetworkManager so it matches the installed system.
+# The upstream releng profile enables iwd and systemd-networkd which conflict with NetworkManager
+# and lock wireless devices (such as ath9k) out of the box.
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/iwd.service"
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/network-online.target.wants/systemd-networkd-wait-online.service"
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/sockets.target.wants/systemd-networkd"*
+rm -rf "$build_cache_dir/airootfs/etc/systemd/network/"*
+mkdir -p "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants"
+ln -sf /usr/lib/systemd/system/NetworkManager.service \
+  "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
 mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
