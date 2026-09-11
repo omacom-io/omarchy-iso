@@ -1,17 +1,17 @@
-# Try Omarchy — Unofficial Live Desktop Preview ISO
+# Try Omarchy — Live Desktop Preview ISO
 
 > [!TIP]
-> **Testing Status: Verified & Tested on Bare Metal Hardware**  
-> This unofficial, community-compiled bootable ISO is built from John Sideserf's [`try-omarchy` branch](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) (commit `91ec6f94fdff6d8bd01b23ccd09adbb0fce3ecfd`).  
-> **Status:** Successfully tested and verified on physical bare-metal hardware — the live Hyprland desktop environment boots cleanly into RAM and runs smoothly!
+> **Testing Status: Fully Verified on Bare-Metal Hardware (Desktop & WiFi Working)**  
+> This bootable ISO builds upon John Sideserf's [`try-omarchy` branch](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) with a critical upstream fix: enabling **NetworkManager natively at build time** to eliminate wireless driver conflicts with `systemd-networkd`.  
+> **Hardware Status:** Tested and verified on physical laptop hardware — both the live Hyprland desktop session and out-of-the-box WiFi networking work cleanly!
 
 ---
 
 ## Download the ISO
 
-The complete, bootable ISO is hosted with high-speed direct downloads on Hugging Face:
+Hosted with high-speed direct downloads on Hugging Face:
 
-📦 **[Download try-omarchy.iso (5.83 GiB)](https://huggingface.co/datasets/flamingvariable/tryomarchy/resolve/main/try-omarchy.iso)**  
+📦 **[Download try-omarchy.iso (5.89 GiB / 6.32 GB)](https://huggingface.co/datasets/flamingvariable/tryomarchy/resolve/main/try-omarchy.iso)**  
 *(Dataset repo: [huggingface.co/datasets/flamingvariable/tryomarchy](https://huggingface.co/datasets/flamingvariable/tryomarchy))*
 
 ---
@@ -20,8 +20,8 @@ The complete, bootable ISO is hosted with high-speed direct downloads on Hugging
 
 - **Original Architecture, Feature Design & Codebase:**  
   Designed, architected, and implemented by **John Sideserf** ([@johnsideserf](https://github.com/johnsideserf)) on the [`try-omarchy`](https://github.com/johnsideserf/omarchy-iso/tree/try-omarchy) branch of `omarchy-iso`. All core logic, including just-in-time offline mirror resolution, `omarchy-try-setup`, NVIDIA card fallback detection, and the unit test suite, are the work of John Sideserf and the Omarchy project contributors.
-- **ISO Compilation, Community Testing Setup & Maintenance:**  
-  Compiled, verified, and maintained by **Aarav Tank** ([@aaravtank](https://github.com/aaravtank)).
+- **ISO Compilation, Hardware Verification & NetworkManager Fix:**  
+  Tested on bare metal, fixed build-time networking, and maintained by **Aarav Tank** ([@aaravtank](https://github.com/aaravtank)).
 
 ---
 
@@ -49,7 +49,7 @@ The complete, bootable ISO is hosted with high-speed direct downloads on Hugging
 ### On Windows (using Rufus)
 1. Download and open [Rufus](https://rufus.ie/).
 2. Select your USB drive under **Device**.
-3. Under **Boot selection**, select `try-omarchy.iso` (or `omarchy-2026.09.09-x86_64.iso`).
+3. Under **Boot selection**, select `try-omarchy.iso`.
 4. Click **START**.
 5. **IMPORTANT:** When prompted with the dialog asking for *ISO Image mode* vs. *DD Image mode*, select:
    👉 **Write in DD Image mode**.  
@@ -80,12 +80,12 @@ Simply copy `try-omarchy.iso` directly onto your Ventoy USB drive.
 ## Image Specifications & Integrity Verification
 
 - **ISO Filename:** `try-omarchy.iso`
-- **File Size:** `6,260,654,080 bytes` (5.83 GiB)
+- **File Size:** `6,328,778,752 bytes` (5.89 GiB / 6.32 GB)
 - **Kernel:** `linux-t2` (universal x86_64 support + Intel T2 Mac support)
-- **Squashfs Superblock:** SquashFS 4.0, zstd-19 (`airootfs.sfs`: 5.53 GiB)
+- **Squashfs Superblock:** SquashFS 4.0, zstd-19 (`airootfs.sfs`)
 - **SHA-256 Checksum:**
   ```text
-  EE781743C4BDDF3257241FC5C5464A7D5E66F557D280F58F59D5BA32D9489C0D
+  23B7613A7F56A6AA0AC666144F482AA182690C4E018D6F7B11596CD61420A4D0
   ```
 
 ### Verify Integrity Before Booting
