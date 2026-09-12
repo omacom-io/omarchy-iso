@@ -20,7 +20,6 @@ one is present and skips otherwise, so `test/all` stays fast and VM-free.
 
 ```bash
 cd ~/Projects/omarchy-iso
-OMARCHY_PKGS_MIRROR='https://snapdragon-omarchy.mattgilg.com/aarch64' \
 OMARCHY_EXTRA_PKGBUILDS='tzupdate tensaku hyprland-preview-share-picker' \
   ./bin/omarchy-iso-make --arch aarch64 --keep-pkg-cache --no-boot-offer \
     --local-source ../omarchy ../omarchy-pkgs
@@ -41,18 +40,11 @@ local package cache — worth keeping on a hand-assembled ALARM box.
 `--no-boot-offer` skips the post-build QEMU offer, which cannot work yet (see
 Remaining work).
 
-### Prerequisites on the package host
+### Omarchy package mirror
 
-The bucket must serve a database whose filename matches the pacman section name.
-The tracked configs declare `[omarchy]`, so the bucket needs `omarchy.db` —
-pacman derives the database name from the section name, and a mismatch 404s every
-sync. `snapdragon-omarchy.db` alone is not enough.
-
-This was solved by adding an `omarchy.db` copy alongside the existing one rather
-than by renaming anything, so the local `/etc/pacman.conf` `[snapdragon-omarchy]`
-section keeps working. That copy goes stale on republish, and the failure is
-quiet — the build just resolves an older package set. Make it a step in whatever
-publishes the repo.
+The official `pkgs.omarchy.org` mirror now provides aarch64 packages. The
+tracked configs select the appropriate stable, RC, or edge channel; the local
+source build above uses edge. No `OMARCHY_PKGS_MIRROR` override is needed.
 
 ---
 
@@ -114,7 +106,7 @@ exclude list if any matter.
 | `hyprland-preview-share-picker` | Hyprland screen-share picker |
 
 All three have PKGBUILDs in `omarchy-pkgs` but no aarch64 build published. They
-do **not** need publishing to the bucket first: `profiledef.sh` sets
+do **not** need publishing to a package repository first: `profiledef.sh` sets
 `pacman_conf="pacman-offline.conf"`, so the live ISO pacstraps out of the offline
 mirror, and a locally built package lands there directly. Building them properly
 into the repo is still the better long-term answer.
@@ -230,17 +222,16 @@ gaps produce a silently-broken artifact rather than a build error.
 
 ---
 
-## Design note: mirrors stay out of tracked files
+## Design note: official mirror defaults
 
 The tracked configs name **public** defaults: `pkgs.omarchy.org` plus a global
 set of ALARM-compatible HTTPS mirrors. The GeoIP redirector is not included:
-ALARM publishes it as HTTP, while forcing HTTPS fails hostname validation. The
-private package bucket is supplied per build through `OMARCHY_PKGS_MIRROR`.
+ALARM publishes it as HTTP, while forcing HTTPS fails hostname validation.
 
-This means no tracked file names a personal mirror, so nothing has to be stripped
-before upstreaming, and this branch works for anyone else the moment
-`pkgs.omarchy.org` publishes an aarch64 tree. `OMARCHY_BASE_MIRROR` remains an
-escape hatch for pinning a build to a single ALARM mirror.
+The official Omarchy mirror provides the aarch64 package tree used by default.
+`OMARCHY_PKGS_MIRROR` remains available for explicitly testing an alternate
+package repository. `OMARCHY_BASE_MIRROR` can pin a build to a single ALARM
+mirror.
 
 `efiboot/loader/entries/` is worth understanding before editing: the
 `uefi.grub` bootmode **validates** that the directory exists and holds at least

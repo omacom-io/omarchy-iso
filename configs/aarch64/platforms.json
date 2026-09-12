@@ -106,6 +106,29 @@
         "nvidia-utils",
         "nvidia-container-toolkit"
       ]
+    },
+    {
+      "id": "hp-omnibook-x16-cp1xxx",
+      "name": "HP OmniBook X 16-cp1xxx (experimental)",
+      "match": [
+        {
+          "sys_vendor": "HP",
+          "product_name": "HP OmniBook X Laptop 16-cp1xxx"
+        }
+      ],
+      "boot": {
+        "hardware_description": "firmware",
+        "kernel_cmdline": [
+          "initcall_blacklist=arm_smmu_init"
+        ]
+      },
+      "kernel": {
+        "package": "linux-aarch64",
+        "availability": "iso"
+      },
+      "packages": [
+        "linux-firmware-qcom"
+      ]
     }
   ]
 }

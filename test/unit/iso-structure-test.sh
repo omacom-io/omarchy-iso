@@ -136,11 +136,11 @@ limine_hook=$(bsdtar -xOf "$work/limine-mkinitcpio-hook.pkg.tar" \
   usr/share/libalpm/scripts/limine-mkinitcpio-install 2>/dev/null) ||
   fail "$arch: Limine mkinitcpio hook missing from offline package"
 
-if printf '%s\n' "$limine_hook" | grep -qF 'kernel_dir}/modules.builtin'; then
-  printf '%s\n' "$installer_impl" | grep -qF 'modules_builtin_marker' ||
+if grep -qF 'kernel_dir}/modules.builtin' <<<"$limine_hook"; then
+  grep -qF 'modules_builtin_marker' <<<"$installer_impl" ||
     fail "$arch: installer does not recognize the embedded Limine modules.builtin hook"
-elif printf '%s\n' "$limine_hook" | grep -qF 'pacman -Qqo "$pkgbase_file"'; then
-  printf '%s\n' "$installer_impl" | grep -qF 'pkgbase_file' ||
+elif grep -qF 'pacman -Qqo "$pkgbase_file"' <<<"$limine_hook"; then
+  grep -qF 'pkgbase_file' <<<"$installer_impl" ||
     fail "$arch: installer does not recognize the embedded Limine pkgbase hook"
 else
   fail "$arch: embedded Limine kernel discovery mechanism is unknown"

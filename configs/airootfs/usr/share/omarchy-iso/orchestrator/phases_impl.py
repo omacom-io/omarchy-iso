@@ -424,8 +424,9 @@ def _install_pre_mounted_limine(ctx: InstallContext) -> None:
     if not esp_device:
         raise RuntimeError("omarchy_install.storage.esp_device missing")
 
-    pre_state = _read_efibootmgr()
-    windows_before = _find_label_entries(pre_state["entries"], "Windows")
+    register = _boot_intent(ctx)["registration"] == "nvram"
+    pre_state = _read_efibootmgr() if register else None
+    windows_before = _find_label_entries(pre_state["entries"], "Windows") if pre_state else []
     disk, part = _split_partition_device(esp_device)
     _install_limine_efi(
         ctx,
@@ -436,6 +437,9 @@ def _install_pre_mounted_limine(ctx: InstallContext) -> None:
         efi_binary=boot.get("efi_binary", efi_binary_name()),
         pre_state=pre_state,
     )
+
+    if not register:
+        return
 
     post_state = _read_efibootmgr()
     windows_after = _find_label_entries(post_state["entries"], "Windows")
@@ -454,6 +458,8 @@ def _install_limine_efi(
     efi_binary: str | None = None,
     pre_state: dict | None = None,
 ) -> None:
+    if _boot_intent(ctx)["registration"] == "firmware-file" and removable:
+        raise RuntimeError("firmware-file boot cannot replace a removable fallback loader")
     if removable:
         esp_path = "/EFI/BOOT"
         efi_binary = efi_source_name()
@@ -470,7 +476,10 @@ def _install_limine_efi(
     _write_limine_pacman_hook(ctx.target, hook_command)
 
     loader = "\\" + str(Path(esp_path) / efi_binary).strip("/").replace("/", "\\")
-    _register_limine_efi_entry(disk, part, loader, pre_state=pre_state)
+    if _boot_intent(ctx)["registration"] == "nvram":
+        _register_limine_efi_entry(disk, part, loader, pre_state=pre_state)
+    else:
+        info(f"› EFI entry registration explicitly disabled; select {loader} from firmware on the Omarchy ESP")
 
 
 def _register_limine_efi_entry(
@@ -849,6 +858,16 @@ def _boot_intent(ctx: InstallContext) -> dict:
     boot.setdefault("esp_path", "/EFI/limine")
     boot.setdefault("efi_binary", efi_binary_name())
     boot.setdefault("enable_fallback", not ctx.is_protected)
+    boot.setdefault("registration", "nvram")
+    if boot["registration"] not in {"nvram", "firmware-file"}:
+        raise RuntimeError("boot.registration must be nvram or firmware-file")
+    if boot["registration"] == "firmware-file":
+        if not ctx.is_protected:
+            raise RuntimeError("firmware-file boot currently requires a protected/pre-mounted installation")
+        # Do not claim or overwrite a shared EFI/BOOT fallback loader.
+        if boot["esp_path"] != "/EFI/limine" or boot["efi_binary"] != efi_binary_name():
+            raise RuntimeError("firmware-file boot requires the dedicated Limine EFI path")
+        boot["enable_fallback"] = False
     return boot
 
 
@@ -2081,9 +2100,12 @@ def validate_boot(ctx: InstallContext) -> None:
                     f"no complete Limine kernel/initramfs entry under {esp_mount / machine_id}"
                 )
 
-        post = _read_efibootmgr()
-        if not _find_label_entries(post["entries"], "Limine"):
-            raise RuntimeError("no 'Limine' entry registered in efibootmgr")
+        if boot["registration"] == "nvram":
+            post = _read_efibootmgr()
+            if not _find_label_entries(post["entries"], "Limine"):
+                raise RuntimeError("no 'Limine' entry registered in efibootmgr")
+        else:
+            info("› EFI files validated; firmware-file boot still requires selection in firmware")
 
     if ctx.is_protected:
         _validate_pre_mounted_filesystems(ctx)

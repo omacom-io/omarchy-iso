@@ -1,0 +1,4 @@
+# Local hardware logs and temporary investigation artifacts may contain
+# machine identifiers or installer inputs. Keep the directory, not its data.
+*
+!.gitignore
