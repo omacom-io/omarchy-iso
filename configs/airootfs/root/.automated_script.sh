@@ -91,13 +91,9 @@ cd /root
 # stands in for the wizard. omarchy-cidata-load copies them into /root and
 # everything downstream runs the ordinary path against ordinary inputs.
 #
-# The prefetch above pays off because the medium sits idle while the user
-# works through the wizard. An autoinstall has no wizard: the installer starts
-# reading the mirror at once, and a prefetch racing it on the same stick only
-# slows the orchestrator's own start-up (its Python imports come off that
-# stick too) -- seen as a long stay on the splash screen before the
-# dashboard appears. So warm the cache only when there is a wizard to hide
-# it behind.
+# An autoinstall using cidata has no wizard so the time spent in warm_offline_mirror 
+# is seen as a long stay on the splash screen before the dashboard appears. 
+# So warm the cache only when there is a wizard to hide it behind.
 if /usr/local/bin/omarchy-cidata-load; then
   echo "Autoinstall configuration found on cidata drive; skipping the configurator."
   export OMARCHY_UI_INTERACTIVE=no
