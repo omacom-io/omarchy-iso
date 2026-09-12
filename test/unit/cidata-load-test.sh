@@ -36,7 +36,7 @@ printf 'udevadm %s\n' "$*" >>"$TEST_LOG"
 # slow USB stick enumerates a few seconds after the ISO stick has booted.
 if [[ -n ${LATE_ATTACH:-} ]]; then
   label=${LATE_ATTACH%%:*} nth=${LATE_ATTACH##*:}
-  if (( $(grep -c '^udevadm settle$' "$TEST_LOG") >= nth )) && [[ ! -e $LATE_ATTACH_DIR/$label ]]; then
+  if (( $(grep -c '^udevadm settle' "$TEST_LOG") >= nth )) && [[ ! -e $LATE_ATTACH_DIR/$label ]]; then
     ln -s "$LATE_ATTACH_MEDIA" "$LATE_ATTACH_DIR/$label"
   fi
 fi
@@ -93,7 +93,7 @@ pass "no drive falls back to the wizard"
 
 # The probe must wait for udev to finish enumerating before concluding there
 # is no drive.
-grep -q '^udevadm settle$' "$TEST_LOG" || fail "probe settles udev first"
+grep -q '^udevadm settle' "$TEST_LOG" || fail "probe settles udev first"
 pass "probe settles udev first"
 
 # ... and it must keep looking for a bounded time: a stick that has not been
@@ -115,6 +115,54 @@ LATE_ATTACH=cidata:4 run_load || fail "late drive loads"
 [[ -f $sandbox/root/user_configuration.json ]] || fail "late drive copies the configuration"
 (( $(grep -c '^sleep ' "$TEST_LOG") == 3 )) || fail "late drive stops the wait once found ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
 pass "a drive that enumerates late is found and the wait stops early"
+
+# Each settle is capped at what is left of the budget: the first one may use
+# all of it, the last one none. Otherwise a stuck udev queue could hold the
+# boot for udevadm's own default of 120 s per settle.
+new_sandbox
+! run_load || fail "no drive exits non-zero"
+first=$(grep -m1 '^udevadm settle' "$TEST_LOG"); last=$(grep '^udevadm settle' "$TEST_LOG" | tail -n1)
+[[ $first == 'udevadm settle --timeout=10' ]] || fail "first settle is capped at the whole budget (got '$first')"
+[[ $last == 'udevadm settle --timeout=0' ]] || fail "last settle is capped at nothing (got '$last')"
+pass "each settle is bounded by the remaining budget"
+
+# The budget is wall-clock, udev time included. With a settle that takes
+# 0.6 s of real time and a 1 s budget the probe must give up in about a
+# second, not after every scheduled step has run its slow settle.
+new_sandbox
+cat >"$stub_dir/udevadm" <<'STUB'
+#!/bin/bash
+printf 'udevadm %s\n' "$*" >>"$TEST_LOG"
+/bin/sleep 0.6
+STUB
+start=$SECONDS
+! OMARCHY_CIDATA_WAIT=1 run_load || fail "slow settle exits non-zero"
+elapsed=$((SECONDS - start))
+((elapsed <= 2)) || fail "1 s budget with 0.6 s settles took ${elapsed}s"
+pass "the budget includes udev time"
+# restore the fast stub for the remaining cases
+cat >"$stub_dir/udevadm" <<'STUB'
+#!/bin/bash
+printf 'udevadm %s\n' "$*" >>"$TEST_LOG"
+if [[ -n ${LATE_ATTACH:-} ]]; then
+  label=${LATE_ATTACH%%:*} nth=${LATE_ATTACH##*:}
+  if (( $(grep -c '^udevadm settle' "$TEST_LOG") >= nth )) && [[ ! -e $LATE_ATTACH_DIR/$label ]]; then
+    ln -s "$LATE_ATTACH_MEDIA" "$LATE_ATTACH_DIR/$label"
+  fi
+fi
+STUB
+
+# The override is whole seconds only. A fraction or garbage falls back to the
+# default with a note, and a leading zero is decimal, not octal -- neither may
+# turn into an endless loop that never reaches the wizard.
+new_sandbox
+! OMARCHY_CIDATA_WAIT=1.5 run_load 2>"$sandbox/stderr" || fail "fractional override exits non-zero"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 20 )) || fail "fractional override falls back to the default"
+grep -q 'not a whole number' "$sandbox/stderr" || fail "fractional override is reported"
+new_sandbox
+! OMARCHY_CIDATA_WAIT=08 run_load 2>/dev/null || fail "leading-zero override exits non-zero"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 16 )) || fail "08 means 8 s, not octal ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
+pass "the override is validated and read as decimal"
 
 # A drive that is there from the start costs no wait at all.
 new_sandbox

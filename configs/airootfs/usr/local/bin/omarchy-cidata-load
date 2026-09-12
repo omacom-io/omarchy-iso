@@ -31,24 +31,36 @@ mnt=$root/run/cidata
 # Settling once is not enough for a USB stick that the host has not even
 # enumerated yet: some sticks (and some ports, notably on Intel Macs) take
 # several seconds to show up after the ISO's own stick has booted, and then
-# there is nothing in the queue to wait for. So poll for the label, settling
-# each round so a device that appears mid-wait gets its symlink, and give up
-# after OMARCHY_CIDATA_WAIT seconds (default 10). A boot without a cidata
-# drive pays that wait once; a drive that is already there costs nothing.
+# there is nothing in the queue to wait for. So poll for the label and give
+# up after OMARCHY_CIDATA_WAIT whole seconds (default 10). A boot without a
+# cidata drive pays that wait once; a drive that is already there costs
+# nothing.
+#
+# The budget is wall-clock and it includes udev: every settle is capped at
+# what is left of it (a stuck queue would otherwise block for udevadm's own
+# 120 s default), and the loop also stops after the number of 0.5 s steps
+# the budget allows, so it terminates even where the clock is coarse.
 wait_max=${OMARCHY_CIDATA_WAIT:-10}
-wait_step=0.5
-waited=0
+if [[ ! $wait_max =~ ^[0-9]+$ ]]; then
+  echo "omarchy-cidata-load: OMARCHY_CIDATA_WAIT='$wait_max' is not a whole number of seconds; using 10" >&2
+  wait_max=10
+fi
+wait_max=$((10#$wait_max))
+deadline=$((SECONDS + wait_max))
+steps=$((wait_max * 2))
 device=""
-while :; do
-  udevadm settle 2>/dev/null || true
+for ((i = 0; ; i++)); do
+  remaining=$((deadline - SECONDS))
+  by_steps=$(((steps - i) / 2))
+  ((remaining > by_steps)) && remaining=$by_steps
+  ((remaining < 0)) && remaining=0
+  udevadm settle --timeout="$remaining" 2>/dev/null || true
   for label in cidata CIDATA; do
     [[ -e $by_label/$label ]] && { device=$by_label/$label; break; }
   done
   [[ -n $device ]] && break
-  # bash has no float arithmetic; compare in tenths of a second
-  (( ${waited/./} + ${wait_step/./} > ${wait_max/./}0 )) 2>/dev/null && break
-  sleep "$wait_step"
-  waited=$(awk -v a="$waited" -v b="$wait_step" 'BEGIN { printf "%.1f", a + b }')
+  ((i >= steps || SECONDS >= deadline)) && break
+  sleep 0.5
 done
 [[ -n $device ]] || exit 1
 
