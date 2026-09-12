@@ -32,6 +32,21 @@ mkdir -p "$stub_dir"
 cat >"$stub_dir/udevadm" <<'STUB'
 #!/bin/bash
 printf 'udevadm %s\n' "$*" >>"$TEST_LOG"
+# LATE_ATTACH=<label>:<n>: the drive "appears" on the n-th settle, the way a
+# slow USB stick enumerates a few seconds after the ISO stick has booted.
+if [[ -n ${LATE_ATTACH:-} ]]; then
+  label=${LATE_ATTACH%%:*} nth=${LATE_ATTACH##*:}
+  if (( $(grep -c '^udevadm settle$' "$TEST_LOG") >= nth )) && [[ ! -e $LATE_ATTACH_DIR/$label ]]; then
+    ln -s "$LATE_ATTACH_MEDIA" "$LATE_ATTACH_DIR/$label"
+  fi
+fi
+STUB
+
+# Real sleeps would make the timeout cases slow; log them instead so a case
+# can assert how long the probe was prepared to wait.
+cat >"$stub_dir/sleep" <<'STUB'
+#!/bin/bash
+printf 'sleep %s\n' "$*" >>"$TEST_LOG"
 STUB
 
 cat >"$stub_dir/mount" <<'STUB'
@@ -61,7 +76,8 @@ attach_drive() {
 }
 
 run_load() {
-  PATH="$stub_dir:$PATH" "$CIDATA_LOAD" "$sandbox"
+  PATH="$stub_dir:$PATH" LATE_ATTACH_DIR="$sandbox/dev/disk/by-label" LATE_ATTACH_MEDIA="$sandbox/media" \
+    "$CIDATA_LOAD" "$sandbox"
 }
 
 write_required_pair() {
@@ -79,6 +95,34 @@ pass "no drive falls back to the wizard"
 # is no drive.
 grep -q '^udevadm settle$' "$TEST_LOG" || fail "probe settles udev first"
 pass "probe settles udev first"
+
+# ... and it must keep looking for a bounded time: a stick that has not been
+# enumerated yet leaves nothing in the udev queue, so one settle proves
+# nothing. With no drive at all the wait is bounded by OMARCHY_CIDATA_WAIT.
+(( $(grep -c '^sleep ' "$TEST_LOG") == 20 )) || fail "no drive waits 10 s in 0.5 s steps by default ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
+pass "no drive gives up after the default 10 s"
+
+new_sandbox
+! OMARCHY_CIDATA_WAIT=0 run_load || fail "zero wait exits non-zero"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 0 )) || fail "OMARCHY_CIDATA_WAIT=0 never sleeps"
+pass "OMARCHY_CIDATA_WAIT=0 checks exactly once"
+
+# A drive that enumerates late (on the 4th settle) is still picked up, and
+# the probe stops waiting as soon as it appears.
+new_sandbox
+write_required_pair
+LATE_ATTACH=cidata:4 run_load || fail "late drive loads"
+[[ -f $sandbox/root/user_configuration.json ]] || fail "late drive copies the configuration"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 3 )) || fail "late drive stops the wait once found ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
+pass "a drive that enumerates late is found and the wait stops early"
+
+# A drive that is there from the start costs no wait at all.
+new_sandbox
+attach_drive cidata
+write_required_pair
+run_load || fail "present drive loads"
+! grep -q '^sleep ' "$TEST_LOG" || fail "present drive never sleeps"
+pass "a drive present at the first probe costs no wait"
 
 # A drive with the full file set: everything lands in /root and the drive is
 # unmounted afterwards.
