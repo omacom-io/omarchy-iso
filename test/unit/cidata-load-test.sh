@@ -62,6 +62,23 @@ cat >"$stub_dir/umount" <<'STUB'
 printf 'umount %s\n' "$*" >>"$TEST_LOG"
 STUB
 
+# The boot-medium probe: findmnt names the archiso mount's device, lsblk walks
+# it up to the whole disk and reports its transport. boot_from sets both.
+cat >"$stub_dir/findmnt" <<'STUB'
+#!/bin/bash
+printf 'findmnt %s\n' "$*" >>"$TEST_LOG"
+[[ -n ${BOOT_SOURCE:-} ]] && printf '%s\n' "$BOOT_SOURCE"
+STUB
+cat >"$stub_dir/lsblk" <<'STUB'
+#!/bin/bash
+printf 'lsblk %s\n' "$*" >>"$TEST_LOG"
+case "$*" in
+  *PKNAME*) [[ -n ${BOOT_PARENT:-} && $3 != /dev/$BOOT_PARENT ]] && printf '%s\n' "$BOOT_PARENT" ;;
+  *TRAN*)   printf '%s\n' "${BOOT_TRAN:-}" ;;
+esac
+exit 0
+STUB
+
 chmod +x "$stub_dir"/*
 
 new_sandbox() {
@@ -74,6 +91,17 @@ new_sandbox() {
 attach_drive() {
   ln -s "$sandbox/media" "$sandbox/dev/disk/by-label/$1"
 }
+
+# usb: booted from a stick (partition on a USB disk); cdrom: a VM's virtual
+# CD; none: no archiso mount found at all.
+boot_from() {
+  case "$1" in
+    usb)   export BOOT_SOURCE=/dev/sda1 BOOT_PARENT=sda BOOT_TRAN=usb ;;
+    cdrom) export BOOT_SOURCE=/dev/sr0 BOOT_PARENT="" BOOT_TRAN=sata ;;
+    none)  export BOOT_SOURCE="" BOOT_PARENT="" BOOT_TRAN="" ;;
+  esac
+}
+boot_from none
 
 run_load() {
   PATH="$stub_dir:$PATH" LATE_ATTACH_DIR="$sandbox/dev/disk/by-label" LATE_ATTACH_MEDIA="$sandbox/media" \
@@ -96,20 +124,36 @@ pass "no drive falls back to the wizard"
 grep -q '^udevadm settle' "$TEST_LOG" || fail "probe settles udev first"
 pass "probe settles udev first"
 
-# ... and it must keep looking for a bounded time: a stick that has not been
-# enumerated yet leaves nothing in the udev queue, so one settle proves
-# nothing. With no drive at all the wait is bounded by OMARCHY_CIDATA_WAIT.
-(( $(grep -c '^sleep ' "$TEST_LOG") == 20 )) || fail "no drive waits 10 s in 0.5 s steps by default ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
-pass "no drive gives up after the default 10 s"
+# ... and on a USB boot it must keep looking for a bounded time: a stick
+# that has not been enumerated yet leaves nothing in the udev queue, so one
+# settle proves nothing. The default there is 3 s in 0.5 s steps.
+new_sandbox; boot_from usb
+! run_load || fail "usb boot, no drive exits non-zero"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 6 )) || fail "usb boot waits 3 s by default ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
+grep -q '^findmnt -no SOURCE /run/archiso/bootmnt$' "$TEST_LOG" || fail "the boot medium is read from the archiso mount"
+grep -q '^lsblk -dno TRAN /dev/sda$' "$TEST_LOG" || fail "the transport is read from the whole disk, not the partition"
+pass "a USB boot without a drive gives up after 3 s"
 
-new_sandbox
+# Anything that is not a USB boot -- a VM's virtual CD, or no archiso mount
+# at all -- keeps the old behaviour: one look, no wait. The wizard on such a
+# boot must not get slower.
+new_sandbox; boot_from cdrom
+! run_load || fail "cdrom boot, no drive exits non-zero"
+! grep -q '^sleep ' "$TEST_LOG" || fail "a non-USB boot never sleeps"
+(( $(grep -c '^udevadm settle' "$TEST_LOG") == 1 )) || fail "a non-USB boot settles once"
+new_sandbox; boot_from none
+! run_load || fail "unknown boot medium, no drive exits non-zero"
+! grep -q '^sleep ' "$TEST_LOG" || fail "an unknown boot medium never sleeps"
+pass "a non-USB or unknown boot medium keeps the single probe"
+
+new_sandbox; boot_from usb
 ! OMARCHY_CIDATA_WAIT=0 run_load || fail "zero wait exits non-zero"
 (( $(grep -c '^sleep ' "$TEST_LOG") == 0 )) || fail "OMARCHY_CIDATA_WAIT=0 never sleeps"
-pass "OMARCHY_CIDATA_WAIT=0 checks exactly once"
+pass "OMARCHY_CIDATA_WAIT=0 checks exactly once even on USB"
 
 # A drive that enumerates late (on the 4th settle) is still picked up, and
 # the probe stops waiting as soon as it appears.
-new_sandbox
+new_sandbox; boot_from usb
 write_required_pair
 LATE_ATTACH=cidata:4 run_load || fail "late drive loads"
 [[ -f $sandbox/root/user_configuration.json ]] || fail "late drive copies the configuration"
@@ -120,7 +164,7 @@ pass "a drive that enumerates late is found and the wait stops early"
 # all of it, the last one none. Otherwise a stuck udev queue could hold the
 # boot for udevadm's own default of 120 s per settle.
 new_sandbox
-! run_load || fail "no drive exits non-zero"
+! OMARCHY_CIDATA_WAIT=10 run_load || fail "no drive exits non-zero"
 first=$(grep -m1 '^udevadm settle' "$TEST_LOG"); last=$(grep '^udevadm settle' "$TEST_LOG" | tail -n1)
 [[ $first == 'udevadm settle --timeout=10' ]] || fail "first settle is capped at the whole budget (got '$first')"
 [[ $last == 'udevadm settle --timeout=0' ]] || fail "last settle is capped at nothing (got '$last')"
@@ -155,17 +199,17 @@ STUB
 # The override is whole seconds only. A fraction or garbage falls back to the
 # default with a note, and a leading zero is decimal, not octal -- neither may
 # turn into an endless loop that never reaches the wizard.
-new_sandbox
+new_sandbox; boot_from usb
 ! OMARCHY_CIDATA_WAIT=1.5 run_load 2>"$sandbox/stderr" || fail "fractional override exits non-zero"
-(( $(grep -c '^sleep ' "$TEST_LOG") == 20 )) || fail "fractional override falls back to the default"
+(( $(grep -c '^sleep ' "$TEST_LOG") == 6 )) || fail "fractional override falls back to the medium's default"
 grep -q 'not a whole number' "$sandbox/stderr" || fail "fractional override is reported"
 new_sandbox
 ! OMARCHY_CIDATA_WAIT=08 run_load 2>/dev/null || fail "leading-zero override exits non-zero"
 (( $(grep -c '^sleep ' "$TEST_LOG") == 16 )) || fail "08 means 8 s, not octal ($(grep -c '^sleep ' "$TEST_LOG") sleeps)"
 pass "the override is validated and read as decimal"
 
-# A drive that is there from the start costs no wait at all.
-new_sandbox
+# A drive that is there from the start costs no wait at all, USB boot or not.
+new_sandbox; boot_from usb
 attach_drive cidata
 write_required_pair
 run_load || fail "present drive loads"

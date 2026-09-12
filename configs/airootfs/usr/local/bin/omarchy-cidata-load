@@ -31,19 +31,38 @@ mnt=$root/run/cidata
 # Settling once is not enough for a USB stick that the host has not even
 # enumerated yet: some sticks (and some ports, notably on Intel Macs) take
 # several seconds to show up after the ISO's own stick has booted, and then
-# there is nothing in the queue to wait for. So poll for the label and give
-# up after OMARCHY_CIDATA_WAIT whole seconds (default 10). A boot without a
-# cidata drive pays that wait once; a drive that is already there costs
-# nothing.
+# there is nothing in the queue to wait for. So poll for the label for a
+# bounded time. A boot without a cidata drive pays that wait once; a drive
+# that is already there costs nothing.
 #
+# Only a boot from a USB stick can hit that race -- the stick that booted has
+# been enumerated, a second one may not have been -- so only a USB boot pays
+# a default wait, and a short one. A VM boots its ISO from a virtual CD or
+# disk that is there from the start, and the wizard on such a boot must not
+# get slower: its default is 0. OMARCHY_CIDATA_WAIT overrides either, in
+# whole seconds. The boot medium is found the way the configurator finds it
+# to keep it out of the disk picker: findmnt on the archiso mount, then up
+# to the whole disk.
+default_wait=0
+boot_source=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+if [[ -n $boot_source ]]; then
+  boot_dev=$(readlink -f "$boot_source" 2>/dev/null || printf '%s\n' "$boot_source")
+  while true; do
+    parent=$(lsblk -dno PKNAME "$boot_dev" 2>/dev/null | tail -n1)
+    [[ -n $parent ]] || break
+    boot_dev="/dev/$parent"
+  done
+  [[ $(lsblk -dno TRAN "$boot_dev" 2>/dev/null) == usb ]] && default_wait=3
+fi
+
 # The budget is wall-clock and it includes udev: every settle is capped at
 # what is left of it (a stuck queue would otherwise block for udevadm's own
 # 120 s default), and the loop also stops after the number of 0.5 s steps
 # the budget allows, so it terminates even where the clock is coarse.
-wait_max=${OMARCHY_CIDATA_WAIT:-10}
+wait_max=${OMARCHY_CIDATA_WAIT:-$default_wait}
 if [[ ! $wait_max =~ ^[0-9]+$ ]]; then
-  echo "omarchy-cidata-load: OMARCHY_CIDATA_WAIT='$wait_max' is not a whole number of seconds; using 10" >&2
-  wait_max=10
+  echo "omarchy-cidata-load: OMARCHY_CIDATA_WAIT='$wait_max' is not a whole number of seconds; using the default ($default_wait)" >&2
+  wait_max=$default_wait
 fi
 wait_max=$((10#$wait_max))
 deadline=$((SECONDS + wait_max))
