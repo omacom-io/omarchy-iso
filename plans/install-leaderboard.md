@@ -30,10 +30,10 @@ live ISO                                    target disk                         
 --------                                    -----------                          -----------------
 orchestrator.run()                          /var/log/omarchy-install-timing.json omarchy leaderboard status
   phases -> state.json (unchanged)   --->     schema 1, ns, run_id, class,       omarchy leaderboard preview
-  keypair in RAM, sign exact bytes            hardware                           omarchy leaderboard check   (GET public top10)
-  private key discarded                     /var/lib/omarchy/leaderboard/        omarchy leaderboard submit  (preview, confirm, POST)
-                                              install.pub, timing.sig            offer service: one toast, once
-                                            @factory copy of both
+  keypair via openssl, key on stdin           hardware                           omarchy leaderboard check   (GET public top10)
+  sign the file on disk, key discarded      /var/lib/omarchy/leaderboard/        omarchy leaderboard submit  (preview, confirm, POST)
+                                              timing.json, timing.sig,           offer service: one toast, once
+                                              install.pub; @factory copy of all three
 ```
 
 The timing file is the only contract between repositories. Its schema is versioned so the CLI can refuse to interpret a v0 file as anything more than seconds.
@@ -42,29 +42,31 @@ The timing file is the only contract between repositories. Its schema is version
 
 Additive on the live `state.json` — the dashboard keeps its float `started_at`, `finished_at`, `elapsed` and display names. The target document adds:
 
-- `schema: 1`, `run_id` (UUIDv4 minted before phase 1), `iso_ref`, `mirror`, `offline_db_sha256` (of the medium's offline database; the server allow-lists published values).
+- `schema: 1`, `run_id` (UUIDv4 minted before phase 1), and `iso: {ref, mirror, offline_db_sha256, build}` (the hash is of the medium's offline database; the server allow-lists published values) plus `release` (the omarchy package version on the target) and `live` (kernel and uptime of the live session).
 - `phases[]` gain `id` (a stable identifier such as `arch_install_system`, from the callable name) and `elapsed_ns` from `time.monotonic_ns()`. `total_elapsed_ns` is the sum of phase `elapsed_ns`, and the competitive total is that sum, not wall clock.
-- `class`: `{mode, encrypted, virt, warm, seed}` — mode from `InstallContext.mode`, encryption from `_provision_install_encrypted`, `virt` from `systemd-detect-virt`, `warm` from `OMARCHY_NO_PREFETCH`, `seed` true only when packages beyond the offline mirror were used.
-- `hardware`: DMI vendor and product, `/proc/cpuinfo` model name, the disk model behind the target (walking dm-crypt the way `omarchy-disk-speedtest` does), the install medium model, `MemTotal`. Never hostname, serials, MAC addresses, disk UUIDs, or usernames.
+- `class`: `{mode, encrypted, virt, warm}` — mode from `InstallContext.mode`, encryption from `_provision_install_encrypted`, `virt` from `systemd-detect-virt`, `warm` from `OMARCHY_NO_PREFETCH`. The install is always offline, so there is no seed axis.
+- `hardware`: DMI vendor, product, product version and board, `/proc/cpuinfo` model name and CPU count, `MemTotal`, and the disk behind the target and behind the install medium (model, transport, rotational, size; walking dm-crypt and partitions with `lsblk -s`). Never hostname, serials, MAC addresses, disk UUIDs, or usernames.
+- `seal: {algorithm, public_key}` and `attestation: null`, a slot reserved for a hardware-backed witness once measured boot of the live medium is something a server can check.
+- Every probe is best-effort: a failed one leaves `null` in its slot and the document is still written and sealed. Nothing in it fails an install.
 
 Class is what the installer observed, never a label the user picks. "Official" is decided server-side from the tuple plus the ISO allow-list; the client never asserts it.
 
 ## Signing
 
-The keypair is generated in the live environment after the phase loop succeeds, signs the exact bytes of the target document (Ed25519, `openssl pkeyutl -sign -rawin`), and only the public key and detached signature are written to the target under `/var/lib/omarchy/leaderboard/`. The private key is never written anywhere and is gone at reboot.
+The keypair is generated in the live environment after the phase loop succeeds (Ed25519, `openssl genpkey`). The document is written to `/var/lib/omarchy/leaderboard/timing.json` and to the timing log, same bytes in both, and the signature is made over the file on disk (`openssl pkeyutl -sign -rawin`, the private key fed on stdin) so the bytes sealed are the bytes a reader finds. `timing.sig` and `install.pub` land beside the document. The private key is never written anywhere and is gone at reboot. If openssl or the signature fails, the document is written without a seal and the install log says so.
 
 That makes the result sealed at the finish line: editing the file after install breaks the signature and no key exists to re-sign it. It does not make the result true. Someone can fabricate a document and a keypair on any machine. Copy and docs say tamper-evident, never verified or cheat-proof. Anti-cheat is class isolation, plausibility checks, and review on the server (below). TPM or Secure Boot attestation is a later tier and depends on `plans/consumer-secure-boot.md`.
 
-Both files are also copied into the `@factory` snapshot after `run()` returns (remount rw, copy, restore ro), so a factory reset keeps the original result. This is a post-run step, not a fifteenth phase.
+All three files are also copied into the `@factory` snapshot (remount rw, copy, restore ro), so a factory reset keeps the original result. This happens after the last phase, not as a phase of its own, and is a no-op on a target that is not btrfs.
 
 ## Finish screen
 
-`Installed Omarchy in 0:43.271` (minutes, seconds, thousandths — lap-time format, from `total_elapsed_ns`), a short run code beneath it (first eight characters of `run_id`), and one muted line: `Saved locally. Share after reboot: omarchy leaderboard`. `Reboot Now` stays the only action. The run code lets a photo or video of this screen be matched to a submission later, which is the cheapest witness there is.
+`Installed Omarchy in 1:40.557  #bf95d41d`: minutes, seconds and thousandths from `total_elapsed_ns`, and the first eight characters of `run_id` dimmed beside it. `Reboot Now` stays the only action. The run code lets a photo or video of this screen be matched to a submission later, which is the cheapest witness there is. A hint line pointing at `omarchy leaderboard` comes with the command itself, not before.
 
 ## Installed system (basecamp/omarchy)
 
 - `omarchy leaderboard status` and `preview` are offline: print the artifact, its class in words, six sector times aggregated from the 14 phases (Setup, Packages, System, Boot, User, Validate), and the 14 phases. `preview --json` prints exactly the document `submit` would send.
-- `submit`: ask for an optional handle, collect a sanitised fastfetch snapshot (`/etc/fastfetch/leaderboard.jsonc`: host, CPU, GPU, disk, memory, kernel; no hostname, IP, or user), print the payload, `gum confirm --default=false`, POST. Because the install key is gone, the payload wraps the sealed artifact plus unsigned metadata; the server verifies the inner signature and cross-checks the install-time hardware against fastfetch.
+- `submit`: collect a sanitised fastfetch snapshot (`/etc/fastfetch/leaderboard.jsonc`: host, CPU, GPU, disk, memory, kernel; no hostname, IP, or user), print the payload, `gum confirm --default=false`, POST. Because the install key is gone, the payload wraps the sealed artifact plus unsigned metadata; the server verifies the inner signature and cross-checks the install-time hardware against fastfetch.
 - `check`: GET the public per-release `top10.json`, compare locally, print the position.
 - Offer: a user unit after `graphical-session.target` waits for `nm-online`, then shows one low-urgency notification, once, latched with `omarchy-done`. Default `OMARCHY_LEADERBOARD_CHECK=prompt`: the notification asks whether to check, and the GET happens on click. `OMARCHY_LEADERBOARD_CHECK=auto`: the public GET runs first and the notification appears only for a top-10 run. Either way nothing about the machine is sent before the submit confirmation. Never auto-submit, never a second notification, never a critical toast beside the existing Wi-Fi and update ones.
 - Files split per `docs/file-layout.md`: binaries in `omarchy`; the unit, sudoers drop-in for the sign helper, fastfetch config, and `/etc/omarchy/leaderboard.conf` in `omarchy-settings`. Existing installs get a migration that enables the unit without starting it.
@@ -77,20 +79,19 @@ Integrity is three tiers: Standard (automated checks passed), Reviewed (a mainta
 
 ## Phases
 
-1. Timing schema: `elapsed_ns`, `total_elapsed_ns`, phase `id`, `run_id`, `schema`. Unit tests assert the sum and that existing fields are untouched. Lands before anything else exists.
-2. Class and identity: `iso_ref`, `mirror`, `offline_db_sha256` written at build time, class tuple, hardware snapshot.
-3. Finish screen: lap-time format, run code, one hint line.
-4. Signing: keypair in RAM, detached signature, public key and signature on the target, factory copy. Unit test asserts the signature verifies and no private key exists on the target.
-5. `basecamp/omarchy`: status and preview; then submit with sign helper and fastfetch config; then menu entry; then the offer unit and migration.
-6. Service: skeleton and schema; API; boards; review queue and ISO allow-list ingest from `omarchy-iso-release`.
-7. First stable ISO that writes schema 1 becomes the first scored release. Earlier runs stay posts.
+1. Lap time and run code (#177): `elapsed_ns`, `total_elapsed_ns`, phase `id`, `run_id`, `schema`, and the finish screen in lap-time format. Unit tests assert the sum and that existing fields are untouched. Useful on its own and independent of how the packages get onto the disk.
+2. Classed, sealed artifact (#178, stacked on #177): ISO identity, release, class tuple, hardware snapshot, Ed25519 seal, factory copy. Unit tests assert the signature verifies with openssl, a one-byte edit breaks it, and no private key exists on the target. The class and hardware fields describe how the install was done, so the root-image installers (#113, #145) may need a small follow-up here.
+3. `basecamp/omarchy`: status and preview; then submit with sign helper and fastfetch config; then menu entry; then the offer unit and migration.
+4. Service: skeleton and schema; API; boards; review queue and ISO allow-list ingest from `omarchy-iso-release`.
+5. First stable ISO that writes schema 1 becomes the first scored release. Earlier runs stay posts.
 
-Each phase is one PR and is useful without the ones after it. Phases 1–3 improve the timing data and the finish screen even if the board never ships.
+Each phase is one PR and is useful without the ones after it. Phases 1 and 2 are the ISO side and the Quattro RS scope; they improve the timing data and the finish screen even if the board never ships.
 
 ## Pending decisions
+
+Decided: no handle identity in v1. A result is a machine and a time, not a person; names can come later behind a sign-in if wanted.
 
 1. Name and hostname. Timing Tower and `tower.omarchy.org` are placeholders; open to anything.
 2. Where the service lives and who builds it. Offered: built in the contributor's account and transferred into `omacom` when wanted, or started in-org from day one. Either way the ISO and CLI phases do not depend on it.
 3. Default for `OMARCHY_LEADERBOARD_CHECK`: `prompt` (no unprompted network call on first boot, matching the rest of Omarchy) or `auto` (the brief's literal reading; the notification only appears for top-10 runs).
-4. Handle identity for v1: free text with an unverified badge, or X/GitHub sign-in before a handle is shown.
-5. Whether page-cache warm should become a class axis once the data shows how much it moves results, and whether a RAM bucket is needed.
+4. Whether page-cache warm should become a class axis once the data shows how much it moves results, and whether a RAM bucket is needed.
