@@ -43,7 +43,7 @@ The timing file is the only contract between repositories. Its schema is version
 Additive on the live `state.json` — the dashboard keeps its float `started_at`, `finished_at`, `elapsed` and display names. The target document adds:
 
 - `schema: 1`, `run_id` (UUIDv4 minted before phase 1), and `iso: {ref, mirror, offline_db_sha256, build}` (the hash is of the medium's offline database; the server allow-lists published values) plus `release` (the omarchy package version on the target) and `live` (kernel and uptime of the live session).
-- `phases[]` gain `id` (a stable identifier such as `arch_install_system`, from the callable name) and `elapsed_ns` from `time.monotonic_ns()`. `total_elapsed_ns` is the sum of phase `elapsed_ns`, and the competitive total is that sum, not wall clock.
+- `phases[]` gain `id` (a stable identifier such as `arch_install_system`, from the callable name) and `elapsed_ns` from `time.monotonic_ns()`. `total_elapsed_ns` is the run itself on the same monotonic clock, from before the first phase to after the last: the span the finish screen has always shown, to more digits. The phases are its sectors and add up to slightly less; the difference is the orchestrator's own overhead between them, kept visible for that reason. The competitive total is the run, not the wall clock and not the sum.
 - `class`: `{mode, encrypted, virt, warm}` — mode from `InstallContext.mode`, encryption from `_provision_install_encrypted`, `virt` from `systemd-detect-virt`, `warm` from `OMARCHY_NO_PREFETCH`. The install is always offline, so there is no seed axis.
 - `hardware`: DMI vendor, product, product version and board, `/proc/cpuinfo` model name and CPU count, `MemTotal`, and the disk behind the target and behind the install medium (model, transport, rotational, size; walking dm-crypt and partitions with `lsblk -s`). Never hostname, serials, MAC addresses, disk UUIDs, or usernames.
 - `seal: {algorithm, public_key}` and `attestation: null`, a slot reserved for a hardware-backed witness once measured boot of the live medium is something a server can check.
@@ -61,7 +61,7 @@ All three files are also copied into the `@factory` snapshot (remount rw, copy, 
 
 ## Finish screen
 
-`Installed Omarchy in 1:40.557  #bf95d41d`: minutes, seconds and thousandths from `total_elapsed_ns`, and the first eight characters of `run_id` dimmed beside it. `Reboot Now` stays the only action. The run code lets a photo or video of this screen be matched to a submission later, which is the cheapest witness there is. A hint line pointing at `omarchy leaderboard` comes with the command itself, not before.
+`Installed Omarchy in 1:40.557  #bf95d41d`: minutes, seconds and thousandths from `total_elapsed_ns`, and the first eight characters of `run_id` dimmed beside it. Thousandths show only under a minute, where the race is; from a minute up the screen shows `m:ss`, and the file keeps every nanosecond either way. `Reboot Now` stays the only action. The run code lets a photo or video of this screen be matched to a submission later, which is the cheapest witness there is. A hint line pointing at `omarchy leaderboard` comes with the command itself, not before.
 
 ## Installed system (basecamp/omarchy)
 
@@ -79,7 +79,7 @@ Integrity is three tiers: Standard (automated checks passed), Reviewed (a mainta
 
 ## Phases
 
-1. Lap time and run code (#177): `elapsed_ns`, `total_elapsed_ns`, phase `id`, `run_id`, `schema`, and the finish screen in lap-time format. Unit tests assert the sum and that existing fields are untouched. Useful on its own and independent of how the packages get onto the disk.
+1. Lap time and run code (#177): `elapsed_ns`, `total_elapsed_ns`, phase `id`, `run_id`, `schema`, and the finish screen in lap-time format. Unit tests assert the run covers at least the sum of its sectors, the display on both sides of the minute, and that existing fields are untouched. Useful on its own and independent of how the packages get onto the disk.
 2. Classed, sealed artifact (#178, stacked on #177): ISO identity, release, class tuple, hardware snapshot, Ed25519 seal, factory copy. Unit tests assert the signature verifies with openssl, a one-byte edit breaks it, and no private key exists on the target. The class and hardware fields describe how the install was done, so the root-image installers (#113, #145) may need a small follow-up here.
 3. `basecamp/omarchy`: status and preview; then submit with sign helper and fastfetch config; then menu entry; then the offer unit and migration.
 4. Service: skeleton and schema; API; boards; review queue and ISO allow-list ingest from `omarchy-iso-release`.
