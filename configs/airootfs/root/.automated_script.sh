@@ -91,8 +91,8 @@ cd /root
 # stands in for the wizard. omarchy-cidata-load copies them into /root and
 # everything downstream runs the ordinary path against ordinary inputs.
 #
-# An autoinstall using cidata has no wizard so the time spent in warm_offline_mirror 
-# is seen as a long stay on the splash screen before the dashboard appears. 
+# An autoinstall using cidata has no wizard so the time spent in warm_offline_mirror
+# is seen as a long stay on the splash screen before the dashboard appears.
 # So warm the cache only when there is a wizard to hide it behind.
 if /usr/local/bin/omarchy-cidata-load; then
   echo "Autoinstall configuration found on cidata drive; skipping the configurator."
